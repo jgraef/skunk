@@ -1,8 +1,15 @@
 use std::{
-    collections::HashMap, fmt::Debug, fs::File, io::BufReader, path::PathBuf, pin::Pin, sync::Arc
+    collections::HashMap,
+    fmt::Debug,
+    fs::File,
+    future::Future,
+    io::BufReader,
+    net::IpAddr,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
 };
 
-use futures_util::Future;
 use rcgen::{
     BasicConstraints,
     Certificate,
@@ -12,7 +19,6 @@ use rcgen::{
     IsCa,
     KeyPair,
     KeyUsagePurpose,
-    SanType,
 };
 use rustls::{
     pki_types::{
@@ -35,15 +41,14 @@ use tokio::{
 };
 use tokio_rustls::{
     LazyConfigAcceptor,
+    StartHandshake,
     TlsConnector,
 };
 
 use crate::{
     app::config::Config,
-    core::address::HostAddress,
+    core::layer::Layer,
 };
-
-use super::layer::Layer;
 
 pub type TlsClientStream<S> = tokio_rustls::client::TlsStream<S>;
 pub type TlsServerStream<S> = tokio_rustls::server::TlsStream<S>;
@@ -62,8 +67,11 @@ pub enum Error {
     #[error("client didn't send a server name")]
     NoServerName,
 
-    #[error("invalid server name: {host}")]
-    InvalidServerName { host: HostAddress },
+    #[error("invalid server name: {hostname}")]
+    InvalidServerName { hostname: String },
+
+    #[error("the target server didn't send a server certificate chain")]
+    NoTargetCertificate,
 }
 
 impl From<Error> for std::io::Error {
@@ -176,10 +184,9 @@ impl Ca {
     pub async fn sign(
         &self,
         server_key: Arc<KeyPair>,
-        server_name: String,
+        cert_params: CertificateParams,
     ) -> Result<CertificateDer<'static>, Error> {
-        //let mut cert_params = CertificateParams::from_ca_cert_der(&self.cert)?;
-        let mut cert_params = CertificateParams::default();
+        /*let mut cert_params = CertificateParams::default();
         cert_params.distinguished_name = DistinguishedName::new();
         cert_params
             .distinguished_name
@@ -189,7 +196,7 @@ impl Ca {
             .push(DnType::OrganizationName, "gocksec");
         cert_params
             .subject_alt_names
-            .push(SanType::DnsName(server_name.try_into()?));
+            .push(SanType::DnsName(server_name.try_into()?));*/
 
         let ca_key = self.key_pair.clone();
         let ca_cert = self.cert_for_signing.clone();
@@ -218,11 +225,16 @@ impl Debug for Ca {
 }
 
 #[derive(Clone, Debug)]
-pub struct TlsContext {
-    client_config: Arc<ClientConfig>,
+struct TlsServerContext {
     certs: Arc<Mutex<HashMap<String, CertificateDer<'static>>>>,
     ca: Ca,
     server_key: Arc<KeyPair>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TlsContext {
+    client_config: Arc<ClientConfig>,
+    server_context: TlsServerContext,
 }
 
 impl TlsContext {
@@ -242,73 +254,91 @@ impl TlsContext {
 
         Ok(Self {
             client_config,
-            certs,
-            ca,
-            server_key,
+            server_context: TlsServerContext {
+                certs,
+                ca,
+                server_key,
+            },
         })
     }
 
-    pub async fn accept<S: AsyncRead + AsyncWrite + Unpin>(
+    pub async fn start_accept<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         stream: S,
-        _host: &HostAddress,
-    ) -> Result<TlsServerStream<S>, Error> {
+    ) -> Result<Accept<S>, Error> {
         let start_handshake = LazyConfigAcceptor::new(Acceptor::default(), stream).await?;
+        Ok(Accept {
+            start_handshake,
+            server_context: self.server_context.clone(),
+        })
+    }
 
-        let client_hello = start_handshake.client_hello();
-        // todo: we could also use the hostname/ip from the connect call
-        // todo: we should use the server name from the original certificate.
-        let server_name = client_hello.server_name().ok_or(Error::NoServerName)?;
+    pub async fn connect<S: AsyncRead + AsyncWrite + Unpin>(
+        &self,
+        stream: S,
+        domain: ServerName<'static>,
+    ) -> Result<TlsClientStream<S>, Error> {
+        let stream = TlsConnector::from(self.client_config.clone())
+            .connect(domain, stream)
+            .await?;
 
+        Ok(stream)
+    }
+}
+
+pub struct Accept<S> {
+    start_handshake: StartHandshake<S>,
+    server_context: TlsServerContext,
+}
+
+impl<S> Accept<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    pub async fn finish(
+        self,
+        server_name: &str,
+        cert_params: CertificateParams,
+    ) -> Result<TlsServerStream<S>, Error> {
         let server_cert = {
-            let mut certs = self.certs.lock().await;
+            let mut certs = self.server_context.certs.lock().await;
             if let Some(cert) = certs.get(server_name) {
                 cert.clone()
             }
             else {
                 let cert = self
+                    .server_context
                     .ca
-                    .sign(self.server_key.clone(), server_name.to_owned())
+                    .sign(self.server_context.server_key.clone(), cert_params)
                     .await?;
                 certs.insert(server_name.to_owned(), cert.to_owned());
                 cert
             }
         };
 
-        let cert_chain = vec![server_cert, CertificateDer::clone(self.ca.root_cert())];
-        let server_key = PrivateKeyDer::try_from(self.server_key.serialize_der()).unwrap();
+        let cert_chain = vec![
+            server_cert,
+            CertificateDer::clone(self.server_context.ca.root_cert()),
+        ];
+        let server_key =
+            PrivateKeyDer::try_from(self.server_context.server_key.serialize_der()).unwrap();
 
         let server_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, server_key)
             .unwrap();
 
-        let stream = start_handshake.into_stream(Arc::new(server_config)).await?;
+        let stream = self
+            .start_handshake
+            .into_stream(Arc::new(server_config))
+            .await?;
 
         Ok(stream)
     }
 
-    pub async fn connect<S: AsyncRead + AsyncWrite + Unpin>(
-        &self,
-        stream: S,
-        host: &HostAddress,
-    ) -> Result<TlsClientStream<S>, Error> {
-        let domain = match host {
-            HostAddress::IpAddress(ip_address) => ServerName::IpAddress((*ip_address).into()),
-            HostAddress::DnsName(name) => {
-                ServerName::DnsName(
-                    name.to_owned()
-                        .try_into()
-                        .map_err(|_| Error::InvalidServerName { host: host.clone() })?,
-                )
-            }
-        };
-
-        let stream = TlsConnector::from(self.client_config.clone())
-            .connect(domain, stream)
-            .await?;
-
-        Ok(stream)
+    pub fn server_name(&self) -> Option<String> {
+        let client_hello = self.start_handshake.client_hello();
+        client_hello.server_name().map(ToOwned::to_owned)
     }
 }
 
@@ -320,25 +350,77 @@ pub struct TlsLayer<L> {
 
 impl<L> TlsLayer<L> {
     pub fn new(inner: L, context: TlsContext) -> Self {
-        Self {
-            inner,
-            context,
-        }
+        Self { inner, context }
     }
 }
 
 impl<L, S, T> Layer<S, T> for TlsLayer<L>
 where
-    L: Layer<S, T>,
-    S: AsyncRead + AsyncWrite,
-    T: AsyncRead + AsyncWrite,
+    L: Layer<TlsServerStream<S>, TlsClientStream<T>> + Sync,
+    S: AsyncRead + AsyncWrite + Send + Unpin,
+    T: AsyncRead + AsyncWrite + Send + Unpin,
 {
-    type Future = Pin<Box<dyn Future<Output = Result<(), super::Error>> + Send>>;
+    fn layer(
+        &self,
+        source: S,
+        target: T,
+    ) -> impl Future<Output = Result<(), crate::core::Error>> + Send {
+        async fn handshake<S, T>(
+            context: &TlsContext,
+            source: S,
+            target: T,
+        ) -> Result<(TlsServerStream<S>, TlsClientStream<T>), Error>
+        where
+            S: AsyncRead + AsyncWrite + Send + Unpin,
+            T: AsyncRead + AsyncWrite + Send + Unpin,
+        {
+            // start the tls handshake with the source
+            let source_accept = context.start_accept(source).await?;
 
-    fn layer(&self, source: S, target: T) -> Self::Future {
-        Box::pin(async move {
-            todo!();
+            // get the server_name provided by the TLS client at the source
+            // todo: what do we do, if the client didn't provide a server name? we need that
+            // to connect to the target. we could also use the `TcpAddress` we
+            // get from the proxy layer.
+            let source_server_name = source_accept.server_name().ok_or(Error::NoServerName)?;
+            let domain = match IpAddr::from_str(&source_server_name) {
+                Ok(ip_address) => ServerName::IpAddress(ip_address.into()),
+                Err(_) => {
+                    ServerName::DnsName(source_server_name.to_owned().try_into().map_err(|_| {
+                        Error::InvalidServerName {
+                            hostname: source_server_name.clone(),
+                        }
+                    })?)
+                }
+            };
+
+            // connect to the target
+            let target = context.connect(target, domain).await?;
+
+            // extract certificate parameters from the server certificate we got from the
+            // target.
+            let target_cert = target
+                .get_ref()
+                .1
+                .peer_certificates()
+                .and_then(|certs| certs.first())
+                .ok_or(Error::NoTargetCertificate)?;
+            // although the name suggest that this method parses *ca* certs, it seems to
+            // just extract some of the certificate information.
+            let target_cert_params = CertificateParams::from_ca_cert_der(target_cert)?;
+
+            // finish the TLS handshake with the source by imitating the certificate and
+            // signing it with out CA.
+            let source = source_accept
+                .finish(&source_server_name, target_cert_params)
+                .await?;
+
+            Ok((source, target))
+        }
+
+        async move {
+            let (source, target) = handshake(&self.context, source, target).await?;
+            self.inner.layer(source, target).await?;
             Ok(())
-        })
+        }
     }
 }
