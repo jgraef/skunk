@@ -12,15 +12,23 @@ use tokio::io::{
 use super::Error;
 
 pub trait Layer<S, T> {
-    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<(), Error>> + Send;
+    type Output;
+
+    fn layer(
+        &self,
+        source: S,
+        target: T,
+    ) -> impl Future<Output = Result<Self::Output, Error>> + Send;
 }
 
-impl<S, T, F, Fut> Layer<S, T> for F
+impl<S, T, F, Fut, O> Layer<S, T> for F
 where
     F: Fn(S, T) -> Fut,
-    Fut: Future<Output = Result<(), Error>> + Send + Sync,
+    Fut: Future<Output = Result<O, Error>> + Send + Sync,
 {
-    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<(), Error>> + Send {
+    type Output = O;
+
+    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<O, Error>> + Send {
         self(source, target)
     }
 }
@@ -33,6 +41,8 @@ where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
+    type Output = ();
+
     async fn layer(&self, mut source: S, mut target: T) -> Result<(), Error> {
         tokio::io::copy_bidirectional(&mut source, &mut target).await?;
         Ok(())
@@ -40,7 +50,9 @@ where
 }
 
 impl<L: Layer<S, T>, S, T> Layer<S, T> for Arc<L> {
-    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<(), Error>> + Send {
+    type Output = L::Output;
+
+    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<L::Output, Error>> + Send {
         self.deref().layer(source, target)
     }
 }

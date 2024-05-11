@@ -12,4 +12,7 @@ pub enum Error {
 
     #[error("io error")]
     Io(#[from] std::io::Error),
+
+    #[error("http error")]
+    Http(#[from] self::protocol::http::Error),
 }

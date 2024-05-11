@@ -50,8 +50,8 @@ use crate::{
     core::layer::Layer,
 };
 
-pub type TlsClientStream<S> = tokio_rustls::client::TlsStream<S>;
-pub type TlsServerStream<S> = tokio_rustls::server::TlsStream<S>;
+pub type ClientStream<S> = tokio_rustls::client::TlsStream<S>;
+pub type ServerStream<S> = tokio_rustls::server::TlsStream<S>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -225,19 +225,19 @@ impl Debug for Ca {
 }
 
 #[derive(Clone, Debug)]
-struct TlsServerContext {
+struct ServerContext {
     certs: Arc<Mutex<HashMap<String, CertificateDer<'static>>>>,
     ca: Ca,
     server_key: Arc<KeyPair>,
 }
 
 #[derive(Clone, Debug)]
-pub struct TlsContext {
+pub struct Context {
     client_config: Arc<ClientConfig>,
-    server_context: TlsServerContext,
+    server_context: ServerContext,
 }
 
-impl TlsContext {
+impl Context {
     pub async fn new(ca: Ca) -> Result<Self, Error> {
         let client_config = Arc::new(
             ClientConfig::builder()
@@ -254,7 +254,7 @@ impl TlsContext {
 
         Ok(Self {
             client_config,
-            server_context: TlsServerContext {
+            server_context: ServerContext {
                 certs,
                 ca,
                 server_key,
@@ -277,7 +277,7 @@ impl TlsContext {
         &self,
         stream: S,
         domain: ServerName<'static>,
-    ) -> Result<TlsClientStream<S>, Error> {
+    ) -> Result<ClientStream<S>, Error> {
         let stream = TlsConnector::from(self.client_config.clone())
             .connect(domain, stream)
             .await?;
@@ -288,7 +288,7 @@ impl TlsContext {
 
 pub struct Accept<S> {
     start_handshake: StartHandshake<S>,
-    server_context: TlsServerContext,
+    server_context: ServerContext,
 }
 
 impl<S> Accept<S>
@@ -299,7 +299,7 @@ where
         self,
         server_name: &str,
         cert_params: CertificateParams,
-    ) -> Result<TlsServerStream<S>, Error> {
+    ) -> Result<ServerStream<S>, Error> {
         let server_cert = {
             let mut certs = self.server_context.certs.lock().await;
             if let Some(cert) = certs.get(server_name) {
@@ -343,33 +343,31 @@ where
 }
 
 #[derive(Clone)]
-pub struct TlsLayer<L> {
+pub struct Tls<L> {
     inner: L,
-    context: TlsContext,
+    context: Context,
 }
 
-impl<L> TlsLayer<L> {
-    pub fn new(inner: L, context: TlsContext) -> Self {
+impl<L> Tls<L> {
+    pub fn new(inner: L, context: Context) -> Self {
         Self { inner, context }
     }
 }
 
-impl<L, S, T> Layer<S, T> for TlsLayer<L>
+impl<L, S, T> Layer<S, T> for Tls<L>
 where
-    L: Layer<TlsServerStream<S>, TlsClientStream<T>> + Sync,
+    L: Layer<ServerStream<S>, ClientStream<T>> + Sync,
     S: AsyncRead + AsyncWrite + Send + Unpin,
     T: AsyncRead + AsyncWrite + Send + Unpin,
 {
-    fn layer(
-        &self,
-        source: S,
-        target: T,
-    ) -> impl Future<Output = Result<(), crate::core::Error>> + Send {
+    type Output = ();
+
+    async fn layer(&self, source: S, target: T) -> Result<(), crate::core::Error> {
         async fn handshake<S, T>(
-            context: &TlsContext,
+            context: &Context,
             source: S,
             target: T,
-        ) -> Result<(TlsServerStream<S>, TlsClientStream<T>), Error>
+        ) -> Result<(ServerStream<S>, ClientStream<T>), Error>
         where
             S: AsyncRead + AsyncWrite + Send + Unpin,
             T: AsyncRead + AsyncWrite + Send + Unpin,
@@ -417,10 +415,8 @@ where
             Ok((source, target))
         }
 
-        async move {
-            let (source, target) = handshake(&self.context, source, target).await?;
-            self.inner.layer(source, target).await?;
-            Ok(())
-        }
+        let (source, target) = handshake(&self.context, source, target).await?;
+        self.inner.layer(source, target).await?;
+        Ok(())
     }
 }
