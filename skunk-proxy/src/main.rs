@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 mod app;
+mod core;
+mod util;
 
 use color_eyre::eyre::Error;
 use structopt::StructOpt;
@@ -17,8 +19,7 @@ async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt::init();
 
     let args = Args::from_args();
-    App::new(args.options)?
-        .run(args.command).await?;
+    App::new(args.options)?.run(args.command).await?;
 
     Ok(())
 }

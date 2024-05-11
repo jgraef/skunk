@@ -5,7 +5,7 @@ use std::path::{
 
 use serde::Deserialize;
 
-use super::ca::CaConfig;
+use crate::core::tls::CaConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -36,11 +36,9 @@ impl Config {
     pub const CONFIG_FILE: &'static str = "skunk.toml";
 
     pub fn open(path: Option<impl AsRef<Path>>) -> Result<Self, Error> {
-        let path = path.map(|path| path.as_ref().to_owned())
-            .or_else(|| {
-                dirs::config_local_dir()
-                    .map(|path| path.join(Self::DIR_NAME))
-            })
+        let path = path
+            .map(|path| path.as_ref().to_owned())
+            .or_else(|| dirs::config_local_dir().map(|path| path.join(Self::DIR_NAME)))
             .ok_or(Error::NoConfigPath)?;
 
         if !path.exists() {

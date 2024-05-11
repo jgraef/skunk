@@ -1,13 +1,55 @@
-use std::{string::FromUtf8Error, sync::Arc};
+use std::{
+    pin::Pin,
+    string::FromUtf8Error,
+    sync::Arc,
+    task::{
+        Context,
+        Poll,
+    },
+};
 
-use serde::Deserialize;
-use socks5_server::{connection::state::NeedAuthenticate, proto::{handshake::{password::{Request as PasswordRequest, Response as PasswordResponse}, Method}, Address, Reply}, Auth, Command, IncomingConnection, Server};
-use tokio::{net::{TcpListener, TcpStream}, pin};
 use async_trait::async_trait;
+use serde::Deserialize;
+use socks5_server::{
+    connection::state::NeedAuthenticate,
+    proto::{
+        handshake::{
+            password::{
+                Request as PasswordRequest,
+                Response as PasswordResponse,
+            },
+            Method,
+        },
+        Address,
+        Reply,
+    },
+    Auth,
+    Command,
+    IncomingConnection,
+    Server,
+};
+use tokio::{
+    io::{
+        AsyncRead,
+        AsyncWrite,
+        ReadBuf,
+    },
+    net::{
+        TcpListener,
+        TcpStream,
+    },
+};
 use tokio_util::sync::CancellationToken;
 use tracing_unwrap::ResultExt;
 
-use super::Connect;
+use crate::core::{
+    address::{
+        HostAddress,
+        TcpAddress,
+    },
+    connect::Connect,
+    layer::Layer,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -24,6 +66,44 @@ pub enum Error {
     Protocol(#[from] socks5_server::proto::Error),
 }
 
+pub struct SocksStream {
+    inner: socks5_server::Connect<socks5_server::connection::connect::state::Ready>,
+}
+
+impl AsyncRead for SocksStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for SocksStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self).poll_shutdown(cx)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SocksProxyConfig {
     address: String,
@@ -32,14 +112,25 @@ pub struct SocksProxyConfig {
     password: Option<String>,
 }
 
-pub async fn run(config: &SocksProxyConfig, shutdown: CancellationToken, connect: impl Connect) -> Result<(), Error> {
+pub async fn run<C, L>(
+    config: &SocksProxyConfig,
+    shutdown: CancellationToken,
+    connect: C,
+    layer: L,
+) -> Result<(), Error>
+where
+    C: Connect + Clone + Send + 'static,
+    L: Layer<SocksStream, <C as Connect>::Connection> + Clone + Send + 'static,
+{
     let listener = TcpListener::bind((config.address.as_str(), config.port)).await?;
     let auth = match (&config.username, &config.password) {
         (None, None) => MaybeAuth::NoAuth,
-        (Some(username), Some(password)) => MaybeAuth::Password {
-            username: username.as_bytes().to_owned(),
-            password: password.as_bytes().to_owned(),
-        },
+        (Some(username), Some(password)) => {
+            MaybeAuth::Password {
+                username: username.as_bytes().to_owned(),
+                password: password.as_bytes().to_owned(),
+            }
+        }
         _ => return Err(Error::AuthEitherBothOrNone),
     };
 
@@ -51,11 +142,13 @@ pub async fn run(config: &SocksProxyConfig, shutdown: CancellationToken, connect
                 let (connection, address) = result?;
                 let shutdown = shutdown.clone();
                 let connect = connect.clone();
+                let layer = layer.clone();
+
                 tokio::spawn(async move {
                     let span = tracing::info_span!("connection", ?address);
                     let _guard = span.enter();
                     tokio::select!{
-                        result = handle_connection(connection, connect) => {
+                        result = handle_connection(connection, connect, layer) => {
                             result.ok_or_log();
                         },
                         _ = shutdown.cancelled() => {},
@@ -67,19 +160,23 @@ pub async fn run(config: &SocksProxyConfig, shutdown: CancellationToken, connect
     }
 }
 
-async fn handle_connection(
+async fn handle_connection<C, L>(
     connection: IncomingConnection<Result<AuthResult, Error>, NeedAuthenticate>,
-    connect: impl Connect,
-) -> Result<(), Error> {
-    let (connection, auth_result) = connection.authenticate().await
-        .map_err(|(e, _)| e)?;
+    connect: C,
+    layer: L,
+) -> Result<(), Error>
+where
+    C: Connect,
+    L: Layer<SocksStream, <C as Connect>::Connection>,
+{
+    let (connection, auth_result) = connection.authenticate().await.map_err(|(e, _)| e)?;
     match auth_result? {
         AuthResult::Ok => {
             tracing::info!("authenticated");
-        },
+        }
         AuthResult::Failed => {
             tracing::info!("authentication failed");
-            return Ok(())
+            return Ok(());
         }
     }
 
@@ -87,13 +184,19 @@ async fn handle_connection(
     match command {
         Command::Associate(request, address) => {
             tracing::info!("associate not supported");
-            let mut request = request.reply(Reply::CommandNotSupported, address).await.map_err(|(e, _)| e)?;
+            let mut request = request
+                .reply(Reply::CommandNotSupported, address)
+                .await
+                .map_err(|(e, _)| e)?;
             request.close().await?;
             return Ok(());
         }
         Command::Bind(request, address) => {
             tracing::info!("bind not supported");
-            let mut request = request.reply(Reply::CommandNotSupported, address).await.map_err(|(e, _)| e)?;
+            let mut request = request
+                .reply(Reply::CommandNotSupported, address)
+                .await
+                .map_err(|(e, _)| e)?;
             request.close().await?;
             return Ok(());
         }
@@ -102,30 +205,42 @@ async fn handle_connection(
                 Ok(address) => address,
                 Err(error) => {
                     tracing::error!("{error}");
-                    let mut request = request.reply(Reply::AddressTypeNotSupported, address).await.map_err(|(e, _)| e)?;
+                    let mut request = request
+                        .reply(Reply::AddressTypeNotSupported, address)
+                        .await
+                        .map_err(|(e, _)| e)?;
                     request.close().await?;
                     return Ok(());
                 }
             };
 
-            let target = match connect.connect(target_address).await {
+            let connection = match connect.connect(&target_address).await {
                 Ok(connection) => connection,
                 Err(error) => {
                     tracing::error!("{error}");
                     // todo: reply depending on error
-                    let mut request = request.reply(Reply::ConnectionRefused, address).await.map_err(|(e, _)| e)?;
+                    let mut request = request
+                        .reply(Reply::ConnectionRefused, address)
+                        .await
+                        .map_err(|(e, _)| e)?;
                     request.close().await?;
                     return Ok(());
                 }
             };
 
-            let mut request = request.reply(Reply::Succeeded, address).await.map_err(|(e, _)| e)?;
-            pin!(target);
-            tokio::io::copy_bidirectional(&mut request, &mut target).await?;
-        },
-        
+            let socks_stream = request
+                .reply(Reply::Succeeded, address)
+                .await
+                .map(|inner| SocksStream { inner })
+                .map_err(|(e, _)| e)?;
+
+            layer
+                .layer(socks_stream, connection)
+                .await
+                .expect("todo: handle error");
+        }
     }
-    
+
     Ok(())
 }
 
@@ -133,13 +248,23 @@ async fn handle_connection(
 #[error("invalid hostname")]
 pub struct InvalidHostname(#[from] FromUtf8Error);
 
-impl TryFrom<Address> for super::Address {
+impl TryFrom<Address> for TcpAddress {
     type Error = InvalidHostname;
 
     fn try_from(value: Address) -> Result<Self, Self::Error> {
         let address = match value {
-            Address::SocketAddress(address) => Self::SocketAddress(address),
-            Address::DomainAddress(hostname, port) => Self::DomainAddress { hostname: String::from_utf8(hostname)?, port, },
+            Address::SocketAddress(address) => {
+                Self {
+                    host: HostAddress::IpAddress(address.ip()),
+                    port: address.port(),
+                }
+            }
+            Address::DomainAddress(hostname, port) => {
+                Self {
+                    host: HostAddress::DnsName(String::from_utf8(hostname)?),
+                    port,
+                }
+            }
         };
         Ok(address)
     }
@@ -150,7 +275,7 @@ pub enum MaybeAuth {
     Password {
         username: Vec<u8>,
         password: Vec<u8>,
-    }
+    },
 }
 
 #[async_trait]
@@ -173,7 +298,7 @@ impl Auth for MaybeAuth {
                 let resp = PasswordResponse::new(true);
                 resp.write_to(stream).await?;
                 Ok(correct.into())
-            },
+            }
         }
     }
 }

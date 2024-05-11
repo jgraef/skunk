@@ -1,13 +1,13 @@
-mod socks;
-mod http;
+pub mod http;
+pub mod socks;
 
 use std::{
-    future::Future, net::SocketAddr, path::PathBuf, pin::Pin
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
 };
 
 use structopt::StructOpt;
-use tokio::io::{AsyncRead, AsyncWrite};
-use async_trait::async_trait;
 
 use super::{
     store::{
@@ -55,20 +55,4 @@ impl Proxy {
     pub async fn run(self) -> Result<(), Error> {
         todo!();
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum Address {
-    SocketAddress(SocketAddr),
-    DomainAddress {
-        hostname: String,
-        port: u16,
-    }
-}
-
-#[async_trait]
-pub trait Connect: Clone + Send + 'static {
-    type Connection: AsyncRead + AsyncWrite + Send;
-
-    async fn connect(&self, address: Address) -> Result<Self::Connection, Error>;
 }

@@ -1,16 +1,17 @@
-mod ca;
-mod config;
-mod proxy;
-mod store;
+pub mod config;
+pub mod proxy;
+pub mod store;
 
 use std::path::PathBuf;
 
 use structopt::StructOpt;
 
-use self::{
-    ca::Ca,
-    config::Config,
-    proxy::Proxy,
+use crate::{
+    app::{
+        config::Config,
+        proxy::Proxy,
+    },
+    core::tls::Ca,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -21,8 +22,14 @@ pub enum Error {
     #[error("store error")]
     Store(#[from] self::store::Error),
 
-    #[error("ca error")]
-    Ca(#[from] self::ca::Error),
+    #[error("core error")]
+    Core(#[from] crate::core::Error),
+}
+
+impl From<crate::core::tls::Error> for Error {
+    fn from(value: crate::core::tls::Error) -> Self {
+        crate::core::Error::from(value).into()
+    }
 }
 
 #[derive(Debug, StructOpt)]
