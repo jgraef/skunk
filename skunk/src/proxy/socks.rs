@@ -1,15 +1,11 @@
 use std::{
-    pin::Pin,
-    string::FromUtf8Error,
-    sync::Arc,
-    task::{
+    convert::Infallible, net::SocketAddr, pin::Pin, string::FromUtf8Error, sync::Arc, task::{
         Context,
         Poll,
-    },
+    }
 };
 
 use async_trait::async_trait;
-use serde::Deserialize;
 use socks5_server::{
     connection::state::NeedAuthenticate,
     proto::{
@@ -32,6 +28,7 @@ use tokio::{
     io::{
         AsyncRead,
         AsyncWrite,
+        AsyncWriteExt,
         ReadBuf,
     },
     net::{
@@ -42,12 +39,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing_unwrap::ResultExt;
 
-use crate::core::{
+use crate::{
     address::{
         HostAddress,
         TcpAddress,
     },
     connect::Connect,
+    filter::Extract,
     layer::Layer,
 };
 
@@ -68,6 +66,7 @@ pub enum Error {
 
 pub struct SocksStream {
     inner: socks5_server::Connect<socks5_server::connection::connect::state::Ready>,
+    target_address: TcpAddress,
 }
 
 impl AsyncRead for SocksStream {
@@ -76,7 +75,7 @@ impl AsyncRead for SocksStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self).poll_read(cx, buf)
+        Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
 
@@ -86,54 +85,98 @@ impl AsyncWrite for SocksStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self).poll_write(cx, buf)
+        Pin::new(&mut self.inner).poll_write(cx, buf)
     }
 
     fn poll_flush(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self).poll_flush(cx)
+        Pin::new(&mut self.inner).poll_flush(cx)
     }
 
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self).poll_shutdown(cx)
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SocksProxyConfig {
-    address: String,
-    port: u16,
-    username: Option<String>,
-    password: Option<String>,
+impl<'a> Extract<'a, &'a TcpAddress> for SocksStream {
+    type Error = Infallible;
+
+    fn extract(&'a self) -> Result<&'a TcpAddress, Infallible> {
+        Ok(&self.target_address)
+    }
 }
 
-pub async fn run<C, L>(
-    config: &SocksProxyConfig,
+pub struct Builder {
+    bind_address: SocketAddr,
+    shutdown: Option<CancellationToken>,
+    auth: Option<(String, String)>,
+}
+
+impl Builder {
+    pub fn new(bind_address: impl Into<SocketAddr>) -> Self {
+        Self {
+            bind_address: bind_address.into(),
+            shutdown: None,
+            auth: None,
+        }
+    }
+
+    pub fn with_graceful_shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = Some(shutdown);
+        self
+    }
+
+    pub fn with_password(mut self, username: String, password: String) -> Self {
+        self.auth = Some((username, password));
+        self
+    }
+
+    pub async fn serve<C, L>(self, connect: C, layer: L) -> Result<(), Error>
+    where
+        C: Connect + Clone + Send + 'static,
+        L: for<'s, 't> Layer<&'s mut SocksStream, &'t mut <C as Connect>::Connection>
+            + Clone
+            + Send
+            + 'static,
+    {
+        let auth = self.auth.map_or(MaybeAuth::NoAuth, |(username, password)| {
+            MaybeAuth::Password {
+                username: username.into_bytes(),
+                password: password.into_bytes(),
+            }
+        });
+        run(
+            self.bind_address,
+            self.shutdown.unwrap_or_default(),
+            auth,
+            connect,
+            layer,
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+async fn run<C, L>(
+    bind_address: SocketAddr,
     shutdown: CancellationToken,
+    auth: MaybeAuth,
     connect: C,
     layer: L,
 ) -> Result<(), Error>
 where
     C: Connect + Clone + Send + 'static,
-    L: Layer<SocksStream, <C as Connect>::Connection> + Clone + Send + 'static,
+    L: for<'s, 't> Layer<&'s mut SocksStream, &'t mut <C as Connect>::Connection>
+        + Clone
+        + Send
+        + 'static,
 {
-    let listener = TcpListener::bind((config.address.as_str(), config.port)).await?;
-    let auth = match (&config.username, &config.password) {
-        (None, None) => MaybeAuth::NoAuth,
-        (Some(username), Some(password)) => {
-            MaybeAuth::Password {
-                username: username.as_bytes().to_owned(),
-                password: password.as_bytes().to_owned(),
-            }
-        }
-        _ => return Err(Error::AuthEitherBothOrNone),
-    };
-
+    let listener = TcpListener::bind(bind_address).await?;
     let server = Server::new(listener, Arc::new(auth));
 
     loop {
@@ -167,7 +210,7 @@ async fn handle_connection<C, L>(
 ) -> Result<(), Error>
 where
     C: Connect,
-    L: Layer<SocksStream, <C as Connect>::Connection>,
+    L: for<'s, 't> Layer<&'s mut SocksStream, &'t mut <C as Connect>::Connection>,
 {
     let (connection, auth_result) = connection.authenticate().await.map_err(|(e, _)| e)?;
     match auth_result? {
@@ -214,7 +257,8 @@ where
                 }
             };
 
-            let connection = match connect.connect(&target_address).await {
+            // connect to target
+            let mut target = match connect.connect(&target_address).await {
                 Ok(connection) => connection,
                 Err(error) => {
                     tracing::error!("{error}");
@@ -228,16 +272,29 @@ where
                 }
             };
 
-            let socks_stream = request
+            // send reply, that we successfully connected to the target
+            let mut source = request
                 .reply(Reply::Succeeded, address)
                 .await
-                .map(|inner| SocksStream { inner })
+                .map(|inner| {
+                    SocksStream {
+                        inner,
+                        target_address,
+                    }
+                })
                 .map_err(|(e, _)| e)?;
 
+            // run layer
+            // we pass mutable references, so we can shut down the streams properly
+            // afterwards
             layer
-                .layer(socks_stream, connection)
+                .layer(&mut source, &mut target)
                 .await
                 .expect("todo: handle error");
+
+            // shut down streams. this flushes any buffered data
+            target.shutdown().await?;
+            source.shutdown().await?;
         }
     }
 

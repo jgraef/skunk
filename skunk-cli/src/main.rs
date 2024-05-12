@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
 mod app;
-mod core;
-mod util;
+mod config;
 
 use color_eyre::eyre::Error;
 use structopt::StructOpt;

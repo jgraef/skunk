@@ -9,6 +9,13 @@ use std::{
 
 use super::address::TcpAddress;
 
+// todo: might need multiple lifetimes
+pub trait Extract<'datum, Datum: 'datum>: 'datum {
+    type Error;
+
+    fn extract(&'datum self) -> Result<Datum, Self::Error>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FilterId(NonZeroUsize);
 

@@ -33,6 +33,7 @@ where
     }
 }
 
+// todo: move or rename. this is specific to an AsyncRead/Write layer
 #[derive(Clone, Copy, Debug)]
 pub struct Passthrough;
 
@@ -54,5 +55,33 @@ impl<L: Layer<S, T>, S, T> Layer<S, T> for Arc<L> {
 
     fn layer(&self, source: S, target: T) -> impl Future<Output = Result<L::Output, Error>> + Send {
         self.deref().layer(source, target)
+    }
+}
+
+pub struct Conditional<Cond, Then, Else> {
+    pub condition: Cond,
+    pub then_layer: Then,
+    pub else_layer: Else,
+}
+
+impl<Cond, Then, Else, Source, Target> Layer<Source, Target> for Conditional<Cond, Then, Else>
+where
+    Source: Send,
+    Target: Send,
+    Cond:
+        for<'source, 'target> Layer<&'source Source, &'target Target, Output = bool> + Send + Sync,
+    Then: Layer<Source, Target> + Send + Sync,
+    Else: Layer<Source, Target, Output = Then::Output> + Send + Sync,
+{
+    type Output = Then::Output;
+
+    async fn layer(&self, source: Source, target: Target) -> Result<Then::Output, Error> {
+        let output = if self.condition.layer(&source, &target).await? {
+            self.then_layer.layer(source, target).await?
+        }
+        else {
+            self.else_layer.layer(source, target).await?
+        };
+        Ok(output)
     }
 }

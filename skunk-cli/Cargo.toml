@@ -1,0 +1,28 @@
+[package]
+name = "skunk-cli"
+version = "0.1.0"
+edition = "2021"
+description = "A person-in-the-middle proxy"
+readme = "README.md"
+homepage = "https://github.com/jgraef/skunk"
+repository = "https://github.com/jgraef/skunk"
+license = "MIT"
+keywords = ["mitm", "proxy"]
+categories = [
+    "command-line-utilities",
+]
+
+[dependencies]
+color-eyre = "0.6.3"
+dirs = "5.0.1"
+dotenvy = "0.15.7"
+serde = { version = "1.0.201", features = ["derive"] }
+structopt = "0.3.26"
+tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal"] }
+toml = "0.8.12"
+tracing-subscriber = "0.3.18"
+
+[dependencies.skunk]
+version = "0.1.0"
+path = "../skunk"
+features = ["full"]

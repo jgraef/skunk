@@ -14,7 +14,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::core::layer::Layer;
+use crate::layer::Layer;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -29,32 +29,38 @@ pub struct Http<L> {
 
 impl<L, S, T> Layer<S, T> for Http<L>
 where
-    L: Layer<Request, Client, Output = Response> + Sync,
+    L: for<'client> Layer<Request, TargetClient<'client>, Output = Response> + Sync,
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type Output = ();
 
-    async fn layer(&self, source: S, target: T) -> Result<(), crate::core::Error> {
+    async fn layer(&self, source: S, target: T) -> Result<(), crate::Error> {
         // create client connection to target
         let (send_request, target_conn) = hyper::client::conn::http1::Builder::new()
             .handshake(TokioIo::new(target))
             .await
             .map_err(Error::from)?;
-        let client = Client {
-            send_request: Arc::new(Mutex::new(send_request)),
-        };
+        let send_request = Arc::new(Mutex::new(send_request));
 
         // create server connection to source
         let inner = &self.inner;
         let source_conn = hyper::server::conn::http1::Builder::new().serve_connection(
             TokioIo::new(source),
             service_fn(move |request: hyper::Request<Incoming>| {
-                let client = client.clone();
+                let send_request = send_request.clone();
                 async move {
                     // todo: what to do with the error? should we bubble it up through the layers?
-                    let response = inner.layer(Request { inner: request }, client).await?;
-                    Ok::<_, crate::core::Error>(response.inner)
+                    let mut send_request = send_request.lock().await;
+                    let response = inner
+                        .layer(
+                            Request(request),
+                            TargetClient {
+                                send_request: &mut send_request,
+                            },
+                        )
+                        .await?;
+                    Ok::<_, crate::Error>(response.0)
                 }
             }),
         );
@@ -67,16 +73,19 @@ where
 }
 
 #[derive(Debug)]
-pub struct Request {
-    pub inner: hyper::Request<Incoming>,
-}
+pub struct Request(pub hyper::Request<Incoming>);
 
 #[derive(Debug)]
-pub struct Response {
-    pub inner: hyper::Response<Incoming>,
+pub struct Response(pub hyper::Response<Incoming>);
+
+#[derive(Debug)]
+pub struct TargetClient<'client> {
+    send_request: &'client mut SendRequest<Incoming>,
 }
 
-#[derive(Clone, Debug)]
-pub struct Client {
-    send_request: Arc<Mutex<SendRequest<Incoming>>>,
+impl<'client> TargetClient<'client> {
+    pub async fn send(&mut self, request: Request) -> Result<Response, Error> {
+        let response = self.send_request.send_request(request.0).await?;
+        Ok(Response(response))
+    }
 }

@@ -1,11 +1,14 @@
 use std::{
     collections::HashMap,
+    convert::Infallible,
     fmt::Debug,
     fs::File,
-    future::Future,
     io::BufReader,
     net::IpAddr,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     str::FromStr,
     sync::Arc,
 };
@@ -31,7 +34,6 @@ use rustls::{
     RootCertStore,
     ServerConfig,
 };
-use serde::Deserialize;
 use tokio::{
     io::{
         AsyncRead,
@@ -46,12 +48,9 @@ use tokio_rustls::{
 };
 
 use crate::{
-    app::config::Config,
-    core::layer::Layer,
+    filter::Extract,
+    layer::Layer,
 };
-
-pub type ClientStream<S> = tokio_rustls::client::TlsStream<S>;
-pub type ServerStream<S> = tokio_rustls::server::TlsStream<S>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -83,32 +82,6 @@ impl From<Error> for std::io::Error {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CaConfig {
-    #[serde(default = "default_config_key_file")]
-    key_file: PathBuf,
-
-    #[serde(default = "default_config_cert_file")]
-    cert_file: PathBuf,
-}
-
-fn default_config_key_file() -> PathBuf {
-    "ca.key.pem".into()
-}
-
-fn default_config_cert_file() -> PathBuf {
-    "ca.cert.pem".into()
-}
-
-impl Default for CaConfig {
-    fn default() -> Self {
-        Self {
-            key_file: default_config_key_file(),
-            cert_file: default_config_cert_file(),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Ca {
     key_pair: Arc<KeyPair>,
@@ -117,17 +90,18 @@ pub struct Ca {
 }
 
 impl Ca {
-    pub fn open(config: &Config) -> Result<Self, Error> {
-        let key_path = config.path.join(&config.config.ca.key_file);
-        let key_pair = Arc::new(KeyPair::from_pem(&std::fs::read_to_string(&key_path)?)?);
+    pub fn open(key_file: impl AsRef<Path>, cert_file: impl AsRef<Path>) -> Result<Self, Error> {
+        let key_pair = Arc::new(KeyPair::from_pem(&std::fs::read_to_string(key_file)?)?);
 
-        let cert_path = config.path.join(&config.config.ca.cert_file);
-        let mut reader = BufReader::new(File::open(&cert_path)?);
-        let cert = Arc::new(
-            rustls_pemfile::certs(&mut reader)
-                .next()
-                .ok_or_else(move || Error::NoCertificate { path: cert_path })??,
-        );
+        let cert_file = cert_file.as_ref();
+        let mut reader = BufReader::new(File::open(&cert_file)?);
+        let cert = Arc::new(rustls_pemfile::certs(&mut reader).next().ok_or_else(
+            move || {
+                Error::NoCertificate {
+                    path: cert_file.to_owned(),
+                }
+            },
+        )??);
 
         // see https://github.com/rustls/rcgen/issues/268
         let cert_params = CertificateParams::from_ca_cert_der(&cert)?;
@@ -140,7 +114,7 @@ impl Ca {
         })
     }
 
-    pub async fn generate(config: &Config) -> Result<Self, Error> {
+    pub async fn generate() -> Result<Self, Error> {
         let mut cert_params = CertificateParams::default();
         cert_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         cert_params.distinguished_name = DistinguishedName::new();
@@ -163,22 +137,21 @@ impl Ca {
         .await
         .unwrap()?;
 
-        tokio::fs::write(
-            config.path.join(&config.config.ca.key_file),
-            key_pair.serialize_pem(),
-        )
-        .await?;
-        tokio::fs::write(
-            config.path.join(&config.config.ca.cert_file),
-            cert_for_signing.pem(),
-        )
-        .await?;
-
         Ok(Self {
             key_pair,
             cert: Arc::new(cert_for_signing.der().to_owned()),
             cert_for_signing,
         })
+    }
+
+    pub fn save(
+        &self,
+        key_file: impl AsRef<Path>,
+        cert_file: impl AsRef<Path>,
+    ) -> Result<(), Error> {
+        std::fs::write(key_file, self.key_pair.serialize_pem())?;
+        std::fs::write(cert_file, self.cert_for_signing.pem())?;
+        Ok(())
     }
 
     pub async fn sign(
@@ -277,12 +250,12 @@ impl Context {
         &self,
         stream: S,
         domain: ServerName<'static>,
-    ) -> Result<ClientStream<S>, Error> {
+    ) -> Result<TargetStream<S>, Error> {
         let stream = TlsConnector::from(self.client_config.clone())
             .connect(domain, stream)
             .await?;
 
-        Ok(stream)
+        Ok(TargetStream { inner: stream })
     }
 }
 
@@ -299,7 +272,7 @@ where
         self,
         server_name: &str,
         cert_params: CertificateParams,
-    ) -> Result<ServerStream<S>, Error> {
+    ) -> Result<SourceStream<S>, Error> {
         let server_cert = {
             let mut certs = self.server_context.certs.lock().await;
             if let Some(cert) = certs.get(server_name) {
@@ -333,7 +306,7 @@ where
             .into_stream(Arc::new(server_config))
             .await?;
 
-        Ok(stream)
+        Ok(SourceStream { inner: stream })
     }
 
     pub fn server_name(&self) -> Option<String> {
@@ -356,18 +329,18 @@ impl<L> Tls<L> {
 
 impl<L, S, T> Layer<S, T> for Tls<L>
 where
-    L: Layer<ServerStream<S>, ClientStream<T>> + Sync,
+    L: Layer<SourceStream<S>, TargetStream<T>> + Sync,
     S: AsyncRead + AsyncWrite + Send + Unpin,
     T: AsyncRead + AsyncWrite + Send + Unpin,
 {
     type Output = ();
 
-    async fn layer(&self, source: S, target: T) -> Result<(), crate::core::Error> {
+    async fn layer(&self, source: S, target: T) -> Result<(), crate::Error> {
         async fn handshake<S, T>(
             context: &Context,
             source: S,
             target: T,
-        ) -> Result<(ServerStream<S>, ClientStream<T>), Error>
+        ) -> Result<(SourceStream<S>, TargetStream<T>), Error>
         where
             S: AsyncRead + AsyncWrite + Send + Unpin,
             T: AsyncRead + AsyncWrite + Send + Unpin,
@@ -397,6 +370,7 @@ where
             // extract certificate parameters from the server certificate we got from the
             // target.
             let target_cert = target
+                .inner
                 .get_ref()
                 .1
                 .peer_certificates()
@@ -415,8 +389,53 @@ where
             Ok((source, target))
         }
 
+        // perform handshake
         let (source, target) = handshake(&self.context, source, target).await?;
+
+        // run inner layer
         self.inner.layer(source, target).await?;
+
+        // note: we don't need to flush the streams, since the underlying layer is
+        // responsible for this we also don't want to shut down the streams.
+
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct TargetStream<Inner> {
+    inner: tokio_rustls::client::TlsStream<Inner>,
+}
+
+impl<Inner> TargetStream<Inner> {
+    pub fn get_tls_connection(&self) -> &rustls::ClientConnection {
+        &self.inner.get_ref().1
+    }
+}
+
+pub struct PeerCertificates<'a>(pub &'a [CertificateDer<'static>]);
+
+impl<'datum, Inner: 'datum> Extract<'datum, PeerCertificates<'datum>> for TargetStream<Inner> {
+    type Error = Infallible;
+
+    fn extract(&'datum self) -> Result<PeerCertificates<'datum>, Infallible> {
+        Ok(PeerCertificates(
+            self.inner
+                .get_ref()
+                .1
+                .peer_certificates()
+                .unwrap_or_default(),
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct SourceStream<Inner> {
+    inner: tokio_rustls::server::TlsStream<Inner>,
+}
+
+impl<Inner> SourceStream<Inner> {
+    pub fn get_tls_connection(&self) -> &rustls::ServerConnection {
+        &self.inner.get_ref().1
     }
 }

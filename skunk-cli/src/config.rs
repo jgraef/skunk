@@ -4,20 +4,7 @@ use std::path::{
 };
 
 use serde::Deserialize;
-
-use crate::core::tls::CaConfig;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("io error")]
-    Io(#[from] std::io::Error),
-
-    #[error("toml error")]
-    Toml(#[from] toml::de::Error),
-
-    #[error("Could not determine configuration path.")]
-    NoConfigPath,
-}
+use color_eyre::eyre::{eyre, Error};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ConfigData {
@@ -39,7 +26,7 @@ impl Config {
         let path = path
             .map(|path| path.as_ref().to_owned())
             .or_else(|| dirs::config_local_dir().map(|path| path.join(Self::DIR_NAME)))
-            .ok_or(Error::NoConfigPath)?;
+            .ok_or_else(|| eyre!("Could not determine config directory"))?;
 
         if !path.exists() {
             std::fs::create_dir_all(&path)?;
@@ -52,10 +39,36 @@ impl Config {
         }
         else {
             let config = ConfigData::default();
-            std::fs::write(&config_file_path, include_str!("../../skunk.default.toml"))?;
+            std::fs::write(&config_file_path, include_str!("../skunk.default.toml"))?;
             config
         };
 
         Ok(Self { config, path })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CaConfig {
+    #[serde(default = "default_config_key_file")]
+    pub key_file: PathBuf,
+
+    #[serde(default = "default_config_cert_file")]
+    pub cert_file: PathBuf,
+}
+
+fn default_config_key_file() -> PathBuf {
+    "ca.key.pem".into()
+}
+
+fn default_config_cert_file() -> PathBuf {
+    "ca.cert.pem".into()
+}
+
+impl Default for CaConfig {
+    fn default() -> Self {
+        Self {
+            key_file: default_config_key_file(),
+            cert_file: default_config_cert_file(),
+        }
     }
 }

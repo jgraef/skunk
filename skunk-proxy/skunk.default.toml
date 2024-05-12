@@ -1,3 +1,0 @@
-[ca]
-# path = "/path/to/ca"
-# The default CA path is the `ca` directory in the config directory.
