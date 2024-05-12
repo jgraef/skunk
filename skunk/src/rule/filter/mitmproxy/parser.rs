@@ -7,6 +7,7 @@ use nom::{
     },
     character::complete::{
         char,
+        digit1,
         multispace0,
         multispace1,
     },
@@ -15,6 +16,7 @@ use nom::{
         map,
         map_res,
         opt,
+        success,
         value,
     },
     error::{
@@ -33,13 +35,15 @@ use nom::{
         pair,
         preceded,
         terminated,
-        tuple,
     },
     IResult,
 };
-use regex::Regex;
 
-use super::Filter;
+use super::{
+    Direction,
+    Filter,
+    Regex,
+};
 use crate::util::bool_expr::{
     And,
     Expression,
@@ -123,6 +127,32 @@ fn parse_term(input: &str) -> Res<Term<Filter>> {
     )(input)
 }
 
+/*
+Asset,
+    All,
+    Body(Direction, Regex),
+    HttpResponseCode(u16),
+    Comment(Regex),
+    Domain(Regex),
+    Dns,
+    Destination(Regex),
+    Error,
+    Header(Direction, Regex),
+    Http,
+    Method(Regex),
+    Marked,
+    Marker(Regex),
+    Meta(Regex),
+    Direction(Direction),
+    Replay(Direction),
+    Source(Regex),
+    ContentType(Direction, Regex),
+    Tcp,
+    Url(Regex),
+    Udp,
+    Websocket,
+*/
+
 fn parse_expr(input: &str) -> Res<Expression<Filter>> {
     context(
         "expr",
@@ -134,9 +164,80 @@ fn parse_expr(input: &str) -> Res<Expression<Filter>> {
                 preceded(
                     wsc(char('~')),
                     alt((
-                        parse_filter_variant("a", tuple(()), |()| Filter::Asset),
-                        parse_filter_variant("all", tuple(()), |()| Filter::All),
-                        // todo: all filter variants
+                        alt((
+                            parse_filter_variant("a", success(()), |()| Filter::Asset),
+                            parse_filter_variant("all", success(()), |()| Filter::All),
+                            parse_filter_variant("b", parse_regex, |regex| {
+                                Filter::Body(Direction::Both, regex)
+                            }),
+                            parse_filter_variant("bq", parse_regex, |regex| {
+                                Filter::Body(Direction::Request, regex)
+                            }),
+                            parse_filter_variant("bs", parse_regex, |regex| {
+                                Filter::Body(Direction::Response, regex)
+                            }),
+                            parse_filter_variant("c", map_res(digit1, str::parse), |code| {
+                                Filter::HttpResponseCode(code)
+                            }),
+                            parse_filter_variant("comment", parse_regex, |regex| {
+                                Filter::Comment(regex)
+                            }),
+                            parse_filter_variant("d", parse_regex, |regex| Filter::Domain(regex)),
+                            parse_filter_variant("dns", success(()), |()| Filter::Dns),
+                            parse_filter_variant("dst", parse_regex, |regex| {
+                                Filter::Destination(regex)
+                            }),
+                            parse_filter_variant("e", success(()), |()| Filter::Error),
+                            parse_filter_variant("h", parse_regex, |regex| {
+                                Filter::Header(Direction::Both, regex)
+                            }),
+                            parse_filter_variant("hq", parse_regex, |regex| {
+                                Filter::Header(Direction::Request, regex)
+                            }),
+                            parse_filter_variant("hs", parse_regex, |regex| {
+                                Filter::Header(Direction::Response, regex)
+                            }),
+                            parse_filter_variant("http", success(()), |()| Filter::Http),
+                            parse_filter_variant("method", parse_regex, |regex| {
+                                Filter::Method(regex)
+                            }),
+                            parse_filter_variant("marked", success(()), |()| Filter::Marked),
+                            parse_filter_variant("marker", parse_regex, |regex| {
+                                Filter::Marker(regex)
+                            }),
+                            parse_filter_variant("meta", parse_regex, |regex| Filter::Meta(regex)),
+                            parse_filter_variant("q", success(()), |()| {
+                                Filter::Direction(Direction::Request)
+                            }),
+                        )),
+                        alt((
+                            parse_filter_variant("replay", success(()), |()| {
+                                Filter::Replay(Direction::Both)
+                            }),
+                            parse_filter_variant("replayq", success(()), |()| {
+                                Filter::Replay(Direction::Request)
+                            }),
+                            parse_filter_variant("replays", success(()), |()| {
+                                Filter::Replay(Direction::Response)
+                            }),
+                            parse_filter_variant("s", success(()), |()| {
+                                Filter::Direction(Direction::Response)
+                            }),
+                            parse_filter_variant("src", parse_regex, |regex| Filter::Source(regex)),
+                            parse_filter_variant("t", parse_regex, |regex| {
+                                Filter::ContentType(Direction::Both, regex)
+                            }),
+                            parse_filter_variant("tq", parse_regex, |regex| {
+                                Filter::ContentType(Direction::Request, regex)
+                            }),
+                            parse_filter_variant("ts", parse_regex, |regex| {
+                                Filter::ContentType(Direction::Response, regex)
+                            }),
+                            parse_filter_variant("tcp", success(()), |()| Filter::Tcp),
+                            parse_filter_variant("u", parse_regex, |regex| Filter::Url(regex)),
+                            parse_filter_variant("udp", success(()), |()| Filter::Udp),
+                            parse_filter_variant("websocket", success(()), |()| Filter::Websocket),
+                        )),
                     )),
                 ),
                 |filter| {
