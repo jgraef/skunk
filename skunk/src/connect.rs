@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use futures_util::Future;
 use tokio::{
     io::{
@@ -9,12 +7,9 @@ use tokio::{
     net::TcpStream,
 };
 
-use super::{
-    address::{
-        HostAddress,
-        TcpAddress,
-    },
-    filter::Extract,
+use super::address::{
+    HostAddress,
+    TcpAddress,
 };
 
 pub trait Connect {
@@ -40,25 +35,5 @@ impl Connect for ConnectTcp {
             }
         };
         Ok(stream)
-    }
-}
-
-pub struct PeerAddress(pub SocketAddr);
-
-impl<'a> Extract<'a, PeerAddress> for TcpStream {
-    type Error = std::io::Error;
-
-    fn extract(&'a self) -> Result<PeerAddress, Self::Error> {
-        Ok(PeerAddress(self.peer_addr()?))
-    }
-}
-
-pub struct LocalAddress(pub SocketAddr);
-
-impl<'a> Extract<'a, LocalAddress> for TcpStream {
-    type Error = std::io::Error;
-
-    fn extract(&'a self) -> Result<LocalAddress, Self::Error> {
-        Ok(LocalAddress(self.local_addr()?))
     }
 }

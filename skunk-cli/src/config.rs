@@ -3,8 +3,11 @@ use std::path::{
     PathBuf,
 };
 
+use color_eyre::eyre::{
+    eyre,
+    Error,
+};
 use serde::Deserialize;
-use color_eyre::eyre::{eyre, Error};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ConfigData {

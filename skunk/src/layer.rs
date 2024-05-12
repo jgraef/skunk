@@ -1,6 +1,5 @@
 use std::{
     future::Future,
-    ops::Deref,
     sync::Arc,
 };
 
@@ -21,16 +20,50 @@ pub trait Layer<S, T> {
     ) -> impl Future<Output = Result<Self::Output, Error>> + Send;
 }
 
-impl<S, T, F, Fut, O> Layer<S, T> for F
-where
-    F: Fn(S, T) -> Fut,
-    Fut: Future<Output = Result<O, Error>> + Send + Sync,
-{
-    type Output = O;
+impl<L: Layer<S, T>, S, T> Layer<S, T> for &L {
+    type Output = L::Output;
 
-    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<O, Error>> + Send {
-        self(source, target)
+    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<L::Output, Error>> + Send {
+        (*self).layer(source, target)
     }
+}
+
+impl<L: Layer<S, T>, S, T> Layer<S, T> for &mut L {
+    type Output = L::Output;
+
+    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<L::Output, Error>> + Send {
+        (self as &L).layer(source, target)
+    }
+}
+
+impl<L: Layer<S, T>, S, T> Layer<S, T> for Arc<L> {
+    type Output = L::Output;
+
+    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<L::Output, Error>> + Send {
+        self.as_ref().layer(source, target)
+    }
+}
+
+pub struct FnLayer<Func>(Func);
+
+impl<Source, Target, Func, Fut, Output> Layer<Source, Target> for FnLayer<Func>
+where
+    Func: Fn(Source, Target) -> Fut,
+    Fut: Future<Output = Result<Output, Error>> + Send + Sync,
+{
+    type Output = Output;
+
+    fn layer(
+        &self,
+        source: Source,
+        target: Target,
+    ) -> impl Future<Output = Result<Output, Error>> + Send {
+        (self.0)(source, target)
+    }
+}
+
+pub fn fn_layer<Func>(function: Func) -> FnLayer<Func> {
+    FnLayer(function)
 }
 
 // todo: move or rename. this is specific to an AsyncRead/Write layer
@@ -47,14 +80,6 @@ where
     async fn layer(&self, mut source: S, mut target: T) -> Result<(), Error> {
         tokio::io::copy_bidirectional(&mut source, &mut target).await?;
         Ok(())
-    }
-}
-
-impl<L: Layer<S, T>, S, T> Layer<S, T> for Arc<L> {
-    type Output = L::Output;
-
-    fn layer(&self, source: S, target: T) -> impl Future<Output = Result<L::Output, Error>> + Send {
-        self.deref().layer(source, target)
     }
 }
 

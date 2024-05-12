@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use color_eyre::eyre::Error;
-use structopt::StructOpt;
 use skunk::tls::Ca;
+use structopt::StructOpt;
 
 use crate::config::Config;
 
@@ -52,10 +52,10 @@ impl App {
                 let ca = Ca::generate().await?;
                 ca.save(
                     &self.config.config.ca.key_file,
-                    &self.config.config.ca.cert_file
+                    &self.config.config.ca.cert_file,
                 )?;
             }
-            Command::Proxy{ .. } => {
+            Command::Proxy { .. } => {
                 todo!();
             }
         }

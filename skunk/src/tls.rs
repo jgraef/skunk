@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    convert::Infallible,
     fmt::Debug,
     fs::File,
     io::BufReader,
@@ -47,10 +46,7 @@ use tokio_rustls::{
     TlsConnector,
 };
 
-use crate::{
-    filter::Extract,
-    layer::Layer,
-};
+use crate::layer::Layer;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -150,6 +146,8 @@ impl Ca {
         cert_file: impl AsRef<Path>,
     ) -> Result<(), Error> {
         std::fs::write(key_file, self.key_pair.serialize_pem())?;
+        // fixme: this saves the `cert_for_signing`, which isn't actually the correct
+        // cert.
         std::fs::write(cert_file, self.cert_for_signing.pem())?;
         Ok(())
     }
@@ -410,22 +408,6 @@ pub struct TargetStream<Inner> {
 impl<Inner> TargetStream<Inner> {
     pub fn get_tls_connection(&self) -> &rustls::ClientConnection {
         &self.inner.get_ref().1
-    }
-}
-
-pub struct PeerCertificates<'a>(pub &'a [CertificateDer<'static>]);
-
-impl<'datum, Inner: 'datum> Extract<'datum, PeerCertificates<'datum>> for TargetStream<Inner> {
-    type Error = Infallible;
-
-    fn extract(&'datum self) -> Result<PeerCertificates<'datum>, Infallible> {
-        Ok(PeerCertificates(
-            self.inner
-                .get_ref()
-                .1
-                .peer_certificates()
-                .unwrap_or_default(),
-        ))
     }
 }
 

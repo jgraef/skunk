@@ -1,13 +1,16 @@
+#![allow(dead_code)]
+
 pub mod address;
 pub mod connect;
-pub mod filter;
 pub mod layer;
 pub mod protocol;
 pub mod proxy;
+pub mod rule;
 #[cfg(feature = "store")]
 pub mod store;
 #[cfg(feature = "tls")]
 pub mod tls;
+mod util;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

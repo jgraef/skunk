@@ -1,8 +1,12 @@
 use std::{
-    convert::Infallible, net::SocketAddr, pin::Pin, string::FromUtf8Error, sync::Arc, task::{
+    net::SocketAddr,
+    pin::Pin,
+    string::FromUtf8Error,
+    sync::Arc,
+    task::{
         Context,
         Poll,
-    }
+    },
 };
 
 use async_trait::async_trait;
@@ -39,13 +43,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing_unwrap::ResultExt;
 
+use super::ProxySource;
 use crate::{
     address::{
         HostAddress,
         TcpAddress,
     },
     connect::Connect,
-    filter::Extract,
     layer::Layer,
 };
 
@@ -64,12 +68,18 @@ pub enum Error {
     Protocol(#[from] socks5_server::proto::Error),
 }
 
-pub struct SocksStream {
+pub struct SocksSource {
     inner: socks5_server::Connect<socks5_server::connection::connect::state::Ready>,
     target_address: TcpAddress,
 }
 
-impl AsyncRead for SocksStream {
+impl ProxySource for SocksSource {
+    fn target_address(&self) -> &TcpAddress {
+        &self.target_address
+    }
+}
+
+impl AsyncRead for SocksSource {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -79,7 +89,7 @@ impl AsyncRead for SocksStream {
     }
 }
 
-impl AsyncWrite for SocksStream {
+impl AsyncWrite for SocksSource {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -100,14 +110,6 @@ impl AsyncWrite for SocksStream {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
-impl<'a> Extract<'a, &'a TcpAddress> for SocksStream {
-    type Error = Infallible;
-
-    fn extract(&'a self) -> Result<&'a TcpAddress, Infallible> {
-        Ok(&self.target_address)
     }
 }
 
@@ -139,7 +141,7 @@ impl Builder {
     pub async fn serve<C, L>(self, connect: C, layer: L) -> Result<(), Error>
     where
         C: Connect + Clone + Send + 'static,
-        L: for<'s, 't> Layer<&'s mut SocksStream, &'t mut <C as Connect>::Connection>
+        L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
             + Clone
             + Send
             + 'static,
@@ -171,7 +173,7 @@ async fn run<C, L>(
 ) -> Result<(), Error>
 where
     C: Connect + Clone + Send + 'static,
-    L: for<'s, 't> Layer<&'s mut SocksStream, &'t mut <C as Connect>::Connection>
+    L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
         + Clone
         + Send
         + 'static,
@@ -210,7 +212,7 @@ async fn handle_connection<C, L>(
 ) -> Result<(), Error>
 where
     C: Connect,
-    L: for<'s, 't> Layer<&'s mut SocksStream, &'t mut <C as Connect>::Connection>,
+    L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>,
 {
     let (connection, auth_result) = connection.authenticate().await.map_err(|(e, _)| e)?;
     match auth_result? {
@@ -277,7 +279,7 @@ where
                 .reply(Reply::Succeeded, address)
                 .await
                 .map(|inner| {
-                    SocksStream {
+                    SocksSource {
                         inner,
                         target_address,
                     }
