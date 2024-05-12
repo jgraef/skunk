@@ -5,10 +5,10 @@ work in progress
 # TODO
 
  - filters (switch):
-  - [x] parsing mitmproxy filter expressions
-  - [ ] effects of filters?
-  - [ ] build `Layer` stack from filter set?
-  - build hard-coded `Layer` so we can prototype stuff?
+   - [x] parsing mitmproxy filter expressions
+   - [ ] effects of filters?
+   - [ ] build `Layer` stack from filter set?
+   - build hard-coded `Layer` so we can prototype stuff?
  - http proxy server
  - socks/http proxy `Connect` impl
  - tor `Connect` impl (with [arti][1])
