@@ -27,16 +27,23 @@ pub struct Http<L> {
     inner: L,
 }
 
+impl<L> Http<L> {
+    pub fn new(inner: L) -> Self {
+        Self { inner }
+    }
+}
+
 impl<L, S, T> Layer<S, T> for Http<L>
 where
     L: for<'client> Layer<Request, TargetClient<'client>, Output = Response> + Sync,
-    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-    T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin,
+    T: AsyncRead + AsyncWrite + Send + Unpin,
 {
     type Output = ();
 
     async fn layer(&self, source: S, target: T) -> Result<(), crate::Error> {
         // create client connection to target
+        // note: this requires that `target` is `'static`
         let (send_request, target_conn) = hyper::client::conn::http1::Builder::new()
             .handshake(TokioIo::new(target))
             .await

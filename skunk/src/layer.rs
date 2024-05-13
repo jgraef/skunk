@@ -44,6 +44,7 @@ impl<L: Layer<S, T>, S, T> Layer<S, T> for Arc<L> {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct FnLayer<Func>(Func);
 
 impl<Source, Target, Func, Fut, Output> Layer<Source, Target> for FnLayer<Func>
@@ -72,8 +73,8 @@ pub struct Passthrough;
 
 impl<S, T> Layer<S, T> for Passthrough
 where
-    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-    T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin,
+    T: AsyncRead + AsyncWrite + Send + Unpin,
 {
     type Output = ();
 

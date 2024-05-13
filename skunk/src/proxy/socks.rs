@@ -41,6 +41,7 @@ use tokio::{
     },
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use tracing_unwrap::ResultExt;
 
 use super::ProxySource;
@@ -188,17 +189,16 @@ where
                 let shutdown = shutdown.clone();
                 let connect = connect.clone();
                 let layer = layer.clone();
+                let span = tracing::info_span!("socks", ?address);
 
                 tokio::spawn(async move {
-                    let span = tracing::info_span!("connection", ?address);
-                    let _guard = span.enter();
                     tokio::select!{
                         result = handle_connection(connection, connect, layer) => {
                             result.ok_or_log();
                         },
                         _ = shutdown.cancelled() => {},
                     }
-                });
+                }.instrument(span));
             },
             _ = shutdown.cancelled() => {},
         }
@@ -289,10 +289,7 @@ where
             // run layer
             // we pass mutable references, so we can shut down the streams properly
             // afterwards
-            layer
-                .layer(&mut source, &mut target)
-                .await
-                .expect("todo: handle error");
+            layer.layer(&mut source, &mut target).await.ok_or_log();
 
             // shut down streams. this flushes any buffered data
             target.shutdown().await?;
@@ -350,7 +347,7 @@ impl Auth for MaybeAuth {
 
     async fn execute(&self, stream: &mut TcpStream) -> Self::Output {
         match self {
-            MaybeAuth::NoAuth => todo!(),
+            MaybeAuth::NoAuth => Ok(AuthResult::Ok),
             MaybeAuth::Password { username, password } => {
                 let req = PasswordRequest::read_from(stream).await?;
                 let correct = &req.username == username && &req.password == password;

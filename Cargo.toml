@@ -4,3 +4,6 @@ members = [
   "skunk",
   "skunk-cli",
 ]
+
+[patch.crates-io]
+hyper = { git = "https://github.com/jgraef/hyper.git", branch = "non-static-client-io" }

@@ -66,7 +66,9 @@ pub enum Expression<V, D = ()> {
 impl<V, D> Expression<V, D> {
     pub fn map_data<E>(self, f: impl FnMut(D) -> E) -> Expression<V, E> {
         match self {
-            Expression::Or(or) => Expression::Or(or.map_data(f)),
+            Expression::Or(or) => {
+                Expression::Or(or.map_data(Box::new(f) as Box<dyn FnMut(D) -> E>))
+            }
             Expression::Variable(variable) => Expression::Variable(variable.map_data(f)),
         }
     }

@@ -8,8 +8,10 @@ use std::{
         Path,
         PathBuf,
     },
+    pin::Pin,
     str::FromStr,
     sync::Arc,
+    task::Poll,
 };
 
 use rcgen::{
@@ -37,6 +39,7 @@ use tokio::{
     io::{
         AsyncRead,
         AsyncWrite,
+        ReadBuf,
     },
     sync::Mutex,
 };
@@ -55,6 +58,9 @@ pub enum Error {
 
     #[error("rcgen error")]
     Rcgen(#[from] rcgen::Error),
+
+    #[error("rustls error")]
+    Rustls(#[from] rustls::Error),
 
     #[error("missing certificate: {path}")]
     NoCertificate { path: PathBuf },
@@ -212,7 +218,7 @@ impl Context {
     pub async fn new(ca: Ca) -> Result<Self, Error> {
         let client_config = Arc::new(
             ClientConfig::builder()
-                .with_root_certificates(RootCertStore::empty()) // todo
+                .with_root_certificates(root_certificates()?) // todo
                 .with_no_client_auth(),
         );
 
@@ -411,6 +417,40 @@ impl<Inner> TargetStream<Inner> {
     }
 }
 
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for TargetStream<Inner> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TargetStream<Inner> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 #[derive(Debug)]
 pub struct SourceStream<Inner> {
     inner: tokio_rustls::server::TlsStream<Inner>,
@@ -419,5 +459,56 @@ pub struct SourceStream<Inner> {
 impl<Inner> SourceStream<Inner> {
     pub fn get_tls_connection(&self) -> &rustls::ServerConnection {
         &self.inner.get_ref().1
+    }
+}
+
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for SourceStream<Inner> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for SourceStream<Inner> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+pub fn root_certificates() -> Result<Arc<RootCertStore>, Error> {
+    static CERTS_CACHE: std::sync::Mutex<Option<Arc<RootCertStore>>> = std::sync::Mutex::new(None);
+    let mut certs_cache = CERTS_CACHE.lock().unwrap();
+    if let Some(certs) = &*certs_cache {
+        Ok(certs.clone())
+    }
+    else {
+        let mut certs = RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs()? {
+            certs.add(cert)?;
+        }
+        let certs = Arc::new(certs);
+        *certs_cache = Some(certs.clone());
+        Ok(certs)
     }
 }

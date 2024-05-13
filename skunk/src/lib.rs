@@ -10,7 +10,7 @@ pub mod rule;
 pub mod store;
 #[cfg(feature = "tls")]
 pub mod tls;
-mod util;
+pub mod util;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
