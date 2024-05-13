@@ -4,17 +4,19 @@ work in progress
 
 # TODO
 
- - filters (switch):
+ - [ ] filters (switch):
    - [x] parsing mitmproxy filter expressions
    - [ ] effects of filters?
    - [ ] build `Layer` stack from filter set?
-   - build hard-coded `Layer` so we can prototype stuff?
- - http proxy server
- - socks/http proxy `Connect` impl
- - tor `Connect` impl (with [arti][1])
- - UI: TUI or web or both? TUI can be directly integrated into `skunk-cli` or connect via network
- - network: [axum][2] with websocket, something like [remoc][1] for transparent channels?
- - storing flows: [sqlx][4] with sqlite
+   - [ ] build hard-coded `Layer` so we can prototype stuff
+   - [ ] fix `fn_layer` lifetimes
+ - [ ] http proxy server
+ - [ ] socks/http proxy `Connect` impl
+ - [ ] tor `Connect` impl (with [arti][1])
+ - [ ] UI: TUI or web or both? TUI can be directly integrated into `skunk-cli` or connect via network
+ - [ ] network: [axum][2] with websocket, something like [remoc][1] for transparent channels?
+ - [ ] storing flows: [sqlx][4] with sqlite
+ - [ ] `Connect` (and `Layer`?) that serves a axum router
 
 [1]: https://docs.rs/arti-client/latest/arti_client/index.html
 [2]: https://docs.rs/axum/latest/axum/index.html
