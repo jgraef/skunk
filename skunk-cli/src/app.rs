@@ -35,6 +35,7 @@ use skunk::{
 };
 use structopt::StructOpt;
 use tokio::net::TcpStream;
+use tracing::Span;
 
 use crate::config::Config;
 
@@ -194,21 +195,14 @@ impl<'source, 'target> Layer<&'source mut SocksSource, &'target mut TcpStream>
         let target_address = source.target_address();
 
         if self.filter.matches(target_address) {
-            tracing::info!(%target_address, "logging");
+            let span = tracing::info_span!("connection", target = %target_address);
 
             match target_address.port {
-                80 => {
-                    Http::new(LogLayer::new(target_address.clone()))
+                80 => Http::new(LogLayer::new(span)).layer(source, target).await?,
+                443 => {
+                    tls::Tls::new(Http::new(LogLayer::new(span)), self.tls.clone())
                         .layer(source, target)
                         .await?
-                }
-                443 => {
-                    tls::Tls::new(
-                        Http::new(LogLayer::new(target_address.clone())),
-                        self.tls.clone(),
-                    )
-                    .layer(source, target)
-                    .await?
                 }
                 _ => panic!("only port 80 and 443 work right now"),
             }
@@ -223,12 +217,12 @@ impl<'source, 'target> Layer<&'source mut SocksSource, &'target mut TcpStream>
 
 #[derive(Debug)]
 pub struct LogLayer {
-    target_address: TcpAddress,
+    span: Span,
 }
 
 impl LogLayer {
-    pub fn new(target_address: TcpAddress) -> Self {
-        Self { target_address }
+    pub fn new(span: Span) -> Self {
+        Self { span }
     }
 }
 
@@ -242,7 +236,7 @@ impl<'client> Layer<http::Request, http::TargetClient<'client>> for LogLayer {
     ) -> Result<http::Response, skunk::Error> {
         // log request
         tracing::info!(
-            target_address = %self.target_address,
+            parent: &self.span,
             method = %request.0.method(),
             uri = %request.0.uri(),
             ">"
@@ -252,7 +246,7 @@ impl<'client> Layer<http::Request, http::TargetClient<'client>> for LogLayer {
 
         // log response
         tracing::info!(
-            target_address = %self.target_address,
+            parent: &self.span,
             status = %response.0.status(),
             "<"
         );

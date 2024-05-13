@@ -292,8 +292,10 @@ where
             layer.layer(&mut source, &mut target).await.ok_or_log();
 
             // shut down streams. this flushes any buffered data
-            target.shutdown().await?;
-            source.shutdown().await?;
+            // note: sometimes the stream is already closed. i think we can just ignore the
+            // errors.
+            let _ = target.shutdown().await;
+            let _ = source.shutdown().await;
         }
     }
 
