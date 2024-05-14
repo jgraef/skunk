@@ -53,9 +53,6 @@ pub enum Command {
         #[structopt(flatten)]
         socks: SocksArgs,
 
-        #[structopt(short, long)]
-        all: bool,
-
         target: Vec<TcpAddress>,
     },
 }
@@ -123,7 +120,7 @@ impl App {
                 tracing::info!("Key file saved to: {}", key_file.display());
                 tracing::info!("Cert file saved to: {}", cert_file.display());
             }
-            Command::Proxy { socks, target, all } => {
+            Command::Proxy { socks, target } => {
                 let shutdown = CancellationToken::new();
 
                 // fixme: fn_layer doesn't work
@@ -138,10 +135,12 @@ impl App {
                 )?;
                 let tls = tls::Context::new(ca).await?;
 
-                let filter = Arc::new(if all {
+                let filter = Arc::new(if target.is_empty() {
+                    tracing::info!("matching all flows");
                     TargetFilter::All
                 }
                 else {
+                    tracing::info!("matching: {target:?}");
                     TargetFilter::Set(target.into_iter().collect())
                 });
 

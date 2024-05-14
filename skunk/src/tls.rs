@@ -75,15 +75,6 @@ pub enum Error {
     NoTargetCertificate,
 }
 
-impl From<Error> for std::io::Error {
-    fn from(e: Error) -> Self {
-        match e {
-            Error::Io(e) => e,
-            _ => std::io::Error::new(std::io::ErrorKind::Other, e),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Ca {
     key_pair: Arc<KeyPair>,
@@ -96,7 +87,7 @@ impl Ca {
         let key_pair = Arc::new(KeyPair::from_pem(&std::fs::read_to_string(key_file)?)?);
 
         let cert_file = cert_file.as_ref();
-        let mut reader = BufReader::new(File::open(&cert_file)?);
+        let mut reader = BufReader::new(File::open(cert_file)?);
         let cert = Arc::new(rustls_pemfile::certs(&mut reader).next().ok_or_else(
             move || {
                 Error::NoCertificate {
@@ -105,7 +96,10 @@ impl Ca {
             },
         )??);
 
-        // see https://github.com/rustls/rcgen/issues/268
+        // we need to create a `Certificate` from the `CertificateDer`. This is not
+        // possible. But only certain parameters from the `Certificate` are used
+        // for signing, so it doesn't matter that we just sign a new one with the right
+        // parameters. see https://github.com/rustls/rcgen/issues/268
         let cert_params = CertificateParams::from_ca_cert_der(&cert)?;
         let cert_for_signing = Arc::new(cert_params.self_signed(&key_pair)?);
 
@@ -153,7 +147,7 @@ impl Ca {
     ) -> Result<(), Error> {
         std::fs::write(key_file, self.key_pair.serialize_pem())?;
         // fixme: this saves the `cert_for_signing`, which isn't actually the correct
-        // cert.
+        // cert, if we didn't generate this CA.
         std::fs::write(cert_file, self.cert_for_signing.pem())?;
         Ok(())
     }
@@ -161,19 +155,11 @@ impl Ca {
     pub async fn sign(
         &self,
         server_key: Arc<KeyPair>,
-        cert_params: CertificateParams,
+        mut cert_params: CertificateParams,
     ) -> Result<CertificateDer<'static>, Error> {
-        /*let mut cert_params = CertificateParams::default();
-        cert_params.distinguished_name = DistinguishedName::new();
-        cert_params
-            .distinguished_name
-            .push(DnType::CommonName, &server_name);
-        cert_params
-            .distinguished_name
-            .push(DnType::OrganizationName, "gocksec");
-        cert_params
-            .subject_alt_names
-            .push(SanType::DnsName(server_name.try_into()?));*/
+        // since we generate new certificates during each session, but with the same
+        // issuer, we need to generate a random serial number.
+        cert_params.serial_number = None;
 
         let ca_key = self.key_pair.clone();
         let ca_cert = self.cert_for_signing.clone();
@@ -295,7 +281,7 @@ where
 
         let cert_chain = vec![
             server_cert,
-            CertificateDer::clone(self.server_context.ca.root_cert()),
+            //CertificateDer::clone(self.server_context.ca.root_cert()),
         ];
         let server_key =
             PrivateKeyDer::try_from(self.server_context.server_key.serialize_der()).unwrap();
@@ -385,7 +371,7 @@ where
             let target_cert_params = CertificateParams::from_ca_cert_der(target_cert)?;
 
             // finish the TLS handshake with the source by imitating the certificate and
-            // signing it with out CA.
+            // signing it with our CA.
             let source = source_accept
                 .finish(&source_server_name, target_cert_params)
                 .await?;
