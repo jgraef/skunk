@@ -42,7 +42,6 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-use tracing_unwrap::ResultExt;
 
 use super::ProxySource;
 use crate::{
@@ -52,6 +51,7 @@ use crate::{
     },
     connect::Connect,
     layer::Layer,
+    util::error::ResultExt,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -194,7 +194,7 @@ where
                 tokio::spawn(async move {
                     tokio::select!{
                         result = handle_connection(connection, connect, layer) => {
-                            result.ok_or_log();
+                            let _ = result.log_error();
                         },
                         _ = shutdown.cancelled() => {},
                     }
@@ -289,7 +289,10 @@ where
             // run layer
             // we pass mutable references, so we can shut down the streams properly
             // afterwards
-            layer.layer(&mut source, &mut target).await.ok_or_log();
+            let _ = layer
+                .layer(&mut source, &mut target)
+                .await
+                .log_error_with_message("Layer returned an error");
 
             // shut down streams. this flushes any buffered data
             // note: sometimes the stream is already closed. i think we can just ignore the
