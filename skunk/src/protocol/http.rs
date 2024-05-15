@@ -43,7 +43,6 @@ where
 
     async fn layer(&self, source: S, target: T) -> Result<(), crate::Error> {
         // create client connection to target
-        // note: this requires that `target` is `'static`
         let (send_request, target_conn) = hyper::client::conn::http1::Builder::new()
             .handshake(TokioIo::new(target))
             .await

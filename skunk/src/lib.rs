@@ -8,8 +8,6 @@ pub mod proxy;
 pub mod rule;
 #[cfg(feature = "store")]
 pub mod store;
-#[cfg(feature = "tls")]
-pub mod tls;
 pub mod util;
 
 #[derive(Debug, thiserror::Error)]
@@ -19,7 +17,7 @@ pub enum Error {
 
     #[cfg(feature = "tls")]
     #[error("tls error")]
-    Tls(#[from] self::tls::Error),
+    Tls(#[from] self::protocol::tls::Error),
 
     #[cfg(feature = "http")]
     #[error("http error")]

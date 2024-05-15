@@ -16,9 +16,15 @@ use skunk::{
         Layer,
         Passthrough,
     },
-    protocol::http::{
-        self,
-        Http,
+    protocol::{
+        http::{
+            self,
+            Http,
+        },
+        tls::{
+            self,
+            Ca,
+        },
     },
     proxy::{
         socks::{
@@ -26,10 +32,6 @@ use skunk::{
             SocksSource,
         },
         ProxySource,
-    },
-    tls::{
-        self,
-        Ca,
     },
     util::CancellationToken,
 };

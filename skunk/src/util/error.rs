@@ -62,12 +62,12 @@ impl<T, E: Error> ResultExt for Result<T, E> {
     }
 }
 
-// yeah, this could be better. probably missed a lot of edge-cases
 fn make_relative(path: &str) -> &str {
-    static DIR: &'static str = env!("CARGO_MANIFEST_DIR");
-    DIR[..DIR.len() - 1]
-        .rfind('/')
-        .map(|p| &DIR[..p + 1])
-        .and_then(|dir| path.strip_prefix(dir))
+    static DIR: &'static str = env!("CARGO_RUSTC_CURRENT_DIR");
+    path.strip_prefix(DIR)
+        .map(|path| {
+            path.strip_prefix(std::path::MAIN_SEPARATOR_STR)
+                .unwrap_or(path)
+        })
         .unwrap_or(path)
 }

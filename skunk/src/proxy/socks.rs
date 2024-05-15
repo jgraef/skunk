@@ -217,10 +217,10 @@ where
     let (connection, auth_result) = connection.authenticate().await.map_err(|(e, _)| e)?;
     match auth_result? {
         AuthResult::Ok => {
-            tracing::info!("authenticated");
+            tracing::trace!("authenticated");
         }
         AuthResult::Failed => {
-            tracing::info!("authentication failed");
+            tracing::warn!("authentication failed");
             return Ok(());
         }
     }
