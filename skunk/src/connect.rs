@@ -1,10 +1,14 @@
-use futures_util::Future;
+use std::future::Future;
+
 use tokio::{
     io::{
         AsyncRead,
         AsyncWrite,
     },
-    net::TcpStream,
+    net::{
+        TcpListener,
+        TcpStream,
+    },
 };
 
 use super::address::{
@@ -21,7 +25,7 @@ pub trait Connect {
     ) -> impl Future<Output = Result<Self::Connection, std::io::Error>> + Send;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ConnectTcp;
 
 impl Connect for ConnectTcp {
@@ -35,5 +39,24 @@ impl Connect for ConnectTcp {
             }
         };
         Ok(stream)
+    }
+}
+
+pub trait Listen {
+    type Connection: AsyncRead + AsyncWrite + Send + Sync + Unpin;
+
+    fn accept(&self) -> impl Future<Output = Result<Self::Connection, std::io::Error>> + Send;
+}
+
+pub struct ListenTcp {
+    listener: TcpListener,
+}
+
+impl Listen for ListenTcp {
+    type Connection = TcpStream;
+
+    async fn accept(&self) -> Result<Self::Connection, std::io::Error> {
+        let (conn, _) = self.listener.accept().await?;
+        Ok(conn)
     }
 }

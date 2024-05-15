@@ -3,7 +3,6 @@
 pub mod address;
 pub mod connect;
 pub mod layer;
-pub mod protocol;
 pub mod proxy;
 pub mod rule;
 #[cfg(feature = "store")]
@@ -15,13 +14,13 @@ pub enum Error {
     #[error("io error")]
     Io(#[from] std::io::Error),
 
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "layer-tls")]
     #[error("tls error")]
-    Tls(#[from] self::protocol::tls::Error),
+    Tls(#[from] self::layer::tls::Error),
 
-    #[cfg(feature = "http")]
+    #[cfg(feature = "layer-http")]
     #[error("http error")]
-    Http(#[from] self::protocol::http::Error),
+    Http(#[from] self::layer::http::Error),
 
     #[cfg(feature = "store")]
     #[error("store error")]

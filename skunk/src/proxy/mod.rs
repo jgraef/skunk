@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use crate::address::TcpAddress;
 
-//pub mod http;
-#[cfg(feature = "socks")]
+#[cfg(feature = "proxy-http")]
+pub mod http;
+#[cfg(feature = "proxy-socks")]
 pub mod socks;
 
 pub trait ProxySource {

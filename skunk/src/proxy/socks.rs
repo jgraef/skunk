@@ -49,18 +49,23 @@ use crate::{
         HostAddress,
         TcpAddress,
     },
-    connect::Connect,
-    layer::Layer,
+    connect::{
+        Connect,
+        ConnectTcp,
+    },
+    layer::{
+        Layer,
+        Passthrough,
+    },
     util::error::ResultExt,
 };
+
+pub const DEFAULT_PORT: u16 = 9090;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io error")]
     Io(#[from] std::io::Error),
-
-    #[error("Either both username and password or neither must be specified")]
-    AuthEitherBothOrNone,
 
     #[error("Error during authentication")]
     Password(#[from] socks5_server::proto::handshake::password::Error),
@@ -114,32 +119,76 @@ impl AsyncWrite for SocksSource {
     }
 }
 
-pub struct Builder {
+pub struct Builder<C = ConnectTcp, L = Passthrough> {
     bind_address: SocketAddr,
-    shutdown: Option<CancellationToken>,
-    auth: Option<(String, String)>,
+    shutdown: CancellationToken,
+    auth: MaybeAuth,
+    connect: C,
+    layer: L,
 }
 
-impl Builder {
-    pub fn new(bind_address: impl Into<SocketAddr>) -> Self {
+impl Default for Builder<ConnectTcp, Passthrough> {
+    fn default() -> Self {
         Self {
-            bind_address: bind_address.into(),
-            shutdown: None,
-            auth: None,
+            bind_address: ([127, 0, 0, 1], DEFAULT_PORT).into(),
+            shutdown: Default::default(),
+            auth: MaybeAuth::NoAuth,
+            connect: ConnectTcp,
+            layer: Passthrough,
         }
+    }
+}
+
+impl<C, L> Builder<C, L> {
+    pub fn with_bind_address(mut self, bind_address: impl Into<SocketAddr>) -> Self {
+        self.bind_address = bind_address.into();
+        self
     }
 
     pub fn with_graceful_shutdown(mut self, shutdown: CancellationToken) -> Self {
-        self.shutdown = Some(shutdown);
+        self.shutdown = shutdown;
         self
     }
 
     pub fn with_password(mut self, username: String, password: String) -> Self {
-        self.auth = Some((username, password));
+        self.auth = MaybeAuth::Password {
+            username: username.into_bytes(),
+            password: password.into_bytes(),
+        };
         self
     }
 
-    pub async fn serve<C, L>(self, connect: C, layer: L) -> Result<(), Error>
+    pub fn with_connect<D>(self, connect: D) -> Builder<D, L>
+    where
+        D: Connect + Clone + Send + 'static,
+    {
+        Builder {
+            bind_address: self.bind_address,
+            shutdown: self.shutdown,
+            auth: self.auth,
+            connect,
+            layer: self.layer,
+        }
+    }
+
+    pub fn with_layer<M>(self, layer: M) -> Builder<C, M>
+    where
+        C: Connect,
+        M: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
+            + Clone
+            + Send
+            + 'static,
+    {
+        Builder {
+            bind_address: self.bind_address,
+            shutdown: self.shutdown,
+            auth: self.auth,
+            connect: self.connect,
+            layer,
+        }
+    }
+
+    pub async fn serve(self) -> Result<(), Error>
     where
         C: Connect + Clone + Send + 'static,
         L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
@@ -147,18 +196,12 @@ impl Builder {
             + Send
             + 'static,
     {
-        let auth = self.auth.map_or(MaybeAuth::NoAuth, |(username, password)| {
-            MaybeAuth::Password {
-                username: username.into_bytes(),
-                password: password.into_bytes(),
-            }
-        });
         run(
             self.bind_address,
-            self.shutdown.unwrap_or_default(),
-            auth,
-            connect,
-            layer,
+            self.shutdown,
+            self.auth,
+            self.connect,
+            self.layer,
         )
         .await?;
         Ok(())

@@ -11,12 +11,7 @@ use color_eyre::eyre::{
 };
 use skunk::{
     address::TcpAddress,
-    connect::ConnectTcp,
     layer::{
-        Layer,
-        Passthrough,
-    },
-    protocol::{
         http::{
             self,
             Http,
@@ -25,6 +20,8 @@ use skunk::{
             self,
             Ca,
         },
+        Layer,
+        Passthrough,
     },
     proxy::{
         socks::{
@@ -73,7 +70,9 @@ pub struct SocksArgs {
 
 impl SocksArgs {
     pub fn builder(self, shutdown: CancellationToken) -> Result<socks::Builder, Error> {
-        let mut builder = socks::Builder::new(self.bind_address).with_graceful_shutdown(shutdown);
+        let mut builder = socks::Builder::default()
+            .with_bind_address(self.bind_address)
+            .with_graceful_shutdown(shutdown);
 
         match (self.username, self.password) {
             (Some(username), Some(password)) => builder = builder.with_password(username, password),
@@ -148,7 +147,8 @@ impl App {
 
                 socks
                     .builder(shutdown)?
-                    .serve(ConnectTcp, FilteredHttpsLayer { tls, filter })
+                    .with_layer(FilteredHttpsLayer { tls, filter })
+                    .serve()
                     .await?;
             }
         }

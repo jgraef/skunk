@@ -32,7 +32,6 @@ use rustls::{
     },
     server::Acceptor,
     ClientConfig,
-    RootCertStore,
     ServerConfig,
 };
 use tokio::{
@@ -49,7 +48,10 @@ use tokio_rustls::{
     TlsConnector,
 };
 
-use crate::layer::Layer;
+use crate::{
+    layer::Layer,
+    util::tls::default_client_config,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -61,6 +63,9 @@ pub enum Error {
 
     #[error("rustls error")]
     Rustls(#[from] rustls::Error),
+
+    #[error("tls-utils error")]
+    TlsUtils(#[from] crate::util::tls::Error),
 
     #[error("missing certificate: {path}")]
     NoCertificate { path: PathBuf },
@@ -196,18 +201,12 @@ struct ServerContext {
 
 #[derive(Clone, Debug)]
 pub struct Context {
-    client_config: Arc<ClientConfig>,
+    pub(crate) client_config: Arc<ClientConfig>,
     server_context: ServerContext,
 }
 
 impl Context {
     pub async fn new(ca: Ca) -> Result<Self, Error> {
-        let client_config = Arc::new(
-            ClientConfig::builder()
-                .with_root_certificates(root_certificates()?) // todo
-                .with_no_client_auth(),
-        );
-
         let certs = Arc::new(Mutex::new(HashMap::new()));
 
         let server_key =
@@ -216,7 +215,7 @@ impl Context {
                 .unwrap()?;
 
         Ok(Self {
-            client_config,
+            client_config: default_client_config()?,
             server_context: ServerContext {
                 certs,
                 ca,
@@ -246,6 +245,12 @@ impl Context {
             .await?;
 
         Ok(TargetStream { inner: stream })
+    }
+}
+
+impl From<Context> for Arc<ClientConfig> {
+    fn from(value: Context) -> Self {
+        value.client_config.clone()
     }
 }
 
@@ -479,22 +484,5 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for SourceStream<Inner> {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
-pub fn root_certificates() -> Result<Arc<RootCertStore>, Error> {
-    static CERTS_CACHE: std::sync::Mutex<Option<Arc<RootCertStore>>> = std::sync::Mutex::new(None);
-    let mut certs_cache = CERTS_CACHE.lock().unwrap();
-    if let Some(certs) = &*certs_cache {
-        Ok(certs.clone())
-    }
-    else {
-        let mut certs = RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs()? {
-            certs.add(cert)?;
-        }
-        let certs = Arc::new(certs);
-        *certs_cache = Some(certs.clone());
-        Ok(certs)
     }
 }

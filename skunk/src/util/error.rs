@@ -28,16 +28,16 @@ pub trait ErrorExt: std::error::Error {
 impl<E: Error> ErrorExt for E {}
 
 pub trait ResultExt {
-    fn log_error(&self);
-    fn log_error_with_message(&self, message: &str);
+    fn log_error(self) -> Self;
+    fn log_error_with_message(self, message: &str) -> Self;
 }
 
 impl<T, E: Error> ResultExt for Result<T, E> {
     #[inline]
     #[track_caller]
-    fn log_error(&self) {
+    fn log_error(self) -> Self {
         let location = Location::caller();
-        if let Err(e) = self {
+        if let Err(e) = &self {
             tracing::error!(
                 file = make_relative(location.file()),
                 line = location.line(),
@@ -45,13 +45,14 @@ impl<T, E: Error> ResultExt for Result<T, E> {
                 e.display_chain()
             );
         }
+        self
     }
 
     #[inline]
     #[track_caller]
-    fn log_error_with_message(&self, message: &str) {
+    fn log_error_with_message(self, message: &str) -> Self {
         let location = Location::caller();
-        if let Err(e) = self {
+        if let Err(e) = &self {
             tracing::error!(
                 file = make_relative(location.file()),
                 line = location.line(),
@@ -59,6 +60,7 @@ impl<T, E: Error> ResultExt for Result<T, E> {
                 e.display_chain()
             );
         }
+        self
     }
 }
 

@@ -1,3 +1,8 @@
+#[cfg(feature = "layer-http")]
+pub mod http;
+#[cfg(feature = "layer-tls")]
+pub mod tls;
+
 use std::{
     future::Future,
     sync::Arc,
@@ -68,7 +73,7 @@ pub fn fn_layer<Func>(function: Func) -> FnLayer<Func> {
 }
 
 // todo: move or rename. this is specific to an AsyncRead/Write layer
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Passthrough;
 
 impl<S, T> Layer<S, T> for Passthrough
