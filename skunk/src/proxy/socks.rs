@@ -32,7 +32,6 @@ use tokio::{
     io::{
         AsyncRead,
         AsyncWrite,
-        AsyncWriteExt,
         ReadBuf,
     },
     net::{
@@ -43,7 +42,11 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
-use super::ProxySource;
+use super::{
+    Passthrough,
+    Proxy,
+    TargetAddress,
+};
 use crate::{
     address::{
         HostAddress,
@@ -52,10 +55,6 @@ use crate::{
     connect::{
         Connect,
         ConnectTcp,
-    },
-    layer::{
-        Layer,
-        Passthrough,
     },
     util::error::ResultExt,
 };
@@ -74,18 +73,18 @@ pub enum Error {
     Protocol(#[from] socks5_server::proto::Error),
 }
 
-pub struct SocksSource {
+pub struct Incoming {
     inner: socks5_server::Connect<socks5_server::connection::connect::state::Ready>,
     target_address: TcpAddress,
 }
 
-impl ProxySource for SocksSource {
+impl TargetAddress for Incoming {
     fn target_address(&self) -> &TcpAddress {
         &self.target_address
     }
 }
 
-impl AsyncRead for SocksSource {
+impl AsyncRead for Incoming {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -95,7 +94,7 @@ impl AsyncRead for SocksSource {
     }
 }
 
-impl AsyncWrite for SocksSource {
+impl AsyncWrite for Incoming {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -119,27 +118,27 @@ impl AsyncWrite for SocksSource {
     }
 }
 
-pub struct Builder<C = ConnectTcp, L = Passthrough> {
+pub struct Builder<C = ConnectTcp, P = Passthrough> {
     bind_address: SocketAddr,
     shutdown: CancellationToken,
     auth: MaybeAuth,
     connect: C,
-    layer: L,
+    proxy: P,
 }
 
-impl Default for Builder<ConnectTcp, Passthrough> {
+impl<C: Default, P: Default> Default for Builder<C, P> {
     fn default() -> Self {
         Self {
             bind_address: ([127, 0, 0, 1], DEFAULT_PORT).into(),
             shutdown: Default::default(),
             auth: MaybeAuth::NoAuth,
-            connect: ConnectTcp,
-            layer: Passthrough,
+            connect: Default::default(),
+            proxy: Default::default(),
         }
     }
 }
 
-impl<C, L> Builder<C, L> {
+impl<C, P> Builder<C, P> {
     pub fn with_bind_address(mut self, bind_address: impl Into<SocketAddr>) -> Self {
         self.bind_address = bind_address.into();
         self
@@ -158,70 +157,64 @@ impl<C, L> Builder<C, L> {
         self
     }
 
-    pub fn with_connect<D>(self, connect: D) -> Builder<D, L>
+    pub fn with_handler<C2>(self, connect: C2) -> Builder<C2, P>
     where
-        D: Connect + Clone + Send + 'static,
+        C2: Connect + Clone + Send + 'static,
     {
         Builder {
             bind_address: self.bind_address,
             shutdown: self.shutdown,
             auth: self.auth,
             connect,
-            layer: self.layer,
+            proxy: self.proxy,
         }
     }
 
-    pub fn with_layer<M>(self, layer: M) -> Builder<C, M>
+    pub fn with_proxy<P2>(self, proxy: P2) -> Builder<C, P2>
     where
         C: Connect,
-        M: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
-            + Clone
-            + Send
-            + 'static,
+        P2: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
     {
         Builder {
             bind_address: self.bind_address,
             shutdown: self.shutdown,
             auth: self.auth,
             connect: self.connect,
-            layer,
+            proxy,
         }
     }
 
     pub async fn serve(self) -> Result<(), Error>
     where
         C: Connect + Clone + Send + 'static,
-        L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
-            + Clone
-            + Send
-            + 'static,
+        P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
     {
         run(
             self.bind_address,
             self.shutdown,
             self.auth,
             self.connect,
-            self.layer,
+            self.proxy,
         )
         .await?;
         Ok(())
     }
 }
 
-async fn run<C, L>(
+async fn run<C, P>(
     bind_address: SocketAddr,
     shutdown: CancellationToken,
     auth: MaybeAuth,
     connect: C,
-    layer: L,
+    proxy: P,
 ) -> Result<(), Error>
 where
+    P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
     C: Connect + Clone + Send + 'static,
-    L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>
-        + Clone
-        + Send
-        + 'static,
 {
+    // todo: this should take a `crate::accept::Listen`, but that's impossible with
+    // the socks5_server crate.
+
     let listener = TcpListener::bind(bind_address).await?;
     let server = Server::new(listener, Arc::new(auth));
 
@@ -231,31 +224,35 @@ where
                 let (connection, address) = result?;
                 let shutdown = shutdown.clone();
                 let connect = connect.clone();
-                let layer = layer.clone();
+                let proxy = proxy.clone();
                 let span = tracing::info_span!("socks", ?address);
 
                 tokio::spawn(async move {
                     tokio::select!{
-                        result = handle_connection(connection, connect, layer) => {
+                        result = handle_connection(connection, connect, proxy) => {
                             let _ = result.log_error();
                         },
                         _ = shutdown.cancelled() => {},
                     }
                 }.instrument(span));
             },
-            _ = shutdown.cancelled() => {},
+            _ = shutdown.cancelled() => {
+                break;
+            },
         }
     }
+
+    Ok(())
 }
 
-async fn handle_connection<C, L>(
+async fn handle_connection<C, P>(
     connection: IncomingConnection<Result<AuthResult, Error>, NeedAuthenticate>,
     connect: C,
-    layer: L,
+    proxy: P,
 ) -> Result<(), Error>
 where
-    C: Connect,
-    L: for<'s, 't> Layer<&'s mut SocksSource, &'t mut <C as Connect>::Connection>,
+    C: Connect + Clone + Send + 'static,
+    P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
 {
     let (connection, auth_result) = connection.authenticate().await.map_err(|(e, _)| e)?;
     match auth_result? {
@@ -303,7 +300,7 @@ where
             };
 
             // connect to target
-            let mut target = match connect.connect(&target_address).await {
+            let target = match connect.connect(&target_address).await {
                 Ok(connection) => connection,
                 Err(error) => {
                     tracing::error!("{error}");
@@ -318,11 +315,11 @@ where
             };
 
             // send reply, that we successfully connected to the target
-            let mut source = request
+            let source = request
                 .reply(Reply::Succeeded, address)
                 .await
                 .map(|inner| {
-                    SocksSource {
+                    Incoming {
                         inner,
                         target_address,
                     }
@@ -332,16 +329,16 @@ where
             // run layer
             // we pass mutable references, so we can shut down the streams properly
             // afterwards
-            let _ = layer
-                .layer(&mut source, &mut target)
+            let _ = proxy
+                .proxy(source, target)
                 .await
                 .log_error_with_message("Layer returned an error");
 
             // shut down streams. this flushes any buffered data
-            // note: sometimes the stream is already closed. i think we can just ignore the
-            // errors.
-            let _ = target.shutdown().await;
-            let _ = source.shutdown().await;
+            // note: sometimes the stream is already closed. i think we can just
+            // ignore the errors.
+            //let _ = target.shutdown().await;
+            //let _ = source.shutdown().await;
         }
     }
 

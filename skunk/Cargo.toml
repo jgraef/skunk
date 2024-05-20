@@ -14,6 +14,7 @@ categories = [
 
 [dependencies]
 async-trait = { version = "0.1.80", optional = true }
+bytes = "1.6.0"
 futures = "0.3.30"
 http-body-util = { version = "0.1.1", optional = true }
 hyper = { version = "1.3.1", features = ["http1", "server", "client"], optional = true }
@@ -36,10 +37,8 @@ tracing = "0.1.40"
 
 [features]
 default = ["full"]
-full = ["proxy-socks", "proxy-http", "layer-tls", "layer-http", "store"]
-proxy-socks = ["dep:socks5-server", "dep:async-trait"]
-proxy-http = ["layer-http", "dep:hyper", "dep:http-body-util"]
-layer-tls = ["tls", "dep:rcgen", "dep:rustls-pemfile"]
-layer-http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
-tls = ["dep:rustls", "dep:tokio-rustls"]
+full = ["socks", "http", "tls", "store"]
+socks = ["dep:socks5-server", "dep:async-trait"]
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:rustls-pemfile"]
 store = ["dep:sqlx"]

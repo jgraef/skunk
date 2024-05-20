@@ -11,30 +11,20 @@ use color_eyre::eyre::{
 };
 use skunk::{
     address::TcpAddress,
-    layer::{
-        http::{
-            self,
-            Http,
-        },
-        tls::{
-            self,
-            Ca,
-        },
-        Layer,
-        Passthrough,
+    protocol::{
+        http,
+        tls,
     },
     proxy::{
-        socks::{
-            self,
-            SocksSource,
-        },
-        ProxySource,
+        fn_proxy,
+        socks,
+        Passthrough,
+        Proxy,
+        TargetAddress,
     },
     util::CancellationToken,
 };
 use structopt::StructOpt;
-use tokio::net::TcpStream;
-use tracing::Span;
 
 use crate::config::Config;
 
@@ -69,10 +59,8 @@ pub struct SocksArgs {
 }
 
 impl SocksArgs {
-    pub fn builder(self, shutdown: CancellationToken) -> Result<socks::Builder, Error> {
-        let mut builder = socks::Builder::default()
-            .with_bind_address(self.bind_address)
-            .with_graceful_shutdown(shutdown);
+    pub fn builder(self) -> Result<socks::Builder, Error> {
+        let mut builder = socks::Builder::default().with_bind_address(self.bind_address);
 
         match (self.username, self.password) {
             (Some(username), Some(password)) => builder = builder.with_password(username, password),
@@ -114,7 +102,7 @@ impl App {
         match command {
             Command::Ca => {
                 // todo: if file exists, ask if we want to replace them
-                let ca = Ca::generate().await?;
+                let ca = tls::Ca::generate().await?;
                 let key_file = self.config.path.join(&self.config.config.ca.key_file);
                 let cert_file = self.config.path.join(&self.config.config.ca.cert_file);
                 ca.save(&key_file, &cert_file)?;
@@ -122,14 +110,6 @@ impl App {
                 tracing::info!("Cert file saved to: {}", cert_file.display());
             }
             Command::Proxy { socks, target } => {
-                let shutdown = CancellationToken::new();
-
-                // fixme: fn_layer doesn't work
-                //let layer = fn_layer(|source: &mut SocksSource, target| async move {
-                //    let target_address = source.target_address();
-                //    Ok(())
-                //});
-
                 let ca = tls::Ca::open(
                     self.config.path.join(&self.config.config.ca.key_file),
                     self.config.path.join(&self.config.config.ca.cert_file),
@@ -146,8 +126,58 @@ impl App {
                 });
 
                 socks
-                    .builder(shutdown)?
-                    .with_layer(FilteredHttpsLayer { tls, filter })
+                    .builder()?
+                    .with_graceful_shutdown(cancel_on_ctrlc_or_sigterm())
+                    .with_proxy(fn_proxy(move |incoming: socks::Incoming, outgoing| {
+                        let tls = tls.clone();
+                        let filter = filter.clone();
+                        async move {
+                            let target_address = incoming.target_address();
+
+                            if filter.matches(target_address) {
+                                let span =
+                                    tracing::info_span!("connection", target = %target_address);
+
+                                let is_tls = target_address.port == 443;
+                                let (incoming, outgoing) =
+                                    tls.maybe_decrypt(incoming, outgoing, is_tls).await?;
+
+                                http::proxy(incoming, outgoing, |request, send_request| {
+                                    let span = tracing::info_span!(
+                                        parent: &span,
+                                        "request",
+                                        method = %request.method(),
+                                        uri = %request.uri()
+                                    );
+
+                                    async move {
+                                        // log request
+                                        tracing::info!(
+                                            parent: &span,
+                                            ">"
+                                        );
+
+                                        let response = send_request.send(request).await?;
+
+                                        // log response
+                                        tracing::info!(
+                                            parent: &span,
+                                            status = %response.status(),
+                                            "<"
+                                        );
+
+                                        Ok(response)
+                                    }
+                                })
+                                .await?;
+                            }
+                            else {
+                                Passthrough.proxy(incoming, outgoing).await?;
+                            };
+
+                            Ok::<_, skunk::Error>(())
+                        }
+                    }))
                     .serve()
                     .await?;
             }
@@ -177,81 +207,35 @@ impl TargetFilter {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct FilteredHttpsLayer {
-    tls: tls::Context,
-    filter: Arc<TargetFilter>,
-}
+fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
+    let token = CancellationToken::new();
 
-impl<'source, 'target> Layer<&'source mut SocksSource, &'target mut TcpStream>
-    for FilteredHttpsLayer
-{
-    type Output = ();
+    async fn sigterm() {
+        #[cfg(unix)]
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .unwrap()
+            .recv()
+            .await;
 
-    async fn layer(
-        &self,
-        source: &'source mut SocksSource,
-        target: &'target mut TcpStream,
-    ) -> Result<(), skunk::Error> {
-        let target_address = source.target_address();
+        #[cfg(not(unix))]
+        futures::future::pending().await;
+    }
 
-        if self.filter.matches(target_address) {
-            let span = tracing::info_span!("connection", target = %target_address);
-
-            match target_address.port {
-                80 => Http::new(LogLayer::new(span)).layer(source, target).await?,
-                443 => {
-                    tls::Tls::new(Http::new(LogLayer::new(span)), self.tls.clone())
-                        .layer(source, target)
-                        .await?
+    tokio::spawn({
+        let token = token.clone();
+        async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("Received Ctrl-C. Shutting down.");
                 }
-                _ => panic!("only port 80 and 443 work right now"),
+                _ = sigterm() => {
+                    tracing::info!("Received SIGTERM. Shutting down.");
+                }
             }
+
+            token.cancel();
         }
-        else {
-            Passthrough.layer(source, target).await?;
-        };
+    });
 
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct LogLayer {
-    span: Span,
-}
-
-impl LogLayer {
-    pub fn new(span: Span) -> Self {
-        Self { span }
-    }
-}
-
-impl<'client> Layer<http::Request, http::TargetClient<'client>> for LogLayer {
-    type Output = http::Response;
-
-    async fn layer(
-        &self,
-        request: http::Request,
-        mut client: http::TargetClient<'client>,
-    ) -> Result<http::Response, skunk::Error> {
-        // log request
-        tracing::info!(
-            parent: &self.span,
-            method = %request.0.method(),
-            uri = %request.0.uri(),
-            ">"
-        );
-
-        let response = client.send(request).await?;
-
-        // log response
-        tracing::info!(
-            parent: &self.span,
-            status = %response.0.status(),
-            "<"
-        );
-
-        Ok(response)
-    }
+    token
 }

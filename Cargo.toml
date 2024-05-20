@@ -6,4 +6,4 @@ members = [
 ]
 
 [patch.crates-io]
-hyper = { git = "https://github.com/jgraef/hyper.git", branch = "non-static-client-io" }
+hyper = { git = "https://github.com/jgraef/hyper.git", branch = "switch/main" }

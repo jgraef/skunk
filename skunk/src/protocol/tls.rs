@@ -32,6 +32,7 @@ use rustls::{
     },
     server::Acceptor,
     ClientConfig,
+    RootCertStore,
     ServerConfig,
 };
 use tokio::{
@@ -48,10 +49,7 @@ use tokio_rustls::{
     TlsConnector,
 };
 
-use crate::{
-    layer::Layer,
-    util::tls::default_client_config,
-};
+use crate::util::Lazy;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -63,9 +61,6 @@ pub enum Error {
 
     #[error("rustls error")]
     Rustls(#[from] rustls::Error),
-
-    #[error("tls-utils error")]
-    TlsUtils(#[from] crate::util::tls::Error),
 
     #[error("missing certificate: {path}")]
     NoCertificate { path: PathBuf },
@@ -239,12 +234,91 @@ impl Context {
         &self,
         stream: S,
         domain: ServerName<'static>,
-    ) -> Result<TargetStream<S>, Error> {
+    ) -> Result<Outgoing<S>, Error> {
         let stream = TlsConnector::from(self.client_config.clone())
             .connect(domain, stream)
             .await?;
 
-        Ok(TargetStream { inner: stream })
+        Ok(Outgoing { inner: stream })
+    }
+
+    pub async fn decrypt<I, O>(
+        &self,
+        incoming: I,
+        outgoing: O,
+    ) -> Result<(Incoming<I>, Outgoing<O>), Error>
+    where
+        I: AsyncRead + AsyncWrite + Unpin,
+        O: AsyncRead + AsyncWrite + Unpin,
+    {
+        // start the tls handshake with the source
+        let source_accept = self.start_accept(incoming).await?;
+
+        // get the server_name provided by the TLS client at the source
+        // todo: what do we do, if the client didn't provide a server name? we need that
+        // to connect to the target. we could also use the `TcpAddress` we
+        // get from the proxy layer.
+        let source_server_name = source_accept.server_name().ok_or(Error::NoServerName)?;
+        let domain = match IpAddr::from_str(&source_server_name) {
+            Ok(ip_address) => ServerName::IpAddress(ip_address.into()),
+            Err(_) => {
+                ServerName::DnsName(source_server_name.to_owned().try_into().map_err(|_| {
+                    Error::InvalidServerName {
+                        hostname: source_server_name.clone(),
+                    }
+                })?)
+            }
+        };
+
+        // connect to the target
+        let target = self.connect(outgoing, domain).await?;
+
+        // extract certificate parameters from the server certificate we got from the
+        // target.
+        let target_cert = target
+            .inner
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .ok_or(Error::NoTargetCertificate)?;
+        // although the name suggest that this method parses *ca* certs, it seems to
+        // just extract some of the certificate information.
+        let target_cert_params = CertificateParams::from_ca_cert_der(target_cert)?;
+
+        // finish the TLS handshake with the source by imitating the certificate and
+        // signing it with our CA.
+        let source = source_accept
+            .finish(&source_server_name, target_cert_params)
+            .await?;
+
+        Ok((source, target))
+    }
+
+    pub async fn maybe_decrypt<I, O>(
+        &self,
+        incoming: I,
+        outgoing: O,
+        decrypt: bool,
+    ) -> Result<(maybe::Incoming<I>, maybe::Outgoing<O>), Error>
+    where
+        I: AsyncRead + AsyncWrite + Unpin,
+        O: AsyncRead + AsyncWrite + Unpin,
+    {
+        let pair = if decrypt {
+            let (incoming, outgoing) = self.decrypt(incoming, outgoing).await?;
+            (
+                maybe::Incoming::Encrypted(incoming),
+                maybe::Outgoing::Encrypted(outgoing),
+            )
+        }
+        else {
+            (
+                maybe::Incoming::Unencrypted(incoming),
+                maybe::Outgoing::Unencrypted(outgoing),
+            )
+        };
+        Ok(pair)
     }
 }
 
@@ -267,7 +341,7 @@ where
         self,
         server_name: &str,
         cert_params: CertificateParams,
-    ) -> Result<SourceStream<S>, Error> {
+    ) -> Result<Incoming<S>, Error> {
         let server_cert = {
             let mut certs = self.server_context.certs.lock().await;
             if let Some(cert) = certs.get(server_name) {
@@ -301,7 +375,7 @@ where
             .into_stream(Arc::new(server_config))
             .await?;
 
-        Ok(SourceStream { inner: stream })
+        Ok(Incoming { inner: stream })
     }
 
     pub fn server_name(&self) -> Option<String> {
@@ -310,105 +384,18 @@ where
     }
 }
 
-#[derive(Clone)]
-pub struct Tls<L> {
-    inner: L,
-    context: Context,
-}
-
-impl<L> Tls<L> {
-    pub fn new(inner: L, context: Context) -> Self {
-        Self { inner, context }
-    }
-}
-
-impl<L, S, T> Layer<S, T> for Tls<L>
-where
-    L: Layer<SourceStream<S>, TargetStream<T>> + Sync,
-    S: AsyncRead + AsyncWrite + Send + Unpin,
-    T: AsyncRead + AsyncWrite + Send + Unpin,
-{
-    type Output = ();
-
-    async fn layer(&self, source: S, target: T) -> Result<(), crate::Error> {
-        async fn handshake<S, T>(
-            context: &Context,
-            source: S,
-            target: T,
-        ) -> Result<(SourceStream<S>, TargetStream<T>), Error>
-        where
-            S: AsyncRead + AsyncWrite + Send + Unpin,
-            T: AsyncRead + AsyncWrite + Send + Unpin,
-        {
-            // start the tls handshake with the source
-            let source_accept = context.start_accept(source).await?;
-
-            // get the server_name provided by the TLS client at the source
-            // todo: what do we do, if the client didn't provide a server name? we need that
-            // to connect to the target. we could also use the `TcpAddress` we
-            // get from the proxy layer.
-            let source_server_name = source_accept.server_name().ok_or(Error::NoServerName)?;
-            let domain = match IpAddr::from_str(&source_server_name) {
-                Ok(ip_address) => ServerName::IpAddress(ip_address.into()),
-                Err(_) => {
-                    ServerName::DnsName(source_server_name.to_owned().try_into().map_err(|_| {
-                        Error::InvalidServerName {
-                            hostname: source_server_name.clone(),
-                        }
-                    })?)
-                }
-            };
-
-            // connect to the target
-            let target = context.connect(target, domain).await?;
-
-            // extract certificate parameters from the server certificate we got from the
-            // target.
-            let target_cert = target
-                .inner
-                .get_ref()
-                .1
-                .peer_certificates()
-                .and_then(|certs| certs.first())
-                .ok_or(Error::NoTargetCertificate)?;
-            // although the name suggest that this method parses *ca* certs, it seems to
-            // just extract some of the certificate information.
-            let target_cert_params = CertificateParams::from_ca_cert_der(target_cert)?;
-
-            // finish the TLS handshake with the source by imitating the certificate and
-            // signing it with our CA.
-            let source = source_accept
-                .finish(&source_server_name, target_cert_params)
-                .await?;
-
-            Ok((source, target))
-        }
-
-        // perform handshake
-        let (source, target) = handshake(&self.context, source, target).await?;
-
-        // run inner layer
-        self.inner.layer(source, target).await?;
-
-        // note: we don't need to flush the streams, since the underlying layer is
-        // responsible for this we also don't want to shut down the streams.
-
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
-pub struct TargetStream<Inner> {
+pub struct Outgoing<Inner> {
     inner: tokio_rustls::client::TlsStream<Inner>,
 }
 
-impl<Inner> TargetStream<Inner> {
+impl<Inner> Outgoing<Inner> {
     pub fn get_tls_connection(&self) -> &rustls::ClientConnection {
         &self.inner.get_ref().1
     }
 }
 
-impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for TargetStream<Inner> {
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for Outgoing<Inner> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -418,7 +405,7 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for TargetStream<Inner> {
     }
 }
 
-impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TargetStream<Inner> {
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Outgoing<Inner> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -443,17 +430,17 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TargetStream<Inner> {
 }
 
 #[derive(Debug)]
-pub struct SourceStream<Inner> {
+pub struct Incoming<Inner> {
     inner: tokio_rustls::server::TlsStream<Inner>,
 }
 
-impl<Inner> SourceStream<Inner> {
+impl<Inner> Incoming<Inner> {
     pub fn get_tls_connection(&self) -> &rustls::ServerConnection {
         &self.inner.get_ref().1
     }
 }
 
-impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for SourceStream<Inner> {
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for Incoming<Inner> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -463,7 +450,7 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for SourceStream<Inner> {
     }
 }
 
-impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for SourceStream<Inner> {
+impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Incoming<Inner> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -485,4 +472,160 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for SourceStream<Inner> {
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
+}
+
+pub mod maybe {
+    use std::{
+        ops::DerefMut,
+        pin::Pin,
+        task::Poll,
+    };
+
+    use tokio::io::{
+        AsyncRead,
+        AsyncWrite,
+        ReadBuf,
+    };
+
+    #[derive(Debug)]
+    pub enum Outgoing<Inner> {
+        Encrypted(super::Outgoing<Inner>),
+        Unencrypted(Inner),
+    }
+
+    impl<Inner> Outgoing<Inner> {
+        pub fn get_tls_connection(&self) -> Option<&rustls::ClientConnection> {
+            match self {
+                Outgoing::Encrypted(inner) => Some(inner.get_tls_connection()),
+                Outgoing::Unencrypted(_) => None,
+            }
+        }
+    }
+
+    impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for Outgoing<Inner> {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            match self.deref_mut() {
+                Outgoing::Encrypted(inner) => Pin::new(inner).poll_read(cx, buf),
+                Outgoing::Unencrypted(inner) => Pin::new(inner).poll_read(cx, buf),
+            }
+        }
+    }
+
+    impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Outgoing<Inner> {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> Poll<Result<usize, std::io::Error>> {
+            match self.deref_mut() {
+                Outgoing::Encrypted(inner) => Pin::new(inner).poll_write(cx, buf),
+                Outgoing::Unencrypted(inner) => Pin::new(inner).poll_write(cx, buf),
+            }
+        }
+
+        fn poll_flush(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            match self.deref_mut() {
+                Outgoing::Encrypted(inner) => Pin::new(inner).poll_flush(cx),
+                Outgoing::Unencrypted(inner) => Pin::new(inner).poll_flush(cx),
+            }
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            match self.deref_mut() {
+                Outgoing::Encrypted(inner) => Pin::new(inner).poll_shutdown(cx),
+                Outgoing::Unencrypted(inner) => Pin::new(inner).poll_shutdown(cx),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum Incoming<Inner> {
+        Encrypted(super::Incoming<Inner>),
+        Unencrypted(Inner),
+    }
+
+    impl<Inner> Incoming<Inner> {
+        pub fn get_tls_connection(&self) -> Option<&rustls::ServerConnection> {
+            match self {
+                Incoming::Encrypted(inner) => Some(inner.get_tls_connection()),
+                Incoming::Unencrypted(_) => None,
+            }
+        }
+    }
+
+    impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncRead for Incoming<Inner> {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            match self.deref_mut() {
+                Incoming::Encrypted(inner) => Pin::new(inner).poll_read(cx, buf),
+                Incoming::Unencrypted(inner) => Pin::new(inner).poll_read(cx, buf),
+            }
+        }
+    }
+
+    impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Incoming<Inner> {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> Poll<Result<usize, std::io::Error>> {
+            match self.deref_mut() {
+                Incoming::Encrypted(inner) => Pin::new(inner).poll_write(cx, buf),
+                Incoming::Unencrypted(inner) => Pin::new(inner).poll_write(cx, buf),
+            }
+        }
+
+        fn poll_flush(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            match self.deref_mut() {
+                Incoming::Encrypted(inner) => Pin::new(inner).poll_flush(cx),
+                Incoming::Unencrypted(inner) => Pin::new(inner).poll_flush(cx),
+            }
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            match self.deref_mut() {
+                Incoming::Encrypted(inner) => Pin::new(inner).poll_shutdown(cx),
+                Incoming::Unencrypted(inner) => Pin::new(inner).poll_shutdown(cx),
+            }
+        }
+    }
+}
+
+pub fn default_client_config() -> Result<Arc<ClientConfig>, Error> {
+    static CONFIG: Lazy<ClientConfig> = Lazy::new();
+    CONFIG.get_or_try_init(|| {
+        Ok(ClientConfig::builder()
+            .with_root_certificates(native_certificates()?)
+            .with_no_client_auth())
+    })
+}
+
+pub fn native_certificates() -> Result<Arc<RootCertStore>, Error> {
+    static CERTS: Lazy<RootCertStore> = Lazy::new();
+    CERTS.get_or_try_init(|| {
+        let mut certs = RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs()? {
+            certs.add(cert)?;
+        }
+        Ok(certs)
+    })
 }
