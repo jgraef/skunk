@@ -1,3 +1,5 @@
+//! Implementation of HTTP using hyper.
+
 pub mod body;
 
 use std::{
@@ -42,7 +44,7 @@ use tokio::{
 };
 
 use self::body::Empty;
-use crate::util::{
+use crate::util::io::{
     Rewind,
     WithoutShutdown,
 };

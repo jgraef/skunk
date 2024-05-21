@@ -1,3 +1,5 @@
+//! Expressing and evaluating boolean expressions.
+
 mod cont_eval;
 mod expr;
 

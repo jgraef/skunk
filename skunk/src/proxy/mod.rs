@@ -1,3 +1,5 @@
+//! Proxy implementations.
+
 use futures::Future;
 use tokio::io::{
     AsyncRead,
@@ -11,13 +13,17 @@ use crate::address::TcpAddress;
 #[cfg(feature = "socks")]
 pub mod socks;
 
+/// Trait for connections that have an associated target address.
 pub trait TargetAddress {
     fn target_address(&self) -> &TcpAddress;
 }
 
+/// Trait for things that can proxy (i.e. forward) connections.
 pub trait Proxy<I, O> {
     type Error: std::error::Error;
 
+    /// Proxy/forward the `incoming` connection to the `outgoing` connection,
+    /// and vice-versa.
     fn proxy(
         &self,
         incoming: I,
@@ -25,6 +31,7 @@ pub trait Proxy<I, O> {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+/// A [`Proxy`] implementation that just copies the data bidirectionally.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Passthrough;
 
@@ -43,6 +50,7 @@ where
     }
 }
 
+/// Create a [`Proxy`] using a function or closure.
 pub fn fn_proxy<F, E, Fut, I, O>(func: F) -> FnProxy<F>
 where
     F: Fn(I, O) -> Fut,
@@ -51,6 +59,7 @@ where
     FnProxy { func }
 }
 
+/// A [`Proxy`] created from a function or closure.
 #[derive(Copy, Clone)]
 pub struct FnProxy<F> {
     func: F,

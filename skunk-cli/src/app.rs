@@ -29,29 +29,43 @@ use tokio::net::TcpStream;
 
 use crate::config::Config;
 
+/// skunk - 🦨 A person-in-the-middle proxy
 #[derive(Debug, StructOpt)]
 pub enum Command {
+    /// Generates key and root certificate for the certificate authority used to
+    /// intercept TLS traffic.
     Ca {
+        /// Overwrite existing files.
         #[structopt(short, long)]
         force: bool,
     },
+    /// Example command to log (possibly decrypted) HTTP traffic to console.
     LogHttp {
         #[structopt(flatten)]
         socks: SocksArgs,
 
+        /// Target host:port addresses.
+        ///
+        /// This can be used to only selectively inspect traffic. By default all
+        /// traffic is inspected. Currently only ports 80 and 443 are supported.
         target: Vec<TcpAddress>,
     },
 }
 
 #[derive(Debug, StructOpt)]
 pub struct SocksArgs {
-    #[structopt(short, long, default_value = "127.0.0.1:9090")]
+    /// Bind address for the SOCKS proxy.
+    #[structopt(long = "socks-bind-address", default_value = "127.0.0.1:9090")]
     bind_address: SocketAddr,
 
-    #[structopt(long)]
+    /// Username for the SOCKS proxy. If this is specified, --socks-password
+    /// needs to be specified as well.
+    #[structopt(long = "socks-username")]
     username: Option<String>,
 
-    #[structopt(long)]
+    /// Password for the SOCKS proxy. If this is specified, --socks-username
+    /// needs to be specified as well.
+    #[structopt(long = "socks-password")]
     password: Option<String>,
 }
 
@@ -69,17 +83,24 @@ impl SocksArgs {
     }
 }
 
+/// Skunk app command-line options (i.e. command-line arguments without the
+/// actual command to run).
 #[derive(Debug, StructOpt)]
 pub struct Options {
+    /// Path to the skunk configuration directory. Defaults to
+    /// `~/.config/gocksec/skunk/`.
     #[structopt(short, long, env = "SKUNK_CONFIG")]
     config: Option<PathBuf>,
 }
 
+/// Skunk app command-line arguments.
 #[derive(Debug, StructOpt)]
 pub struct Args {
+    /// General options for the skunk command-line.
     #[structopt(flatten)]
     pub options: Options,
 
+    /// The specific command to run.
     #[structopt(subcommand)]
     pub command: Command,
 }
@@ -95,6 +116,7 @@ impl App {
         Ok(Self { options, config })
     }
 
+    /// Runs the given command-line command.
     pub async fn run(&mut self, command: Command) -> Result<(), Error> {
         match command {
             Command::Ca { force } => {
@@ -108,10 +130,11 @@ impl App {
         Ok(())
     }
 
+    /// Generates the CA.
     async fn generate_ca(&self, force: bool) -> Result<(), Error> {
         let ca = tls::Ca::generate().await?;
-        let key_file = self.config.path.join(&self.config.config.ca.key_file);
-        let cert_file = self.config.path.join(&self.config.config.ca.cert_file);
+        let key_file = self.config.relative_path(&self.config.ca.key_file);
+        let cert_file = self.config.relative_path(&self.config.ca.cert_file);
 
         if !force {
             if key_file.exists() {
@@ -132,13 +155,18 @@ impl App {
         Ok(())
     }
 
+    /// Example command to log (possibly decrypted) HTTP traffic to console.
     async fn log_http(&self, socks: SocksArgs, target: Vec<TcpAddress>) -> Result<(), Error> {
+        // open CA
         let ca = tls::Ca::open(
             self.config.path.join(&self.config.config.ca.key_file),
             self.config.path.join(&self.config.config.ca.cert_file),
         )?;
+
+        // create TLS context
         let tls = tls::Context::new(ca).await?;
 
+        // target filters
         let filter = Arc::new(if target.is_empty() {
             tracing::info!("matching all flows");
             TargetFilter::All
@@ -148,6 +176,9 @@ impl App {
             TargetFilter::Set(target.into_iter().collect())
         });
 
+        // run the SOCKS server. `proxy` will handle connections. The default
+        // [`Connect`][skunk::connect::Connect] (i.e.
+        // [`ConnectTcp`][skunk::connect::ConnectTcp]) is used.
         socks
             .builder()?
             .with_graceful_shutdown(cancel_on_ctrlc_or_sigterm())
@@ -161,6 +192,11 @@ impl App {
     }
 }
 
+/// Proxy connections.
+///
+/// This will first check if that connection matches any filters. Then it will
+/// decide using the port whether to decrypt TLS for that connection. Finally it
+/// will run a HTTP server and client to proxy HTTP requests.
 async fn proxy(
     tls: tls::Context,
     filter: Arc<TargetFilter>,
@@ -211,6 +247,7 @@ async fn proxy(
     Ok::<_, skunk::Error>(())
 }
 
+/// A simple filter to decide which target addresses should be intercepted.
 #[derive(Clone, Debug)]
 pub enum TargetFilter {
     All,
@@ -231,6 +268,8 @@ impl TargetFilter {
     }
 }
 
+/// Returns a [`CancellationToken`] that will be triggered when Ctrl-C is
+/// pressed, or (on Unix) when SIGTERM is received.
 fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
     let token = CancellationToken::new();
 

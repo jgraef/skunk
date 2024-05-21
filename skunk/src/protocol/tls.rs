@@ -1,3 +1,9 @@
+//! TLS connections.
+//!
+//! This is mainly used to decrypt TLS (e.g. HTTPS) traffic. Note, that in order
+//! for a client to accept the modified certificates, the skunk root certificate
+//! needs to be installed.
+
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -51,6 +57,7 @@ use tokio_rustls::{
 
 use crate::util::Lazy;
 
+/// TLS error type
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io error")]
@@ -75,6 +82,7 @@ pub enum Error {
     NoTargetCertificate,
 }
 
+/// A certificate authority
 #[derive(Clone)]
 pub struct Ca {
     key_pair: Arc<KeyPair>,
@@ -83,6 +91,7 @@ pub struct Ca {
 }
 
 impl Ca {
+    /// Create a CA by reading key and certificate from a file.
     pub fn open(key_file: impl AsRef<Path>, cert_file: impl AsRef<Path>) -> Result<Self, Error> {
         let key_pair = Arc::new(KeyPair::from_pem(&std::fs::read_to_string(key_file)?)?);
 
@@ -110,6 +119,7 @@ impl Ca {
         })
     }
 
+    /// Generate a new CA with a random key.
     pub async fn generate() -> Result<Self, Error> {
         let mut cert_params = CertificateParams::default();
         cert_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -140,18 +150,23 @@ impl Ca {
         })
     }
 
+    /// Save this CA's key and certificate to files.
+    ///
+    /// # FIXME
+    ///
+    /// This saves the `cert_for_signing`, which isn't actually the correct
+    /// cert, if we didn't generate this CA.
     pub fn save(
         &self,
         key_file: impl AsRef<Path>,
         cert_file: impl AsRef<Path>,
     ) -> Result<(), Error> {
         std::fs::write(key_file, self.key_pair.serialize_pem())?;
-        // fixme: this saves the `cert_for_signing`, which isn't actually the correct
-        // cert, if we didn't generate this CA.
         std::fs::write(cert_file, self.cert_for_signing.pem())?;
         Ok(())
     }
 
+    /// Create a certificate signed by this CA.
     pub async fn sign(
         &self,
         server_key: Arc<KeyPair>,
@@ -173,6 +188,7 @@ impl Ca {
         Ok(server_cert.into())
     }
 
+    /// Return the CA's root certificate.
     pub fn root_cert(&self) -> &Arc<CertificateDer<'static>> {
         &self.cert
     }
@@ -194,6 +210,10 @@ struct ServerContext {
     server_key: Arc<KeyPair>,
 }
 
+/// General TLS context that can be used to create server and client
+/// connections.
+///
+/// You're probably interested in the [`Context::decrypt`] method.
 #[derive(Clone, Debug)]
 pub struct Context {
     pub(crate) client_config: Arc<ClientConfig>,
@@ -201,6 +221,7 @@ pub struct Context {
 }
 
 impl Context {
+    /// Create context from [`Ca`].
     pub async fn new(ca: Ca) -> Result<Self, Error> {
         let certs = Arc::new(Mutex::new(HashMap::new()));
 
@@ -219,6 +240,7 @@ impl Context {
         })
     }
 
+    /// Start accepting a TLS server connection.
     pub async fn start_accept<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         stream: S,
@@ -230,6 +252,7 @@ impl Context {
         })
     }
 
+    /// Create a TLS client connection.
     pub async fn connect<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         stream: S,
@@ -242,6 +265,11 @@ impl Context {
         Ok(Outgoing { inner: stream })
     }
 
+    /// Decrypt the incoming connection by presenting our own certificate.
+    ///
+    /// This first establishes the outgoing connection to get the certificate
+    /// from the actual server. This certificate is then modified and signed by
+    /// our CA. The modified certificate is presented to the client.
     pub async fn decrypt<I, O>(
         &self,
         incoming: I,
@@ -295,6 +323,8 @@ impl Context {
         Ok((source, target))
     }
 
+    /// Maybe decrypts TLS traffic. This is a convenience function that returns
+    /// a single type regardless of whether encryption is used or not.
     pub async fn maybe_decrypt<I, O>(
         &self,
         incoming: I,
@@ -328,6 +358,7 @@ impl From<Context> for Arc<ClientConfig> {
     }
 }
 
+/// Process of accepting a TLS server connection
 pub struct Accept<S> {
     start_handshake: StartHandshake<S>,
     server_context: ServerContext,
@@ -337,6 +368,11 @@ impl<S> Accept<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    /// Finish the TLS handshake.
+    ///
+    /// The `cert_params` argument will be used to create a certificate signed
+    /// by the skunk CA that is presented to the client. The `server_name`
+    /// is used to cache certificates.
     pub async fn finish(
         self,
         server_name: &str,
@@ -378,12 +414,15 @@ where
         Ok(Incoming { inner: stream })
     }
 
+    /// The server name that was sent by the client in the `CLIENT_HELLO`
+    /// message.
     pub fn server_name(&self) -> Option<String> {
         let client_hello = self.start_handshake.client_hello();
         client_hello.server_name().map(ToOwned::to_owned)
     }
 }
 
+/// An outgoing (client) connection that is TLS encrypted.
 #[derive(Debug)]
 pub struct Outgoing<Inner> {
     inner: tokio_rustls::client::TlsStream<Inner>,
@@ -429,6 +468,7 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Outgoing<Inner> {
     }
 }
 
+/// An incoming (server) connection that is TLS encrypted.
 #[derive(Debug)]
 pub struct Incoming<Inner> {
     inner: tokio_rustls::server::TlsStream<Inner>,
@@ -475,6 +515,9 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Incoming<Inner> {
 }
 
 pub mod maybe {
+    //! Stream types that represent connections that are either encrypted or
+    //! unencrypted.
+
     use std::{
         ops::DerefMut,
         pin::Pin,
@@ -487,6 +530,7 @@ pub mod maybe {
         ReadBuf,
     };
 
+    /// An outgoing (client) connection that might be TLS encrypted.
     #[derive(Debug)]
     pub enum Outgoing<Inner> {
         Encrypted(super::Outgoing<Inner>),
@@ -548,6 +592,7 @@ pub mod maybe {
         }
     }
 
+    /// An incoming (server) connection that might be TLS encrypted.
     #[derive(Debug)]
     pub enum Incoming<Inner> {
         Encrypted(super::Incoming<Inner>),
@@ -610,6 +655,8 @@ pub mod maybe {
     }
 }
 
+/// Returns the default TLS client config. This uses the natively installed root
+/// certificates from [`native_certificates`].
 pub fn default_client_config() -> Result<Arc<ClientConfig>, Error> {
     static CONFIG: Lazy<ClientConfig> = Lazy::new();
     CONFIG.get_or_try_init(|| {
@@ -619,6 +666,9 @@ pub fn default_client_config() -> Result<Arc<ClientConfig>, Error> {
     })
 }
 
+/// Loads root certificates from the system that can be used as trust anchors.
+/// This only loads the certificates on the first call and will cache the
+/// result.
 pub fn native_certificates() -> Result<Arc<RootCertStore>, Error> {
     static CERTS: Lazy<RootCertStore> = Lazy::new();
     CERTS.get_or_try_init(|| {

@@ -1,3 +1,14 @@
+//! SOCKS5 implementation.
+//!
+//! This provides a SOCKS5 server that can be used to inspect traffic.
+//!
+//! # TODO
+//!
+//! - We need to find another crate or implement the protocol ourselves
+//!   ([`#12`][1]).
+//!
+//! [1]: https://github.com/jgraef/skunk/issues/12
+
 use std::{
     net::SocketAddr,
     pin::Pin,
@@ -59,8 +70,10 @@ use crate::{
     util::error::ResultExt,
 };
 
+/// The default port to use for the server.
 pub const DEFAULT_PORT: u16 = 9090;
 
+/// SOCKS error type
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io error")]
@@ -73,6 +86,7 @@ pub enum Error {
     Protocol(#[from] socks5_server::proto::Error),
 }
 
+/// An incoming connection.
 pub struct Incoming {
     inner: socks5_server::Connect<socks5_server::connection::connect::state::Ready>,
     target_address: TcpAddress,
@@ -118,6 +132,7 @@ impl AsyncWrite for Incoming {
     }
 }
 
+/// Builder used to create a SOCKS server.
 pub struct Builder<C = ConnectTcp, P = Passthrough> {
     bind_address: SocketAddr,
     shutdown: CancellationToken,
@@ -139,16 +154,20 @@ impl<C: Default, P: Default> Default for Builder<C, P> {
 }
 
 impl<C, P> Builder<C, P> {
+    /// Specify a bind address. Defaults to `127.0.0.1:9090`.
     pub fn with_bind_address(mut self, bind_address: impl Into<SocketAddr>) -> Self {
         self.bind_address = bind_address.into();
         self
     }
 
+    /// Pass in a [`CancellationToken`] that can be used to shutdown the server.
     pub fn with_graceful_shutdown(mut self, shutdown: CancellationToken) -> Self {
         self.shutdown = shutdown;
         self
     }
 
+    /// Specify username and password for authentication. By default no
+    /// authentication is used.
     pub fn with_password(mut self, username: String, password: String) -> Self {
         self.auth = MaybeAuth::Password {
             username: username.into_bytes(),
@@ -157,7 +176,10 @@ impl<C, P> Builder<C, P> {
         self
     }
 
-    pub fn with_handler<C2>(self, connect: C2) -> Builder<C2, P>
+    /// Specify a [connector][Connect]. This is used to establish connections to
+    /// the destination as requested by the proxy client. By default
+    /// [`ConnectTcp`] will be used.
+    pub fn with_connect<C2>(self, connect: C2) -> Builder<C2, P>
     where
         C2: Connect + Clone + Send + 'static,
     {
@@ -170,6 +192,9 @@ impl<C, P> Builder<C, P> {
         }
     }
 
+    /// Specify a [`Proxy`] that is used to forward incoming data to the
+    /// destination and vice-versa. By default this uses [`Passthrough`] that
+    /// just blindly passes through the data without inspecting or altering it.
     pub fn with_proxy<P2>(self, proxy: P2) -> Builder<C, P2>
     where
         C: Connect,
@@ -184,6 +209,7 @@ impl<C, P> Builder<C, P> {
         }
     }
 
+    /// Run the server.
     pub async fn serve(self) -> Result<(), Error>
     where
         C: Connect + Clone + Send + 'static,
@@ -201,6 +227,7 @@ impl<C, P> Builder<C, P> {
     }
 }
 
+/// Function that actually runs the server.
 async fn run<C, P>(
     bind_address: SocketAddr,
     shutdown: CancellationToken,
@@ -245,6 +272,7 @@ where
     Ok(())
 }
 
+/// Handle a single connection
 async fn handle_connection<C, P>(
     connection: IncomingConnection<Result<AuthResult, Error>, NeedAuthenticate>,
     connect: C,
@@ -345,6 +373,7 @@ where
     Ok(())
 }
 
+/// Error when trying to convert a [`TcpAddress`] from a [`Address`].
 #[derive(Debug, thiserror::Error)]
 #[error("invalid hostname")]
 pub struct InvalidHostname(#[from] FromUtf8Error);
@@ -371,6 +400,7 @@ impl TryFrom<Address> for TcpAddress {
     }
 }
 
+/// Authentication configuration.
 pub enum MaybeAuth {
     NoAuth,
     Password {
@@ -404,8 +434,12 @@ impl Auth for MaybeAuth {
     }
 }
 
+/// Result of an authentication attempt.
 pub enum AuthResult {
+    /// The authentication was successful.
     Ok,
+
+    /// The authentication failed.
     Failed,
 }
 

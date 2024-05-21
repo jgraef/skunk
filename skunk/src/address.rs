@@ -1,3 +1,5 @@
+//! Network addresses.
+
 use std::{
     convert::Infallible,
     fmt::Display,
@@ -5,6 +7,7 @@ use std::{
     str::FromStr,
 };
 
+/// Either an IP address (IPv4 or IPv6), or a DNS name.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum HostAddress {
     IpAddress(IpAddr),
@@ -32,12 +35,14 @@ impl FromStr for HostAddress {
     }
 }
 
+/// A [`HostAddress`] and a port, used for TCP.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TcpAddress {
     pub host: HostAddress,
     pub port: u16,
 }
 
+/// Failed to parse [`TcpAddress`].
 #[derive(Debug, thiserror::Error)]
 #[error("invalid tcp address: {0}")]
 pub struct TcpAddressParseError(String);

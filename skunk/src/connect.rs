@@ -1,3 +1,5 @@
+//! Handling of TCP connections.
+
 use std::future::Future;
 
 use tokio::{
@@ -16,6 +18,11 @@ use super::address::{
     TcpAddress,
 };
 
+/// Trait representing something that can create TCP connections to a
+/// destination address.
+///
+/// This could be the OS ability to create TCP connections, a proxy client, or
+/// event a TOR client.
 pub trait Connect {
     type Connection: AsyncRead + AsyncWrite + Send + Sync + Unpin;
 
@@ -25,6 +32,7 @@ pub trait Connect {
     ) -> impl Future<Output = Result<Self::Connection, std::io::Error>> + Send;
 }
 
+/// Connect by connecting straight to the address using Tokio.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ConnectTcp;
 
@@ -42,14 +50,26 @@ impl Connect for ConnectTcp {
     }
 }
 
+/// Trait for anything that can accept TCP connections.
 pub trait Listen {
     type Connection: AsyncRead + AsyncWrite + Send + Sync + Unpin;
 
     fn accept(&self) -> impl Future<Output = Result<Self::Connection, std::io::Error>> + Send;
 }
 
+/// Accept connections by listening for connections using Tokio.
 pub struct ListenTcp {
     listener: TcpListener,
+}
+
+impl ListenTcp {
+    pub fn new(listener: TcpListener) -> Self {
+        Self { listener }
+    }
+
+    pub fn into_inner(self) -> TcpListener {
+        self.listener
+    }
 }
 
 impl Listen for ListenTcp {
