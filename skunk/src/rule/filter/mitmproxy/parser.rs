@@ -42,14 +42,16 @@ use nom::{
 use super::{
     Direction,
     Filter,
-    Regex,
 };
-use crate::util::bool_expr::{
-    And,
-    Expression,
-    Or,
-    Term,
-    Variable,
+use crate::{
+    rule::regex::Regex,
+    util::bool_expr::{
+        And,
+        Expression,
+        Or,
+        Term,
+        Variable,
+    },
 };
 
 type Res<'a, U> = IResult<&'a str, U, VerboseError<&'a str>>;

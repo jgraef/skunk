@@ -14,6 +14,7 @@ use std::{
         Hash,
         Hasher,
     },
+    num::NonZeroUsize,
     ops::Deref,
     sync::{
         Arc,
@@ -108,5 +109,24 @@ impl<'a> From<&'a [u8]> for Boob<'a> {
 impl From<Bytes> for Boob<'static> {
     fn from(value: Bytes) -> Self {
         Self::Owned(value)
+    }
+}
+
+#[derive(Debug)]
+pub struct UsizeIdGenerator {
+    next: usize,
+}
+
+impl Default for UsizeIdGenerator {
+    fn default() -> Self {
+        Self { next: 1 }
+    }
+}
+
+impl UsizeIdGenerator {
+    pub fn next(&mut self) -> NonZeroUsize {
+        let id = self.next;
+        self.next += 1;
+        NonZeroUsize::new(id).expect("id overflow")
     }
 }

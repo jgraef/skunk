@@ -50,6 +50,13 @@ pub enum Command {
         /// traffic is inspected. Currently only ports 80 and 443 are supported.
         target: Vec<TcpAddress>,
     },
+    Proxy {
+        #[structopt(flatten)]
+        socks: SocksArgs,
+
+        #[structopt(short, long)]
+        rule: Vec<PathBuf>,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -125,6 +132,9 @@ impl App {
             Command::LogHttp { socks, target } => {
                 self.log_http(socks, target).await?;
             }
+            Command::Proxy { socks, rule } => {
+                self.proxy(socks, rule).await?;
+            }
         }
 
         Ok(())
@@ -189,6 +199,10 @@ impl App {
             .await?;
 
         Ok(())
+    }
+
+    async fn proxy(&self, _socks: SocksArgs, _rules: Vec<PathBuf>) -> Result<(), Error> {
+        todo!();
     }
 }
 

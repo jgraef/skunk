@@ -3,9 +3,12 @@ use std::{
     str::FromStr,
 };
 
-use crate::util::bool_expr::{
-    ContinuousEvaluation,
-    Or,
+use crate::{
+    rule::regex::Regex,
+    util::bool_expr::{
+        ContinuousEvaluation,
+        Or,
+    },
 };
 
 mod parser;
@@ -15,49 +18,6 @@ pub enum Direction {
     Request,
     Response,
     Both,
-}
-
-// todo: this is suboptimal, but we need Eq + Hash
-// todo: probably mve this up, since we might need this in other places as well.
-#[derive(Clone, Debug)]
-pub struct Regex {
-    s: String,
-    parsed: regex::Regex,
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("regex parse error")]
-pub struct RegexParseError(#[from] regex::Error);
-
-impl FromStr for Regex {
-    type Err = RegexParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.to_owned().try_into()
-    }
-}
-
-impl TryFrom<String> for Regex {
-    type Error = RegexParseError;
-
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        let parsed = s.parse()?;
-        Ok(Self { s: s, parsed })
-    }
-}
-
-impl PartialEq for Regex {
-    fn eq(&self, other: &Self) -> bool {
-        self.s == other.s
-    }
-}
-
-impl Eq for Regex {}
-
-impl Hash for Regex {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.s.hash(state);
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
