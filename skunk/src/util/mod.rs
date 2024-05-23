@@ -1,7 +1,7 @@
 //! Utilities.
 
 pub(crate) mod arena;
-pub(crate) mod bool_expr;
+pub(crate) mod boolean;
 pub(crate) mod error;
 pub mod io;
 

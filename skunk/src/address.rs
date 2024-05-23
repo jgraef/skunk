@@ -5,10 +5,10 @@ use std::{
     convert::Infallible,
     fmt::Display,
     net::IpAddr,
+    ops::RangeInclusive,
     str::FromStr,
 };
 
-use lazy_static::lazy_static;
 use serde::{
     Deserialize,
     Serialize,
@@ -124,6 +124,15 @@ pub enum Ports {
     },
 }
 
+impl Ports {
+    pub fn range(&self) -> RangeInclusive<u16> {
+        match self {
+            Self::Single(port) => port.number..=port.number,
+            Self::Range { min, max } => min.number..=max.number,
+        }
+    }
+}
+
 impl From<u16> for Ports {
     fn from(value: u16) -> Self {
         Self::Single(value.into())
@@ -145,10 +154,17 @@ impl<'a> TryFrom<Cow<'a, str>> for Ports {
     fn try_from(s: Cow<'a, str>) -> Result<Self, Self::Error> {
         let err = |_| ParsePortError(s.to_string());
         if let Some((min, max)) = s.split_once("..") {
-            Ok(Self::Range {
-                min: min.parse().map_err(err)?,
-                max: max.parse().map_err(err)?,
-            })
+            let min = min.parse().map_err(err)?;
+            let max = max.parse().map_err(err)?;
+            if min > max {
+                Ok(Self::Range { min: max, max: min })
+            }
+            else if min == max {
+                Ok(Self::Single(min))
+            }
+            else {
+                Ok(Self::Range { min, max })
+            }
         }
         else {
             Ok(Self::Single(s.try_into()?))
@@ -202,26 +218,64 @@ impl Serialize for Ports {
 }
 
 #[derive(Clone, Debug)]
-pub enum Port {
+pub struct Port {
     /// Service name as defined by [1].
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc6335.html#section-5.1
-    Name(String),
-    Number(u16),
+    name: Option<&'static str>,
+    number: u16,
+}
+
+impl Port {
+    pub fn name(&self) -> Option<&'static str> {
+        self.name
+    }
+
+    pub fn number(&self) -> u16 {
+        self.number
+    }
+}
+
+impl PartialEq for Port {
+    fn eq(&self, other: &Self) -> bool {
+        self.number == other.number
+    }
+}
+
+impl Eq for Port {}
+
+impl PartialOrd for Port {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Port {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.number.cmp(&other.number)
+    }
 }
 
 impl Display for Port {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Name(name) => write!(f, "{name}"),
-            Self::Number(port) => write!(f, "{port}"),
+        if let Some(name) = self.name {
+            write!(f, "{name}")
+        }
+        else {
+            write!(f, "{}", self.number)
         }
     }
 }
 
 impl From<u16> for Port {
     fn from(value: u16) -> Self {
-        Self::Number(value)
+        let name = iana_ports::by_port(value)
+            .next()
+            .map(|service| service.name);
+        Self {
+            name,
+            number: value,
+        }
     }
 }
 
@@ -234,14 +288,13 @@ impl<'a> TryFrom<Cow<'a, str>> for Port {
 
     fn try_from(value: Cow<'a, str>) -> Result<Self, Self::Error> {
         match u16::from_str(&value) {
-            Ok(port) => Ok(Self::Number(port)),
+            Ok(port) => Ok(Self::from(port)),
             Err(_) => {
-                lazy_static! {
-                    // this ignores the rule that 2 hyphens can't be next to each other 🤷
-                    static ref SERVICE_NAME_REGEX: regex::Regex = "^[A-Za-z0-9]([A-Za-z0-9-]{1,13}[A-Za-z0-9])?$".parse().unwrap();
-                }
-                if SERVICE_NAME_REGEX.is_match(&value) {
-                    Ok(Self::Name(value.into_owned()))
+                if let Some(service) = iana_ports::by_name(&value).next() {
+                    Ok(Self {
+                        name: Some(service.name),
+                        number: service.port,
+                    })
                 }
                 else {
                     Err(ParsePortError(value.into_owned()))
@@ -280,9 +333,11 @@ impl Serialize for Port {
     where
         S: serde::Serializer,
     {
-        match self {
-            Self::Name(name) => serializer.serialize_str(name),
-            Self::Number(number) => serializer.serialize_u16(*number),
+        if let Some(name) = self.name {
+            serializer.serialize_str(name)
+        }
+        else {
+            serializer.serialize_u16(self.number)
         }
     }
 }
