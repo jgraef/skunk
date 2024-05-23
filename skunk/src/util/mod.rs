@@ -1,6 +1,5 @@
 //! Utilities.
 
-pub(crate) mod arena;
 pub(crate) mod boolean;
 pub(crate) mod error;
 pub mod io;
@@ -116,6 +115,8 @@ impl From<Bytes> for Boob<'static> {
     }
 }
 
+/// ID generator. Generates sequential [`NonZeroUsize`]s starting with 1.
+/// This uses an [`AtomicUsize`] internally, so it doesn't require mutable access to self to increment the counter.
 #[derive(Debug)]
 pub struct UsizeIdGenerator {
     next: AtomicUsize,
@@ -139,14 +140,24 @@ impl UsizeIdGenerator {
     }
 }
 
-static UNIQUE_IDS: UsizeIdGenerator = UsizeIdGenerator::new();
-
-/// Returns a general unique ID.
+/// Returns a general unique ID. These IDs are unique for the whole program.
 pub fn unique_id() -> NonZeroUsize {
-    UNIQUE_IDS.next()
+    unique_ids!()
 }
 
-/// Creates a static id generator and returns the next id.
+/// Creates a static ID generator and returns the next ID. These IDs are unique
+/// per macro call-site.
+///
+/// # Note
+///
+/// When used in a generic scope, this will provide unique IDs for *all*
+/// instantiations of the scope, *not* each one.
+///
+/// > A static item defined in a generic scope (for example in a blanket or
+/// > default implementation) will result in exactly one static item being
+/// > defined, as if the static definition was pulled out of the current scope
+/// > into the module. There will not be one item per monomorphization.
+/// ([source](https://doc.rust-lang.org/reference/items/static-items.html#statics--generics))
 macro_rules! unique_ids {
     () => {{
         static UNIQUE_IDS: crate::util::UsizeIdGenerator = crate::util::UsizeIdGenerator::new();

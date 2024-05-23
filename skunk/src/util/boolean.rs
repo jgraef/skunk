@@ -20,7 +20,45 @@ use petgraph::{
 use super::unique_ids;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Expression {
+struct Node {
+    kind: NodeKind,
+    pin_count: usize,
+}
+
+impl Node {
+    #[inline]
+    pub fn new(kind: NodeKind) -> Self {
+        Self { kind, pin_count: 0 }
+    }
+
+    #[inline]
+    pub fn literal(value: bool) -> Self {
+        Self::new(NodeKind::Literal(value))
+    }
+
+    #[inline]
+    pub fn variable() -> Self {
+        Self::new(NodeKind::Variable)
+    }
+
+    #[inline]
+    pub fn not() -> Self {
+        Self::new(NodeKind::Not)
+    }
+
+    #[inline]
+    pub fn and() -> Self {
+        Self::new(NodeKind::And)
+    }
+
+    #[inline]
+    pub fn or() -> Self {
+        Self::new(NodeKind::Or)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeKind {
     Literal(bool),
     Variable,
     Not,
@@ -29,6 +67,7 @@ enum Expression {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[must_use]
 pub struct ExpressionId {
     instance_id: NonZeroUsize,
     node_index: NodeIndex,
@@ -45,6 +84,7 @@ impl ExpressionId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[must_use]
 pub struct VariableId(ExpressionId);
 
 impl From<VariableId> for ExpressionId {
@@ -55,7 +95,7 @@ impl From<VariableId> for ExpressionId {
 
 pub struct Graph {
     instance_id: NonZeroUsize,
-    graph: StableGraph<Expression, ()>,
+    graph: StableGraph<Node, ()>,
     literals: [NodeIndex; 2],
 }
 
@@ -66,8 +106,8 @@ impl Default for Graph {
         let mut graph = StableGraph::with_capacity(2, 0);
 
         let literals = [
-            graph.add_node(Expression::Literal(false)),
-            graph.add_node(Expression::Literal(true)),
+            graph.add_node(Node::literal(false)),
+            graph.add_node(Node::literal(true)),
         ];
 
         Self {
@@ -94,7 +134,7 @@ impl Graph {
 
     #[inline]
     pub fn variable(&mut self) -> VariableId {
-        let node_index = self.graph.add_node(Expression::Variable);
+        let node_index = self.graph.add_node(Node::variable());
         VariableId(self.expression_id(node_index))
     }
 
@@ -106,12 +146,12 @@ impl Graph {
             .neighbors_directed(input.node_index, Direction::Outgoing)
         {
             let node = self.graph.node_weight(index).unwrap();
-            if matches!(node, Expression::Not) {
+            if matches!(node.kind, NodeKind::Not) {
                 return self.expression_id(index);
             }
         }
 
-        let index = self.graph.add_node(Expression::Not);
+        let index = self.graph.add_node(Node::not());
         self.graph.add_edge(input.node_index, index, ());
         self.expression_id(index)
     }
@@ -122,7 +162,7 @@ impl Graph {
             self.literal(true)
         }
         else {
-            self.binary(inputs, Expression::And)
+            self.binary(inputs, NodeKind::And)
         }
     }
 
@@ -132,11 +172,56 @@ impl Graph {
             self.literal(false)
         }
         else {
-            self.binary(inputs, Expression::Or)
+            self.binary(inputs, NodeKind::Or)
         }
     }
 
-    fn binary(&mut self, inputs: &[ExpressionId], kind: Expression) -> ExpressionId {
+    #[inline]
+    pub fn pin(&mut self, expression_id: ExpressionId) {
+        expression_id.expect_instance(self.instance_id);
+        self.graph
+            .node_weight_mut(expression_id.node_index)
+            .unwrap_or_else(|| panic!("missing expression: {expression_id:?}"))
+            .pin_count += 1;
+    }
+
+    pub fn unpin(&mut self, expression_id: ExpressionId) {
+        /// removes nodes without dependants recursively
+        fn remove(graph: &mut StableGraph<Node, ()>, node_index: NodeIndex) {
+            if graph
+                .neighbors_directed(node_index, Direction::Outgoing)
+                .count()
+                == 0
+            {
+                let mut dependencies = graph
+                    .neighbors_directed(node_index, Direction::Incoming)
+                    .detach();
+                while let Some(dependency_index) = dependencies.next_node(graph) {
+                    if graph.node_weight(dependency_index).unwrap().pin_count == 0 {
+                        remove(graph, dependency_index);
+                    }
+                }
+                graph.remove_node(node_index);
+            }
+        }
+
+        expression_id.expect_instance(self.instance_id);
+        let Some(node) = self.graph.node_weight_mut(expression_id.node_index)
+        else {
+            return;
+        };
+        node.pin_count = node.pin_count.checked_sub(1).unwrap_or_default();
+        if node.pin_count == 0 {
+            remove(&mut self.graph, expression_id.node_index);
+        }
+    }
+
+    #[inline]
+    pub fn evaluator(&self) -> Evaluator {
+        Evaluator::new(self)
+    }
+
+    fn binary(&mut self, inputs: &[ExpressionId], kind: NodeKind) -> ExpressionId {
         // note: this assumes there's at least 1 input, and that `kind` is either `And`
         // or `Or`.
 
@@ -161,7 +246,7 @@ impl Graph {
         let dependants = |index| {
             self.graph
                 .neighbors_directed(index, Direction::Outgoing)
-                .filter(|index| *self.graph.node_weight(*index).unwrap() == kind)
+                .filter(|index| self.graph.node_weight(*index).unwrap().kind == kind)
         };
 
         // we initialize our intersection with the first input's dependants.
@@ -194,7 +279,7 @@ impl Graph {
         let index = match dependants_intersection_1.len() {
             0 => {
                 // create a new node
-                let index = self.graph.add_node(kind);
+                let index = self.graph.add_node(Node::new(kind));
                 for input in inputs {
                     self.graph.add_edge(input.node_index, index, ());
                 }
@@ -208,11 +293,6 @@ impl Graph {
         };
 
         self.expression_id(index)
-    }
-
-    #[inline]
-    pub fn evaluator(&self) -> Evaluator {
-        Evaluator::new(self)
     }
 }
 
@@ -374,7 +454,7 @@ fn propagate(
                 .graph
                 .neighbors_directed(dependant_index, Direction::Incoming)
                 .count();
-            assert!(!matches!(dependant_expression, Expression::Not) || num_inputs == 1);
+            assert!(!matches!(dependant_expression.kind, NodeKind::Not) || num_inputs == 1);
             ExpressionState {
                 value: Maybe::Indefinite,
                 num_inputs_not_evaluated: num_inputs,
@@ -389,26 +469,26 @@ fn propagate(
         // compute new value
         let dependant_new_value = match (
             new_value,
-            dependant_expression,
+            dependant_expression.kind,
             dependant_state.num_inputs_not_evaluated,
         ) {
-            (_, Expression::Not, _) => {
+            (_, NodeKind::Not, _) => {
                 // not: just invert
                 Maybe::Definite(!new_value)
             }
-            (false, Expression::And, _) => {
+            (false, NodeKind::And, _) => {
                 // and, but we received a false, so the output is false
                 Maybe::Definite(false)
             }
-            (true, Expression::Or, _) => {
+            (true, NodeKind::Or, _) => {
                 // or, but we received a true, so the output is true
                 Maybe::Definite(true)
             }
-            (true, Expression::And, 0) => {
+            (true, NodeKind::And, 0) => {
                 // and, all inputs evaluated, so it's true
                 Maybe::Definite(true)
             }
-            (false, Expression::Or, 0) => {
+            (false, NodeKind::Or, 0) => {
                 // or, all inputs evaluated, so it's false
                 Maybe::Definite(false)
             }

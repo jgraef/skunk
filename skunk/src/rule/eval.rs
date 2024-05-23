@@ -176,15 +176,34 @@ pub struct UpdateInputs<'a> {
 }
 
 impl<'a> UpdateInputs<'a> {
-    pub fn for_each<'d, E, F>(&mut self, f: F)
+    pub fn for_each<'d, E, F>(&mut self, mut f: F)
     where
         E: Extractor + 'static,
-        F: Fn(&E) -> E::Data<'d>,
+        F: FnMut(&E) -> E::Data<'d>,
     {
         if let Some(set) = self.inner.inputs.input_set::<E>() {
             for var in set.iter() {
                 let data = f(&var.extractor);
-                if let Maybe::Definite(value) = var.matcher.matches(data) {
+                if let Maybe::Definite(value) = var.matcher.matches(&data) {
+                    self.eval.set(&self.inner.graph, var.variable, value);
+                }
+            }
+        }
+    }
+
+    pub fn fold_map<'d, E, S, F, M>(&mut self, mut init: S, mut fold: F, mut map: M)
+    where
+        E: Extractor + 'static,
+        F: FnMut(&mut S, &E),
+        M: FnMut(S) -> E::Data<'d>,
+    {
+        if let Some(set) = self.inner.inputs.input_set::<E>() {
+            for var in set.iter() {
+                fold(&mut init, &var.extractor);
+            }
+            let data = map(init);
+            for var in set.iter() {
+                if let Maybe::Definite(value) = var.matcher.matches(&data) {
                     self.eval.set(&self.inner.graph, var.variable, value);
                 }
             }
@@ -316,11 +335,11 @@ pub trait Extractor {
 }
 
 pub trait Match<E: Extractor> {
-    fn matches<'d>(&self, input: E::Data<'d>) -> Maybe;
+    fn matches<'d>(&self, input: &E::Data<'d>) -> Maybe;
 }
 
 impl<E: Extractor> Match<E> for Box<dyn Match<E>> {
-    fn matches<'d>(&self, input: E::Data<'d>) -> Maybe {
+    fn matches<'d>(&self, input: &E::Data<'d>) -> Maybe {
         self.deref().matches(input)
     }
 }
@@ -328,9 +347,9 @@ impl<E: Extractor> Match<E> for Box<dyn Match<E>> {
 impl<E, F> Match<E> for F
 where
     E: Extractor,
-    for<'d> F: Fn(E::Data<'d>) -> Maybe,
+    for<'d> F: Fn(&E::Data<'d>) -> Maybe,
 {
-    fn matches<'d>(&self, input: E::Data<'d>) -> Maybe {
+    fn matches<'d>(&self, input: &E::Data<'d>) -> Maybe {
         self(input)
     }
 }
