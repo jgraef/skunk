@@ -24,6 +24,7 @@ iana-ports = { git = "https://github.com/jgraef/iana-ports.git" }
 indexmap = "2.2.6"
 lazy_static = "1.4.0"
 nom = "7.1.3"
+parking_lot = { version = "0.12.2", features = ["arc_lock"] }
 petgraph = "0.6.5"
 pin-project-lite = "0.2.14"
 rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"], optional = true }

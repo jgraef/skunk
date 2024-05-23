@@ -17,13 +17,17 @@ use std::{
     num::NonZeroUsize,
     ops::Deref,
     sync::{
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
         Arc,
-        Mutex,
     },
 };
 
 pub use bytes;
 use bytes::Bytes;
+use parking_lot::Mutex;
 pub use tokio_util::sync::CancellationToken;
 
 /// [`Oncelock`](std::sync::OnceLock::get_or_try_init) is not stabilized yet, so
@@ -36,7 +40,7 @@ impl<T> Lazy<T> {
     }
 
     pub fn get_or_try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<Arc<T>, E> {
-        let mut guard = self.0.lock().expect("lock poisoned");
+        let mut guard = self.0.lock();
         if let Some(value) = &*guard {
             Ok(value.clone())
         }
@@ -114,19 +118,40 @@ impl From<Bytes> for Boob<'static> {
 
 #[derive(Debug)]
 pub struct UsizeIdGenerator {
-    next: usize,
+    next: AtomicUsize,
 }
 
 impl Default for UsizeIdGenerator {
     fn default() -> Self {
-        Self { next: 1 }
+        Self::new()
     }
 }
 
 impl UsizeIdGenerator {
-    pub fn next(&mut self) -> NonZeroUsize {
-        let id = self.next;
-        self.next += 1;
-        NonZeroUsize::new(id).expect("id overflow")
+    pub const fn new() -> Self {
+        Self {
+            next: AtomicUsize::new(1),
+        }
+    }
+
+    pub fn next(&self) -> NonZeroUsize {
+        NonZeroUsize::new(self.next.fetch_add(1, Ordering::Relaxed)).expect("id overflow")
     }
 }
+
+static UNIQUE_IDS: UsizeIdGenerator = UsizeIdGenerator::new();
+
+/// Returns a general unique ID.
+pub fn unique_id() -> NonZeroUsize {
+    UNIQUE_IDS.next()
+}
+
+/// Creates a static id generator and returns the next id.
+macro_rules! unique_ids {
+    () => {{
+        static UNIQUE_IDS: crate::util::UsizeIdGenerator = crate::util::UsizeIdGenerator::new();
+        UNIQUE_IDS.next()
+    }};
+}
+
+pub(crate) use unique_ids;
