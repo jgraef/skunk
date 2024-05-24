@@ -10,6 +10,7 @@ use petgraph::{
 use super::{
     Graph,
     Node,
+    NodeKind,
 };
 
 fn node_id(node_index: NodeIndex) -> dot::NodeId {
@@ -18,11 +19,16 @@ fn node_id(node_index: NodeIndex) -> dot::NodeId {
 
 fn node_label(node: &Node) -> dot::Id {
     dot::Id::Html(match node.kind {
-        super::NodeKind::Literal(value) => format!("{value}"),
-        super::NodeKind::Variable => node.label.as_ref().map_or("?", AsRef::as_ref).to_owned(),
-        super::NodeKind::Not => "~".to_owned(),
-        super::NodeKind::And => "^".to_owned(),
-        super::NodeKind::Or => "v".to_owned(),
+        NodeKind::Literal(false) => "&#8869;".to_owned(),
+        NodeKind::Literal(true) => "&#8868;".to_owned(),
+        NodeKind::Variable => {
+            node.label
+                .as_ref()
+                .map_or_else(|| "input".to_owned(), |label| format!("input: {label}"))
+        }
+        NodeKind::Not => "&#172;".to_owned(),
+        NodeKind::And => "&#8743;".to_owned(),
+        NodeKind::Or => "&#8744;".to_owned(),
     })
 }
 
