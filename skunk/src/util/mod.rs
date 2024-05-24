@@ -116,25 +116,29 @@ impl From<Bytes> for Boob<'static> {
 }
 
 /// ID generator. Generates sequential [`NonZeroUsize`]s starting with 1.
-/// This uses an [`AtomicUsize`] internally, so it doesn't require mutable access to self to increment the counter.
+/// This uses an [`AtomicUsize`] internally, so it doesn't require mutable
+/// access to self to increment the counter.
 #[derive(Debug)]
 pub struct UsizeIdGenerator {
     next: AtomicUsize,
 }
 
 impl Default for UsizeIdGenerator {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl UsizeIdGenerator {
+    #[inline]
     pub const fn new() -> Self {
         Self {
             next: AtomicUsize::new(1),
         }
     }
 
+    #[inline]
     pub fn next(&self) -> NonZeroUsize {
         NonZeroUsize::new(self.next.fetch_add(1, Ordering::Relaxed)).expect("id overflow")
     }
@@ -146,7 +150,7 @@ pub fn unique_id() -> NonZeroUsize {
 }
 
 /// Creates a static ID generator and returns the next ID. These IDs are unique
-/// per macro call-site.
+/// per macro call-site. IDs are of type [`NonZeroUsize`].
 ///
 /// # Note
 ///
