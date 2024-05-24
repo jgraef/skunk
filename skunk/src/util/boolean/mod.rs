@@ -140,95 +140,6 @@ impl Graph {
     }
 
     #[inline]
-    pub fn literal(&self, value: bool) -> ExpressionId {
-        self.expression_id(self.literals[usize::from(value)])
-    }
-
-    #[inline]
-    pub fn variable(&mut self) -> VariableId {
-        let node_index = self.graph.add_node(Node::variable());
-        VariableId(self.expression_id(node_index))
-    }
-
-    pub fn not(&mut self, input: ExpressionId) -> ExpressionId {
-        input.expect_instance(self.instance_id);
-
-        for index in self
-            .graph
-            .neighbors_directed(input.node_index, Direction::Outgoing)
-        {
-            let node = self.graph.node_weight(index).unwrap();
-            if matches!(node.kind, NodeKind::Not) {
-                return self.expression_id(index);
-            }
-        }
-
-        let index = self.graph.add_node(Node::not());
-        self.graph.add_edge(input.node_index, index, ());
-        self.expression_id(index)
-    }
-
-    #[inline]
-    pub fn and(&mut self, inputs: &[ExpressionId]) -> ExpressionId {
-        if inputs.is_empty() {
-            self.literal(true)
-        }
-        else {
-            self.binary(inputs, NodeKind::And)
-        }
-    }
-
-    #[inline]
-    pub fn or(&mut self, inputs: &[ExpressionId]) -> ExpressionId {
-        if inputs.is_empty() {
-            self.literal(false)
-        }
-        else {
-            self.binary(inputs, NodeKind::Or)
-        }
-    }
-
-    #[inline]
-    pub fn pin(&mut self, expression_id: ExpressionId) {
-        expression_id.expect_instance(self.instance_id);
-        self.graph
-            .node_weight_mut(expression_id.node_index)
-            .unwrap_or_else(|| panic!("missing expression: {expression_id:?}"))
-            .pin_count += 1;
-    }
-
-    pub fn unpin(&mut self, expression_id: ExpressionId) {
-        /// removes nodes without dependants recursively
-        fn remove(graph: &mut StableGraph<Node, ()>, node_index: NodeIndex) {
-            if graph
-                .neighbors_directed(node_index, Direction::Outgoing)
-                .count()
-                == 0
-            {
-                let mut dependencies = graph
-                    .neighbors_directed(node_index, Direction::Incoming)
-                    .detach();
-                while let Some(dependency_index) = dependencies.next_node(graph) {
-                    if graph.node_weight(dependency_index).unwrap().pin_count == 0 {
-                        remove(graph, dependency_index);
-                    }
-                }
-                graph.remove_node(node_index);
-            }
-        }
-
-        expression_id.expect_instance(self.instance_id);
-        let Some(node) = self.graph.node_weight_mut(expression_id.node_index)
-        else {
-            return;
-        };
-        node.pin_count = node.pin_count.checked_sub(1).unwrap_or_default();
-        if node.pin_count == 0 {
-            remove(&mut self.graph, expression_id.node_index);
-        }
-    }
-
-    #[inline]
     pub fn evaluator(&self) -> Evaluator {
         Evaluator::new(self)
     }
@@ -313,5 +224,106 @@ impl Debug for Graph {
         f.debug_struct("Graph")
             .field("instance_id", &self.instance_id)
             .finish_non_exhaustive()
+    }
+}
+
+pub trait ModifyGraph {
+    fn literal(&self, value: bool) -> ExpressionId;
+    fn variable(&mut self) -> VariableId;
+    fn not(&mut self, input: ExpressionId) -> ExpressionId;
+    fn and(&mut self, inputs: &[ExpressionId]) -> ExpressionId;
+    fn or(&mut self, inputs: &[ExpressionId]) -> ExpressionId;
+    fn pin(&mut self, expression_id: ExpressionId);
+    fn unpin(&mut self, expression_id: ExpressionId);
+}
+
+impl ModifyGraph for Graph {
+    #[inline]
+    fn literal(&self, value: bool) -> ExpressionId {
+        self.expression_id(self.literals[usize::from(value)])
+    }
+
+    #[inline]
+    fn variable(&mut self) -> VariableId {
+        let node_index = self.graph.add_node(Node::variable());
+        VariableId(self.expression_id(node_index))
+    }
+
+    fn not(&mut self, input: ExpressionId) -> ExpressionId {
+        input.expect_instance(self.instance_id);
+
+        for index in self
+            .graph
+            .neighbors_directed(input.node_index, Direction::Outgoing)
+        {
+            let node = self.graph.node_weight(index).unwrap();
+            if matches!(node.kind, NodeKind::Not) {
+                return self.expression_id(index);
+            }
+        }
+
+        let index = self.graph.add_node(Node::not());
+        self.graph.add_edge(input.node_index, index, ());
+        self.expression_id(index)
+    }
+
+    #[inline]
+    fn and(&mut self, inputs: &[ExpressionId]) -> ExpressionId {
+        if inputs.is_empty() {
+            self.literal(true)
+        }
+        else {
+            self.binary(inputs, NodeKind::And)
+        }
+    }
+
+    #[inline]
+    fn or(&mut self, inputs: &[ExpressionId]) -> ExpressionId {
+        if inputs.is_empty() {
+            self.literal(false)
+        }
+        else {
+            self.binary(inputs, NodeKind::Or)
+        }
+    }
+
+    #[inline]
+    fn pin(&mut self, expression_id: ExpressionId) {
+        expression_id.expect_instance(self.instance_id);
+        self.graph
+            .node_weight_mut(expression_id.node_index)
+            .unwrap_or_else(|| panic!("missing expression: {expression_id:?}"))
+            .pin_count += 1;
+    }
+
+    fn unpin(&mut self, expression_id: ExpressionId) {
+        /// removes nodes without dependants recursively
+        fn remove(graph: &mut StableGraph<Node, ()>, node_index: NodeIndex) {
+            if graph
+                .neighbors_directed(node_index, Direction::Outgoing)
+                .count()
+                == 0
+            {
+                let mut dependencies = graph
+                    .neighbors_directed(node_index, Direction::Incoming)
+                    .detach();
+                while let Some(dependency_index) = dependencies.next_node(graph) {
+                    if graph.node_weight(dependency_index).unwrap().pin_count == 0 {
+                        remove(graph, dependency_index);
+                    }
+                }
+                graph.remove_node(node_index);
+            }
+        }
+
+        expression_id.expect_instance(self.instance_id);
+        let Some(node) = self.graph.node_weight_mut(expression_id.node_index)
+        else {
+            return;
+        };
+        node.pin_count = node.pin_count.checked_sub(1).unwrap_or_default();
+        if node.pin_count == 0 {
+            remove(&mut self.graph, expression_id.node_index);
+        }
     }
 }

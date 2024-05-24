@@ -27,6 +27,7 @@ use crate::util::boolean::{
     self,
     ExpressionId,
     Maybe,
+    ModifyGraph,
     VariableId,
 };
 

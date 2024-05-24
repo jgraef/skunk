@@ -6,6 +6,7 @@ use std::{
     },
     hash::Hash,
     str::FromStr,
+    sync::Arc,
 };
 
 use serde::{
@@ -15,7 +16,7 @@ use serde::{
 
 #[derive(Clone)]
 pub struct Regex {
-    string: String,
+    string: Arc<str>,
     regex: regex::Regex,
 }
 
@@ -24,14 +25,22 @@ pub struct Regex {
 pub struct RegexParseError {
     #[source]
     source: regex::Error,
-    regex: String,
+    string: Arc<str>,
 }
 
 impl FromStr for Regex {
     type Err = RegexParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.to_owned().try_into()
+        Cow::Borrowed(s).try_into()
+    }
+}
+
+impl<'a> TryFrom<Cow<'a, str>> for Regex {
+    type Error = RegexParseError;
+
+    fn try_from(string: Cow<'a, str>) -> Result<Self, Self::Error> {
+        Arc::<str>::from(string).try_into()
     }
 }
 
@@ -39,14 +48,25 @@ impl TryFrom<String> for Regex {
     type Error = RegexParseError;
 
     fn try_from(string: String) -> Result<Self, Self::Error> {
+        Arc::<str>::from(string).try_into()
+    }
+}
+
+impl<'a> TryFrom<&'a str> for Regex {
+    type Error = RegexParseError;
+
+    fn try_from(string: &'a str) -> Result<Self, Self::Error> {
+        Arc::<str>::from(string).try_into()
+    }
+}
+
+impl TryFrom<Arc<str>> for Regex {
+    type Error = RegexParseError;
+
+    fn try_from(string: Arc<str>) -> Result<Self, Self::Error> {
         match string.parse() {
             Ok(regex) => Ok(Self { string, regex }),
-            Err(e) => {
-                Err(RegexParseError {
-                    source: e,
-                    regex: string,
-                })
-            }
+            Err(e) => Err(RegexParseError { source: e, string }),
         }
     }
 }
@@ -92,6 +112,6 @@ impl<'de> Deserialize<'de> for Regex {
         D: serde::Deserializer<'de>,
     {
         let s: Cow<'de, str> = Deserialize::deserialize(deserializer)?;
-        s.into_owned().try_into().map_err(serde::de::Error::custom)
+        s.try_into().map_err(serde::de::Error::custom)
     }
 }
