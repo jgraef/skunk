@@ -1,4 +1,7 @@
-use graphviz_rust::dot_structures as dot;
+use std::io::Write;
+
+pub use graphviz_rust::dot_structures as dot;
+use graphviz_rust::printer::PrinterContext;
 use petgraph::{
     graph::NodeIndex,
     visit::IntoNodeReferences,
@@ -24,7 +27,7 @@ fn node_label(node: &Node) -> dot::Id {
 }
 
 impl Graph {
-    pub fn into_dot_graph(&self, graph_id: dot::Id) -> dot::Graph {
+    pub fn to_dot_graph(&self, graph_id: dot::Id) -> dot::Graph {
         let mut stmts = vec![];
 
         for (node_index, node) in self.graph.node_references() {
@@ -53,5 +56,13 @@ impl Graph {
             strict: true,
             stmts,
         }
+    }
+
+    pub fn write_dot(&self, mut writer: impl Write) -> Result<(), std::io::Error> {
+        let graph = self.to_dot_graph(dot::Id::Anonymous("graph".to_owned()));
+        let mut context = PrinterContext::default();
+        let graph = graphviz_rust::print(graph, &mut context);
+        writer.write_all(graph.as_bytes())?;
+        Ok(())
     }
 }
