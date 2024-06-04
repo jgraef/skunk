@@ -21,14 +21,14 @@ use tokio::net::{
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
+use super::{
+    Passthrough,
+    Proxy,
+};
 use crate::{
     connect::{
         Connect,
         ConnectTcp,
-    },
-    layer::{
-        Layer,
-        Passthrough,
     },
     util::error::ResultExt,
 };
@@ -44,29 +44,29 @@ pub enum Error {
     Hyper(#[from] hyper::Error),
 }
 
-pub struct Builder<C, L> {
+pub struct Builder<C = ConnectTcp, P = Passthrough> {
     bind_address: SocketAddr,
     shutdown: CancellationToken,
     #[cfg(feature = "tls")]
     tls_client_config: Option<Arc<rustls::ClientConfig>>,
     connect: C,
-    layer: L,
+    proxy: P,
 }
 
-impl Default for Builder<ConnectTcp, Passthrough> {
+impl<C: Default, P: Default> Default for Builder<C, P> {
     fn default() -> Self {
         Self {
             bind_address: ([127, 0, 0, 1], DEFAULT_PORT).into(),
             shutdown: Default::default(),
             #[cfg(feature = "tls")]
             tls_client_config: None,
-            connect: ConnectTcp,
-            layer: Passthrough,
+            connect: Default::default(),
+            proxy: Default::default(),
         }
     }
 }
 
-impl<C, L> Builder<C, L> {
+impl<C, P> Builder<C, P> {
     pub fn with_bind_address(mut self, bind_address: impl Into<SocketAddr>) -> Self {
         self.bind_address = bind_address.into();
         self
@@ -86,50 +86,47 @@ impl<C, L> Builder<C, L> {
         self
     }
 
-    pub fn with_connect<D>(self, connect: D) -> Builder<D, L> {
+    pub fn with_connect<C2>(self, connect: C2) -> Builder<C2, P> {
         Builder {
             bind_address: self.bind_address,
             shutdown: self.shutdown,
             #[cfg(feature = "tls")]
             tls_client_config: self.tls_client_config,
             connect,
-            layer: self.layer,
+            proxy: self.proxy,
         }
     }
 
-    pub fn with_layer<M>(self, layer: M) -> Builder<C, M> {
+    pub fn with_proxy<P2>(self, proxy: P2) -> Builder<C, P2> {
         Builder {
             bind_address: self.bind_address,
             shutdown: self.shutdown,
             #[cfg(feature = "tls")]
             tls_client_config: self.tls_client_config,
             connect: self.connect,
-            layer,
+            proxy,
         }
     }
 
     pub async fn serve(self) -> Result<(), Error>
     where
         C: Connect + Clone + Send + 'static,
-        L: for<'s, 't> Layer<&'s mut (), &'t mut <C as Connect>::Connection>
-            + Clone
-            + Send
-            + 'static,
+        P: HttpProxy<Incoming, C::Connection> + Clone + Send + 'static,
     {
         run(self.bind_address, self.shutdown, self.connect, self.layer).await?;
         Ok(())
     }
 }
 
-async fn run<C, L>(
+async fn run<C, P>(
     bind_address: SocketAddr,
     shutdown: CancellationToken,
     connect: C,
-    layer: L,
+    proxy: P,
 ) -> Result<(), Error>
 where
     C: Connect + Clone + Send + 'static,
-    L: for<'s, 't> Layer<&'s mut (), &'t mut <C as Connect>::Connection> + Clone + Send + 'static,
+    P: HttpProxy<Incoming, C::Connection> + Clone + Send + 'static,
 {
     let listener = TcpListener::bind(bind_address).await?;
 
@@ -139,12 +136,12 @@ where
                 let (connection, address) = result?;
                 let shutdown = shutdown.clone();
                 let connect = connect.clone();
-                let layer = layer.clone();
+                let proxy = proxy.clone();
                 let span = tracing::info_span!("http-proxy", ?address);
 
                 tokio::spawn(async move {
                     tokio::select!{
-                        result = handle_connection(connection, connect, layer) => {
+                        result = handle_connection(connection, connect, proxy) => {
                             let _ = result.log_error();
                         },
                         _ = shutdown.cancelled() => {},
@@ -156,10 +153,10 @@ where
     }
 }
 
-async fn handle_connection<C, L>(connection: TcpStream, connect: C, layer: L) -> Result<(), Error>
+async fn handle_connection<C, P>(connection: TcpStream, connect: C, proxy: P) -> Result<(), Error>
 where
-    C: Connect + Clone,
-    L: for<'s, 't> Layer<&'s mut (), &'t mut <C as Connect>::Connection> + Clone,
+    C: Connect + Clone + Send + 'static,
+    P: HttpProxy<Incoming, C::Connection> + Clone + Send + 'static,
 {
     hyper::server::conn::http1::Builder::new()
         .serve_connection(
@@ -192,3 +189,5 @@ where
         .await?;
     Ok(())
 }
+
+pub trait HttpProxy<O>: Proxy<ConnectStream, O> {}
