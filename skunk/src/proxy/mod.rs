@@ -1,5 +1,12 @@
 //! Proxy implementations.
 
+//#[cfg(feature = "http")]
+//pub mod http;
+#[cfg(feature = "pcap")]
+pub mod pcap;
+#[cfg(feature = "socks")]
+pub mod socks;
+
 use futures::Future;
 use tokio::io::{
     AsyncRead,
@@ -7,11 +14,6 @@ use tokio::io::{
 };
 
 use crate::address::TcpAddress;
-
-//#[cfg(feature = "http")]
-//pub mod http;
-#[cfg(feature = "socks")]
-pub mod socks;
 
 /// Trait for connections that have an associated destination address.
 pub trait DestinationAddress {

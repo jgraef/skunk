@@ -17,6 +17,7 @@ use skunk::{
     },
     proxy::{
         fn_proxy,
+        pcap,
         socks::server as socks,
         DestinationAddress,
         Passthrough,
@@ -25,7 +26,10 @@ use skunk::{
     util::CancellationToken,
 };
 use structopt::StructOpt;
-use tokio::net::TcpStream;
+use tokio::{
+    net::TcpStream,
+    task::JoinSet,
+};
 
 use crate::config::Config;
 
@@ -44,6 +48,9 @@ pub enum Command {
         #[structopt(flatten)]
         socks: SocksArgs,
 
+        #[structopt(flatten)]
+        pcap: PcapArgs,
+
         /// Target host:port addresses.
         ///
         /// This can be used to only selectively inspect traffic. By default all
@@ -61,6 +68,10 @@ pub enum Command {
 
 #[derive(Debug, StructOpt)]
 pub struct SocksArgs {
+    /// Enable socks proxy
+    #[structopt(name = "socks", long = "socks")]
+    enabled: bool,
+
     /// Bind address for the SOCKS proxy.
     #[structopt(long = "socks-bind-address", default_value = "127.0.0.1:9090")]
     bind_address: SocketAddr,
@@ -88,6 +99,18 @@ impl SocksArgs {
 
         Ok(builder)
     }
+}
+
+#[derive(Debug, StructOpt)]
+pub struct PcapArgs {
+    #[structopt(name = "pcap", long = "pcap")]
+    enabled: bool,
+
+    #[structopt(long = "pcap-interface")]
+    interface: Option<String>,
+
+    #[structopt(long = "pcap-ap")]
+    ap: bool,
 }
 
 /// Skunk app command-line options (i.e. command-line arguments without the
@@ -129,8 +152,12 @@ impl App {
             Command::Ca { force } => {
                 self.generate_ca(force).await?;
             }
-            Command::LogHttp { socks, target } => {
-                self.log_http(socks, target).await?;
+            Command::LogHttp {
+                socks,
+                pcap,
+                target,
+            } => {
+                self.log_http(socks, pcap, target).await?;
             }
             Command::Proxy { socks, rule } => {
                 self.proxy(socks, rule).await?;
@@ -166,7 +193,28 @@ impl App {
     }
 
     /// Example command to log (possibly decrypted) HTTP traffic to console.
-    async fn log_http(&self, socks: SocksArgs, target: Vec<TcpAddress>) -> Result<(), Error> {
+    async fn log_http(
+        &self,
+        socks: SocksArgs,
+        pcap: PcapArgs,
+        target: Vec<TcpAddress>,
+    ) -> Result<(), Error> {
+        let pcap_interface = if pcap.enabled {
+            if let Some(interface) = pcap.interface {
+                Some(pcap::Interface::from_name(interface))
+            }
+            else {
+                println!("interfaces:");
+                for interface in pcap::list_interfaces()? {
+                    println!("{}", interface.name());
+                }
+                return Ok(());
+            }
+        }
+        else {
+            None
+        };
+
         // open CA
         let ca = tls::Ca::open(
             self.config.path.join(&self.config.config.ca.key_file),
@@ -186,17 +234,68 @@ impl App {
             TargetFilter::Set(target.into_iter().collect())
         });
 
-        // run the SOCKS server. `proxy` will handle connections. The default
-        // [`Connect`][skunk::connect::Connect] (i.e.
-        // [`ConnectTcp`][skunk::connect::ConnectTcp]) is used.
-        socks
-            .builder()?
-            .with_graceful_shutdown(cancel_on_ctrlc_or_sigterm())
-            .with_proxy(fn_proxy(move |incoming, outgoing| {
-                proxy(tls.clone(), filter.clone(), incoming, outgoing)
-            }))
-            .serve()
-            .await?;
+        // debug: for debugging it's more convenient to kill the process on Ctrl-C
+        //let shutdown = CancellationToken::default();
+        let shutdown = cancel_on_ctrlc_or_sigterm();
+
+        let mut join_set = JoinSet::new();
+
+        if socks.enabled {
+            let shutdown = shutdown.clone();
+            join_set.spawn(async move {
+                // run the SOCKS server. `proxy` will handle connections. The default
+                // [`Connect`][skunk::connect::Connect] (i.e.
+                // [`ConnectTcp`][skunk::connect::ConnectTcp]) is used.
+                socks
+                    .builder()?
+                    .with_graceful_shutdown(shutdown)
+                    .with_proxy(fn_proxy(move |incoming, outgoing| {
+                        proxy(tls.clone(), filter.clone(), incoming, outgoing)
+                    }))
+                    .serve()
+                    .await?;
+                Ok::<(), Error>(())
+            });
+        }
+
+        if let Some(interface) = pcap_interface {
+            join_set.spawn({
+                let shutdown = shutdown.clone();
+                let interface = interface.clone();
+                async move {
+                    if pcap.enabled {
+                        let country_code = std::env::var("HOSTAPD_CC")
+                        .expect("Environment variable `HOSTAPD_CC` not set. You need to set this variable to your country code.");
+
+                        tracing::info!("starting hostapd");
+                        let mut hostapd = pcap::ap::Builder::new(&interface, &country_code)
+                                .with_channel(11)
+                                .with_graceful_shutdown(shutdown.clone())
+                                .start()?;
+
+                        tracing::info!("waiting for hostapd to configure the interface...");
+                        hostapd.ready().await?;
+                        tracing::info!("hostapd ready");
+                    }
+
+                    pcap::run(&interface, true, shutdown).await?;
+                    Ok::<(), Error>(())
+                }
+            });
+
+            if pcap.enabled {
+                join_set.spawn({
+                    let shutdown = shutdown.clone();
+                    let interface = interface.clone();
+                    async move {
+                        pcap::dhcp::run(&interface, shutdown, Default::default()).await?;
+                        Ok::<(), Error>(())
+                    }
+                });
+            }
+        }
+
+        while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}
 
         Ok(())
     }
