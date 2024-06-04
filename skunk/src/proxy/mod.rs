@@ -13,9 +13,9 @@ use crate::address::TcpAddress;
 #[cfg(feature = "socks")]
 pub mod socks;
 
-/// Trait for connections that have an associated target address.
-pub trait TargetAddress {
-    fn target_address(&self) -> &TcpAddress;
+/// Trait for connections that have an associated destination address.
+pub trait DestinationAddress {
+    fn destination_address(&self) -> &TcpAddress;
 }
 
 /// Trait for things that can proxy (i.e. forward) connections.

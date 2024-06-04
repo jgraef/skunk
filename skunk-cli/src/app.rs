@@ -17,10 +17,10 @@ use skunk::{
     },
     proxy::{
         fn_proxy,
-        socks,
+        socks::server as socks,
+        DestinationAddress,
         Passthrough,
         Proxy,
-        TargetAddress,
     },
     util::CancellationToken,
 };
@@ -217,12 +217,12 @@ async fn proxy(
     incoming: socks::Incoming,
     outgoing: TcpStream,
 ) -> Result<(), skunk::Error> {
-    let target_address = incoming.target_address();
+    let destination_address = incoming.destination_address();
 
-    if filter.matches(target_address) {
-        let span = tracing::info_span!("connection", target = %target_address);
+    if filter.matches(destination_address) {
+        let span = tracing::info_span!("connection", destination = %destination_address);
 
-        let is_tls = target_address.port == 443;
+        let is_tls = destination_address.port == 443;
         let (incoming, outgoing) = tls.maybe_decrypt(incoming, outgoing, is_tls).await?;
 
         http::proxy(incoming, outgoing, |request, send_request| {

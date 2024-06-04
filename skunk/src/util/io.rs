@@ -10,19 +10,25 @@ use std::{
 
 use bytes::{
     Buf,
+    BufMut,
     Bytes,
+    BytesMut,
 };
 use pin_project_lite::pin_project;
 use tokio::io::{
     AsyncRead,
+    AsyncReadExt,
     AsyncWrite,
     ReadBuf,
 };
 
 pin_project! {
-    /// Wrapper for [`AsyncRead`]/[`AsyncWrite`] types that "rewinds" a read operation. This is done by giving it the bytes that you already read, but want to put back. [`Rewind`] will return these buffered bytes first when read is called on it.
+    /// Wrapper for [`AsyncRead`]/[`AsyncWrite`] types that "rewinds" a read operation.
+    /// This is done by giving it the bytes that you already read, but want to put back.
+    /// [`Rewind`] will return these buffered bytes first when read is called on it.
     ///
-    /// This also implements [`AsyncWrite`] as we often want to use connections bidirectionally, but it doesn't have any effect on writes.
+    /// This also implements [`AsyncWrite`] as we often want to use connections bidirectionally,
+    /// but it doesn't have any effect on writes.
     #[derive(Debug)]
     pub struct Rewind<T> {
         #[pin]
@@ -208,4 +214,19 @@ where
             EitherProj::Right { inner } => inner.poll_shutdown(cx),
         }
     }
+}
+
+pub async fn read_nul_terminated<S>(mut socket: S) -> Result<BytesMut, std::io::Error>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut buf = BytesMut::new();
+    loop {
+        let b = socket.read_u8().await?;
+        if b == 0 {
+            break;
+        }
+        buf.put_u8(b);
+    }
+    Ok(buf)
 }

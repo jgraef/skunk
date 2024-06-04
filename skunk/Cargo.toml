@@ -13,7 +13,6 @@ categories = [
 ]
 
 [dependencies]
-async-trait = { version = "0.1.80", optional = true }
 bytes = "1.6.0"
 futures = "0.3.30"
 hashbrown = "0.14.5"
@@ -35,7 +34,6 @@ rustls-native-certs = "0.7.0"
 rustls-pemfile = { version = "2.1.2", optional = true }
 serde = { version = "1.0.202", features = ["derive"] }
 serde_yml = "0.0.7"
-socks5-server = { version = "0.10.1", optional = true }
 sqlx = { version = "0.7.4", features = ["runtime-tokio", "sqlite"], optional = true }
 thiserror = "1.0.60"
 tokio = { version = "1.37.0", features = ["macros", "net", "io-util"] }
@@ -47,7 +45,7 @@ url = { version = "2.5.0", features = ["serde"] }
 [features]
 default = ["full"]
 full = ["socks", "http", "tls", "store", "graph-vis"]
-socks = ["dep:socks5-server", "dep:async-trait"]
+socks = []
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:rustls-pemfile"]
 store = ["dep:sqlx"]

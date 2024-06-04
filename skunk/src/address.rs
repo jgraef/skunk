@@ -4,7 +4,11 @@ use std::{
     borrow::Cow,
     convert::Infallible,
     fmt::Display,
-    net::IpAddr,
+    net::{
+        IpAddr,
+        Ipv4Addr,
+        Ipv6Addr,
+    },
     ops::RangeInclusive,
     str::FromStr,
 };
@@ -42,6 +46,24 @@ impl FromStr for HostAddress {
     }
 }
 
+impl From<IpAddr> for HostAddress {
+    fn from(value: IpAddr) -> Self {
+        Self::IpAddress(value)
+    }
+}
+
+impl From<Ipv4Addr> for HostAddress {
+    fn from(value: Ipv4Addr) -> Self {
+        Self::IpAddress(value.into())
+    }
+}
+
+impl From<Ipv6Addr> for HostAddress {
+    fn from(value: Ipv6Addr) -> Self {
+        Self::IpAddress(value.into())
+    }
+}
+
 impl Serialize for HostAddress {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -69,6 +91,12 @@ impl<'de> Deserialize<'de> for HostAddress {
 pub struct TcpAddress {
     pub host: HostAddress,
     pub port: u16,
+}
+
+impl TcpAddress {
+    pub fn new(host: HostAddress, port: u16) -> Self {
+        Self { host, port }
+    }
 }
 
 /// Failed to parse [`TcpAddress`].
@@ -104,6 +132,61 @@ impl Serialize for TcpAddress {
 }
 
 impl<'de> Deserialize<'de> for TcpAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: Cow<'de, str> = Deserialize::deserialize(deserializer)?;
+        Ok(s.parse().map_err(serde::de::Error::custom)?)
+    }
+}
+
+/// A [`HostAddress`] and a port, used for UDP.
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct UdpAddress {
+    pub host: HostAddress,
+    pub port: u16,
+}
+
+impl UdpAddress {
+    pub fn new(host: HostAddress, port: u16) -> Self {
+        Self { host, port }
+    }
+}
+
+/// Failed to parse [`TcpAddress`].
+#[derive(Debug, thiserror::Error)]
+#[error("invalid tcp address: {0}")]
+pub struct UdpAddressParseError(String);
+
+impl FromStr for UdpAddress {
+    type Err = UdpAddressParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let err = || UdpAddressParseError(s.to_owned());
+        let colon = s.rfind(':').ok_or_else(err)?;
+        let host = s[..colon].parse().map_err(|_| err())?;
+        let port = s[colon + 1..].parse().map_err(|_| err())?;
+        Ok(Self { host, port })
+    }
+}
+
+impl Display for UdpAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
+impl Serialize for UdpAddress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for UdpAddress {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
