@@ -61,9 +61,9 @@ impl Config {
         }
         else {
             // file doesn't exist. create it with default config.
-            let config = ConfigData::default();
-            std::fs::write(&config_file_path, include_str!("../skunk.default.toml"))?;
-            config
+            const DEFAULT_CONFIG: &'static str = include_str!("../skunk.default.toml");
+            std::fs::write(&config_file_path, DEFAULT_CONFIG)?;
+            toml::from_str(DEFAULT_CONFIG)?
         };
 
         Ok(Self { config, path })
