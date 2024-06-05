@@ -16,6 +16,7 @@ use tokio::{
     io::{
         AsyncRead,
         AsyncWrite,
+        BufStream,
         ReadBuf,
     },
     net::{
@@ -57,8 +58,14 @@ use crate::{
 };
 
 /// An incoming connection.
+///
+/// # Buffering
+///
+/// The underlying [`TcpStream`] is buffered (using a [`BufStream`]), so it's
+/// necessary to call [`AsyncWrite::flush`] to make sure the written data is
+/// actually sent.
 pub struct Incoming {
-    inner: Connected<TcpStream, MaybeAuth>,
+    inner: Connected<BufStream<TcpStream>, MaybeAuth>,
     destination_address: TcpAddress,
 }
 
@@ -217,10 +224,12 @@ where
         tokio::select! {
             result = listener.accept() => {
                 let (connection, address) = result?;
+
                 let auth = auth.clone();
                 let shutdown = shutdown.clone();
                 let connect = connect.clone();
                 let proxy = proxy.clone();
+
                 let span = tracing::info_span!("socks", ?address);
 
                 tokio::spawn(async move {
@@ -252,6 +261,7 @@ where
     C: Connect + Clone + Send + 'static,
     P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
 {
+    let connection = BufStream::new(connection);
     let request = serve(connection, auth.as_ref()).await?;
 
     match request {
