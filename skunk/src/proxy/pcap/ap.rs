@@ -121,7 +121,7 @@ impl<'a> Builder<'a> {
     }
 
     pub fn write_config(&self, mut writer: impl Write) -> Result<(), Error> {
-        writeln!(writer, "interface={}", self.interface.name)?;
+        writeln!(writer, "interface={}", self.interface.name())?;
         writeln!(writer, "driver={}", <&'static str>::from(self.driver))?;
         writeln!(writer, "ssid={}", self.ssid)?;
         writeln!(writer, "country_code={}", self.country_code)?;

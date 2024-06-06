@@ -200,14 +200,26 @@ impl App {
         target: Vec<TcpAddress>,
     ) -> Result<(), Error> {
         let pcap_interface = if pcap.enabled {
+            fn print_interfaces() -> Result<(), Error> {
+                println!("available interfaces:");
+                for interface in pcap::Interface::enumerate()? {
+                    println!("{}", interface.name());
+                    println!("{interface:#?}\n");
+                }
+                Ok(())
+            }
+
             if let Some(interface) = pcap.interface {
-                Some(pcap::Interface::from_name(interface))
+                let interface_opt = pcap::Interface::from_name(&interface);
+                if interface_opt.is_none() {
+                    eprintln!("interface '{interface}' not found");
+                    print_interfaces()?;
+                    return Ok(());
+                }
+                interface_opt
             }
             else {
-                println!("interfaces:");
-                for interface in pcap::list_interfaces()? {
-                    println!("{}", interface.name());
-                }
+                print_interfaces()?;
                 return Ok(());
             }
         }
@@ -278,7 +290,7 @@ impl App {
                         tracing::info!("hostapd ready");
                     }
 
-                    pcap::run(&interface, true, shutdown).await?;
+                    pcap::run(&interface, shutdown).await?;
                     Ok::<(), Error>(())
                 }
             });

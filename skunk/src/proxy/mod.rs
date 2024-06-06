@@ -2,7 +2,7 @@
 
 //#[cfg(feature = "http")]
 //pub mod http;
-#[cfg(feature = "pcap")]
+#[cfg(all(feature = "pcap", unix))]
 pub mod pcap;
 #[cfg(feature = "socks")]
 pub mod socks;

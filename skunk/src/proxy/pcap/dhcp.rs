@@ -1,32 +1,38 @@
+/// A minimal (not complete) DHCP server implementation.
+///
+/// # Notes
+///
+/// - [RFC 8910](https://datatracker.ietf.org/doc/html/rfc8910)
+/// - [inject arp](https://github.com/bluecatengineering/dora/blob/master/dora-core/src/server/ioctl.rs)
 use std::{
     collections::{
         BTreeSet,
         HashMap,
     },
-    fmt::{
-        Debug,
-        Display,
-    },
+    fmt::Debug,
     net::Ipv4Addr,
     ops::RangeInclusive,
 };
 
 use bytes::Bytes;
+pub use dhcproto::v4::{
+    Message,
+    CLIENT_PORT,
+    SERVER_PORT,
+};
 use dhcproto::{
     v4::{
         DhcpOption,
         HType,
-        Message,
         MessageType,
         Opcode,
         OptionCode,
-        CLIENT_PORT,
-        SERVER_PORT,
     },
     Decodable,
     Encodable,
     Encoder,
 };
+use futures::Future;
 use indexmap::{
     map::Entry,
     IndexMap,
@@ -39,7 +45,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
-use super::Interface;
+use super::{
+    Interface,
+    MacAddress,
+};
 
 const BUF_SIZE: usize = 1024;
 const LEASE_TIME: u32 = 24 * 60 * 60;
@@ -60,6 +69,7 @@ pub enum InvalidRequest {
     NoRequestedIpAddress,
 }
 
+/// Run a DHCP server on the given interface.
 pub async fn run(
     interface: &Interface,
     shutdown: CancellationToken,
@@ -91,53 +101,34 @@ macro_rules! get_opt {
     }};
 }
 
-pub struct Server {
-    socket: UdpSocket,
-    buf: Vec<u8>,
+/// A socket-agnostic DHCP service implementation.
+///
+/// This implementation only supports the most basic transactions (`DHCPOFFER`
+/// and `DHCPREQUEST`).
+pub struct Service {
     network_config: NetworkConfig,
     leases: Leases,
 }
 
-impl Server {
-    pub async fn new(interface: &Interface, network_config: NetworkConfig) -> Result<Self, Error> {
-        let socket = UdpSocket::bind((Ipv4Addr::BROADCAST, SERVER_PORT)).await?;
-        socket.bind_device(Some(interface.name.as_bytes()))?;
-        socket.set_broadcast(true)?;
-
-        let buf = Vec::with_capacity(BUF_SIZE);
-
+impl Service {
+    pub fn new(network_config: NetworkConfig) -> Self {
         let leases = Leases::new(network_config.pool.clone());
 
-        Ok(Self {
-            socket,
-            buf,
+        Self {
             network_config,
             leases,
-        })
-    }
-
-    pub async fn serve(mut self) -> Result<(), Error> {
-        loop {
-            self.buf.resize(BUF_SIZE, 0);
-            let mut read_buf = ReadBuf::new(&mut self.buf);
-
-            let (_, client_address) = self.socket.recv_buf_from(&mut read_buf).await?;
-            if client_address.port() != CLIENT_PORT {
-                tracing::warn!(
-                    port = client_address.port(),
-                    "received message from unusual port"
-                );
-                continue;
-            }
-
-            let message = Message::from_bytes(read_buf.filled())?;
-            self.buf.clear();
-
-            self.handle_message(message).await?;
         }
     }
 
-    async fn handle_message(&mut self, message: Message) -> Result<(), Error> {
+    pub fn network_config(&self) -> &NetworkConfig {
+        &self.network_config
+    }
+
+    pub async fn handle_message(
+        &mut self,
+        message: Message,
+        sender: impl Sender,
+    ) -> Result<(), Error> {
         if message.opcode() != Opcode::BootRequest
             || message.htype() != HType::Eth
             || message.hlen() != 6
@@ -151,10 +142,10 @@ impl Server {
         if let Some(message_type) = get_opt!(message, MessageType) {
             match message_type {
                 MessageType::Discover => {
-                    self.handle_discover(message).await?;
+                    self.handle_discover(message, sender).await?;
                 }
                 MessageType::Request => {
-                    self.handle_request(message).await?;
+                    self.handle_request(message, sender).await?;
                 }
                 _ => {
                     tracing::debug!(r#type = ?message_type, "unhandled message");
@@ -165,7 +156,11 @@ impl Server {
         Ok(())
     }
 
-    async fn handle_discover(&mut self, message: Message) -> Result<(), Error> {
+    async fn handle_discover(
+        &mut self,
+        message: Message,
+        mut sender: impl Sender,
+    ) -> Result<(), Error> {
         let requested_ip_address = get_opt!(message, RequestedIpAddress).copied();
 
         let target = SendTo::from_message(&message);
@@ -176,20 +171,24 @@ impl Server {
         ) {
             let mut offer_reply = self.create_reply(&message, MessageType::Offer);
             offer_reply.set_yiaddr(offer.ip_address);
-            self.send_message(&offer_reply, target).await?;
+            sender.send(&offer_reply, target).await?;
 
             let ack = self.create_reply(&message, MessageType::Ack);
-            self.send_message(&ack, target).await?;
+            sender.send(&ack, target).await?;
         }
         else {
             let nack = self.create_reply(&message, MessageType::Nak);
-            self.send_message(&nack, target).await?;
+            sender.send(&nack, target).await?;
         }
 
         Ok(())
     }
 
-    async fn handle_request(&mut self, message: Message) -> Result<(), Error> {
+    async fn handle_request(
+        &mut self,
+        message: Message,
+        mut sender: impl Sender,
+    ) -> Result<(), Error> {
         if let Some(server_identifier) = get_opt!(message, ServerIdentifier).copied() {
             if server_identifier != self.network_config.dhcp_server {
                 // not for us.
@@ -205,7 +204,7 @@ impl Server {
 
         if let Some(lease) = self.leases.request_lease(
             ClientIdentifier::from_message(&message),
-            message.chaddr().into(),
+            message.chaddr().try_into().unwrap(),
             requested_ip_address,
         ) {
             let lease_ip_address = lease.ip_address;
@@ -220,11 +219,11 @@ impl Server {
             opts.insert(DhcpOption::DomainNameServer(
                 self.network_config.dns_servers.clone(),
             ));
-            self.send_message(&ack, target).await?;
+            sender.send(&ack, target).await?;
         }
         else {
             let nack = self.create_reply(&message, MessageType::Nak);
-            self.send_message(&nack, target).await?;
+            sender.send(&nack, target).await?;
         }
 
         Ok(())
@@ -288,39 +287,109 @@ impl Server {
 
         reply
     }
+}
 
-    async fn send_message(&mut self, message: &Message, target: SendTo) -> Result<(), Error> {
-        let mut encoder = Encoder::new(&mut self.buf);
-        message.encode(&mut encoder)?;
+pub trait Sender {
+    fn send(&mut self, response: &Message, to: SendTo) -> impl Future<Output = Result<(), Error>>;
+}
 
-        tracing::debug!(message = ?MessageDebug(&message), ?target, "sending");
-
-        self.socket
-            .send_to(encoder.buffer(), target.to_socket_address())
-            .await?;
-        Ok(())
+impl<T: Sender> Sender for &mut T {
+    fn send(&mut self, response: &Message, to: SendTo) -> impl Future<Output = Result<(), Error>> {
+        (*self).send(response, to)
     }
 }
 
-impl Debug for Server {
+impl Debug for Service {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Server")
-            .field("socket", &self.socket)
+        f.debug_struct("Service")
             .field("network_config", &self.network_config)
             .field("leases", &self.leases)
             .finish()
     }
 }
 
+/// A standalone DHCP server using Tokio's [`UdpSocket`].
+#[derive(Debug)]
+pub struct Server {
+    socket: UdpSocket,
+    service: Service,
+    buf: Vec<u8>,
+}
+
+impl Server {
+    pub async fn new(interface: &Interface, network_config: NetworkConfig) -> Result<Self, Error> {
+        let socket = UdpSocket::bind((Ipv4Addr::BROADCAST, SERVER_PORT)).await?;
+        socket.bind_device(Some(interface.name().as_bytes()))?;
+        socket.set_broadcast(true)?;
+
+        let buf = Vec::with_capacity(BUF_SIZE);
+
+        let service = Service::new(network_config);
+
+        Ok(Self {
+            socket,
+            service,
+            buf,
+        })
+    }
+
+    pub async fn serve(mut self) -> Result<(), Error> {
+        loop {
+            assert!(self.buf.len() >= BUF_SIZE);
+            let mut read_buf = ReadBuf::new(&mut self.buf);
+
+            let (_, client_address) = self.socket.recv_buf_from(&mut read_buf).await?;
+            if client_address.port() != CLIENT_PORT {
+                tracing::warn!(
+                    port = client_address.port(),
+                    "received message from unusual port"
+                );
+                continue;
+            }
+
+            let request = Message::from_bytes(read_buf.filled())?;
+
+            self.service
+                .handle_message(
+                    request,
+                    ServerSender {
+                        socket: &self.socket,
+                        buf: &mut self.buf,
+                    },
+                )
+                .await?;
+        }
+    }
+}
+
+struct ServerSender<'a> {
+    socket: &'a UdpSocket,
+    buf: &'a mut Vec<u8>,
+}
+
+impl<'a> Sender for ServerSender<'a> {
+    async fn send(&mut self, response: &Message, to: SendTo) -> Result<(), Error> {
+        let mut encoder = Encoder::new(self.buf);
+        response.encode(&mut encoder)?;
+
+        tracing::debug!(message = ?MessageDebug(&response), ?to, "sending");
+
+        self.socket
+            .send_to(encoder.buffer_filled(), to.to_socket_address())
+            .await?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
-enum SendTo {
+pub enum SendTo {
     Relay(Ipv4Addr),
     Client(Ipv4Addr),
     Broadcast,
 }
 
 impl SendTo {
-    pub fn from_message(message: &Message) -> Self {
+    fn from_message(message: &Message) -> Self {
         if !message.giaddr().is_unspecified() {
             Self::Relay(message.giaddr())
         }
@@ -450,7 +519,7 @@ impl ClientIdentifier {
     pub fn from_message(message: &Message) -> Self {
         get_opt!(message, ClientIdentifier)
             .map(|ident| Self::from_bytes(Bytes::copy_from_slice(ident)))
-            .unwrap_or_else(|| Self::from_mac_address(message.chaddr().into()))
+            .unwrap_or_else(|| Self::from_mac_address(message.chaddr().try_into().unwrap()))
     }
 }
 
@@ -466,41 +535,6 @@ struct Offer {
     ip_address: Ipv4Addr,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MacAddress(pub [u8; 6]);
-
-impl Display for MacAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
-        )
-    }
-}
-
-impl Debug for MacAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MacAddress({self})")
-    }
-}
-
-impl From<[u8; 6]> for MacAddress {
-    fn from(value: [u8; 6]) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&[u8]> for MacAddress {
-    fn from(value: &[u8]) -> Self {
-        Self(
-            value
-                .try_into()
-                .expect("expected mac address to be exactly 6 bytes"),
-        )
-    }
-}
-
 struct MessageDebug<'a>(&'a Message);
 
 impl<'a> Debug for MessageDebug<'a> {
@@ -512,7 +546,7 @@ impl<'a> Debug for MessageDebug<'a> {
             .field("yiaddr", &self.0.yiaddr())
             .field("siaddr", &self.0.siaddr())
             .field("giaddr", &self.0.giaddr())
-            .field("chaddr", &MacAddress::from(self.0.chaddr()))
+            .field("chaddr", &MacAddress::try_from(self.0.chaddr()).unwrap())
             .finish()
     }
 }
