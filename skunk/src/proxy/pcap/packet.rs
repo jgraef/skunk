@@ -9,7 +9,18 @@ use std::{
 };
 
 use etherparse::{
-    EtherType, Ethernet2Header, Ethernet2Slice, Icmpv4Slice, IpHeaders, IpNumber, Ipv4Slice, PacketBuilderStep, TcpHeader, TcpSlice, TransportSlice, UdpSlice
+    EtherType,
+    Ethernet2Header,
+    Ethernet2Slice,
+    Icmpv4Slice,
+    IpHeaders,
+    IpNumber,
+    Ipv4Slice,
+    PacketBuilderStep,
+    TcpHeader,
+    TcpSlice,
+    TransportSlice,
+    UdpSlice,
 };
 use nix::sys::socket::{
     AddressFamily,
@@ -24,7 +35,7 @@ use tokio::io::{
 };
 
 use super::{
-    Interface,
+    interface::Interface,
     MacAddress,
 };
 use crate::util::io::WriteBuf;
@@ -74,10 +85,11 @@ impl From<nix::Error> for SendError {
 #[derive(Debug)]
 pub struct PacketSocket {
     socket: AsyncFd<OwnedFd>,
+    interface: Interface,
 }
 
 impl PacketSocket {
-    pub fn open(interface: &Interface) -> Result<Self, std::io::Error> {
+    pub fn open(interface: Interface) -> Result<Self, std::io::Error> {
         // note: the returned OwnedFd will close the socket on drop.
         let socket = nix::sys::socket::socket(
             AddressFamily::Packet,
@@ -86,14 +98,16 @@ impl PacketSocket {
             SockProtocol::EthAll,
         )?;
 
-        let bind_address = interface.link_addr();
+        let bind_address = interface
+            .raw_bind_address()
+            .expect("interface has no address we can bind to");
         // note: we might need to set the protocol field in `bind_addr`, but this is
         // currently not possible. see https://github.com/nix-rust/nix/issues/2059
-        nix::sys::socket::bind(socket.as_raw_fd(), bind_address)?;
+        nix::sys::socket::bind(socket.as_raw_fd(), &bind_address)?;
 
         let socket = AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?;
 
-        Ok(Self { socket })
+        Ok(Self { socket, interface })
     }
 
     pub async fn receive(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
@@ -134,6 +148,10 @@ impl PacketSocket {
             PacketSender::new(socket),
         )
     }
+
+    pub fn interface(&self) -> &Interface {
+        &self.interface
+    }
 }
 
 /// Listener half used to listen to packets on a socket.
@@ -167,6 +185,10 @@ impl PacketListener {
                 }
             }
         }
+    }
+
+    pub fn interface(&self) -> &Interface {
+        &self.socket.interface
     }
 }
 
@@ -244,6 +266,10 @@ impl PacketSender {
         self.socket.send(buf.filled()).await?;
         Ok(())
     }
+
+    pub fn interface(&self) -> &Interface {
+        &self.socket.interface
+    }
 }
 
 pub trait WritePacket {
@@ -281,8 +307,8 @@ impl<P: WritePacket> WritePacket for TcpIpPacket<P> {
         let mut payload = vec![];
         self.payload.write_packet(WriteBuf::new(&mut payload))?;
 
-        self.builder.clone().write(&mut writer, &payload)?;
-        
+        //self.builder.clone().write(&mut writer, &payload)?;
+
         // todo: don't we have to write the frame check sequence?
         Ok(())
     }

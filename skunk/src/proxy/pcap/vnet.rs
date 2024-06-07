@@ -9,13 +9,14 @@ use dhcproto::{
     Encodable,
 };
 use etherparse::{
-    EtherType, Ethernet2Header, PacketBuilder, TransportSlice
+    EtherType,
+    Ethernet2Header,
+    PacketBuilder,
+    TransportSlice,
 };
 use ip_network::Ipv4Network;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-
-use crate::proxy::pcap::packet::WritePacket;
 
 use super::{
     arp,
@@ -26,11 +27,13 @@ use super::{
         NetworkPacket,
         PacketListener,
         PacketSender,
-        PacketSocket, TcpIpPacket,
+        PacketSocket,
+        TcpIpPacket,
     },
     Error,
     MacAddress,
 };
+use crate::proxy::pcap::packet::WritePacket;
 
 #[derive(Debug)]
 pub struct VirtualNetwork {
@@ -108,12 +111,13 @@ async fn handle_packet<'a>(
                     dhcp.network_config().subnet.broadcast_address(),
                 )
             {
-                let request =
-                    dhcp::Packet::from_bytes(udp.payload()).map_err(dhcp::Error::from)?;
+                let request = dhcp::Packet::from_bytes(udp.payload()).map_err(dhcp::Error::from)?;
 
                 let network_config = dhcp.network_config();
                 let from = (
-                    network_config.router_hardware_address,
+                    sender
+                        .interface()
+                        .hardware_address(),
                     network_config.dhcp_server,
                     dhcp::SERVER_PORT,
                 );
@@ -171,11 +175,12 @@ impl<'a> dhcp::Sender for DhcpSender<'a> {
     ) -> Result<(), super::packet::SendError> {
         let destination = to.to_socket_address();
 
-        UdpIpPacket {
+        /*UdpIpPacket {
             builder: PacketBuilder::ethernet2(self.from.0.into(), self.to_hardware_address)
                 .ipv4(self.from.1.into(), destination.0, 64),
             payload: todo!(),
-        }
+        }*/
+        todo!();
     }
 }
 
@@ -230,7 +235,6 @@ pub struct NetworkConfig {
     pub router: Ipv4Addr,
     pub dns_servers: Vec<Ipv4Addr>,
     pub pool: RangeInclusive<Ipv4Addr>,
-    pub router_hardware_address: MacAddress,
 }
 
 impl Default for NetworkConfig {
@@ -242,19 +246,6 @@ impl Default for NetworkConfig {
             router: dhcp_server,
             dns_servers: vec![dhcp_server],
             pool: Ipv4Addr::new(10, 0, 69, 100)..=Ipv4Addr::new(10, 0, 69, 200),
-            router_hardware_address: DEFAULT_ROUTER_EOI,
         }
-    }
-}
-
-pub const DEFAULT_ROUTER_EOI: MacAddress = MacAddress(*b"\xaaskunk");
-
-#[cfg(test)]
-mod tests {
-    use crate::proxy::pcap::vnet::DEFAULT_ROUTER_EOI;
-
-    #[test]
-    fn default_router_eoi_is_local_and_unicast() {
-        assert!(DEFAULT_ROUTER_EOI.is_local() && DEFAULT_ROUTER_EOI.is_unicast());
     }
 }

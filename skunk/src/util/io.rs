@@ -369,7 +369,7 @@ impl<B: AsRef<[u8]>> WriteBuf<B> {
 }
 
 macro_rules! impl_write_buf_for_slice {
-    ($ty:ty; $($generics:tt)*) => {        
+    ($ty:ty; $($generics:tt)*) => {
         impl<$($generics)*> std::io::Write for WriteBuf<$ty> {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 let remaining = self.buf.len() - self.offset;
@@ -394,7 +394,7 @@ impl_write_buf_for_slice!([u8; N]; const N: usize);
 impl_write_buf_for_slice!(Box<[u8]>;);
 
 macro_rules! impl_write_buf_for_vec {
-    ($ty:ty) => {    
+    ($ty:ty) => {
         impl std::io::Write for WriteBuf<$ty> {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 let new_size = self.offset + buf.len();

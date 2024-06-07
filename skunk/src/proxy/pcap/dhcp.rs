@@ -12,10 +12,7 @@ use std::{
     fmt::Debug,
     io::Write,
     net::Ipv4Addr,
-    ops::{
-        
-        RangeInclusive,
-    },
+    ops::RangeInclusive,
 };
 
 use bytes::Bytes;
@@ -25,13 +22,13 @@ pub use dhcproto::v4::{
 };
 use dhcproto::{
     v4::{
+        DecodeError,
         DhcpOption,
         HType,
         Message,
         MessageType,
         Opcode,
         OptionCode,
-        DecodeError
     },
     Decodable,
     Encodable,
@@ -324,11 +321,19 @@ impl Service {
 }
 
 pub trait Sender {
-    fn send(&mut self, response: &Packet, to: SendTo) -> impl Future<Output = Result<(), super::packet::SendError>>;
+    fn send(
+        &mut self,
+        response: &Packet,
+        to: SendTo,
+    ) -> impl Future<Output = Result<(), super::packet::SendError>>;
 }
 
 impl<T: Sender> Sender for &mut T {
-    fn send(&mut self, response: &Packet, to: SendTo) -> impl Future<Output = Result<(), super::packet::SendError>> {
+    fn send(
+        &mut self,
+        response: &Packet,
+        to: SendTo,
+    ) -> impl Future<Output = Result<(), super::packet::SendError>> {
         (*self).send(response, to)
     }
 }
@@ -402,7 +407,11 @@ struct ServerSender<'a> {
 }
 
 impl<'a> Sender for ServerSender<'a> {
-    async fn send(&mut self, response: &Packet, to: SendTo) -> Result<(), super::packet::SendError> {
+    async fn send(
+        &mut self,
+        response: &Packet,
+        to: SendTo,
+    ) -> Result<(), super::packet::SendError> {
         let mut encoder = Encoder::new(self.buf);
         response
             .0

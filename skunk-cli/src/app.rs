@@ -290,7 +290,7 @@ impl App {
                         tracing::info!("hostapd ready");
                     }
 
-                    pcap::run(&interface, shutdown).await?;
+                    pcap::run(interface, shutdown).await?;
                     Ok::<(), Error>(())
                 }
             });

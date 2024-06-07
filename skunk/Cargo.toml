@@ -39,6 +39,7 @@ rustls-native-certs = "0.7.0"
 rustls-pemfile = { version = "2.1.2", optional = true }
 serde = { version = "1.0.202", features = ["derive"] }
 serde_yml = "0.0.10"
+smallvec = "1.13.2"
 sqlx = { version = "0.7.4", features = ["runtime-tokio", "sqlite"], optional = true }
 strum = { version = "0.26.2", features = ["derive"] }
 tempfile = "3.10.1"
