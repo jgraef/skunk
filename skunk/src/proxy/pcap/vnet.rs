@@ -1,36 +1,36 @@
 use std::{
     fmt::Display,
     net::Ipv4Addr,
+    ops::RangeInclusive,
 };
 
 use dhcproto::{
     Decodable,
     Encodable,
 };
-use etherparse::TransportSlice;
+use etherparse::{
+    EtherType, Ethernet2Header, PacketBuilder, TransportSlice
+};
+use ip_network::Ipv4Network;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::proxy::pcap::packet::WritePacket;
+
 use super::{
-    dhcp::{
-        self,
-        NetworkConfig,
-    },
+    arp,
+    dhcp,
     packet::{
+        EthernetFrame,
         LinkPacket,
         NetworkPacket,
         PacketListener,
         PacketSender,
-        PacketSocket,
+        PacketSocket, TcpIpPacket,
     },
+    Error,
+    MacAddress,
 };
-
-#[derive(Debug, thiserror::Error)]
-#[error("virtual network error")]
-pub enum Error {
-    Packet(#[from] super::packet::Error),
-    Dhcp(#[from] super::dhcp::Error),
-}
 
 #[derive(Debug)]
 pub struct VirtualNetwork {
@@ -64,7 +64,7 @@ impl VirtualNetwork {
 
 async fn reactor(
     mut listener: PacketListener,
-    sender: PacketSender,
+    mut sender: PacketSender,
     mut dhcp: dhcp::Service,
     shutdown: CancellationToken,
 ) -> Result<(), Error> {
@@ -79,7 +79,7 @@ async fn reactor(
             // according to Alice Ryhl in the tokio Discord it's safe "unless the closure does something weird".
             result = listener.next() => {
                 let packet = result?;
-                handle_packet(&packet, &sender, &mut dhcp).await?;
+                handle_packet(&packet, &mut sender, &mut dhcp).await?;
             }
         }
     }
@@ -89,12 +89,9 @@ async fn reactor(
 
 async fn handle_packet<'a>(
     packet: &'a LinkPacket<'a>,
-    sender: &PacketSender,
+    sender: &mut PacketSender,
     dhcp: &mut dhcp::Service,
 ) -> Result<(), Error> {
-    const BUF_SIZE: usize = 2048;
-    let mut buf = vec![0; BUF_SIZE];
-
     match &packet.network {
         NetworkPacket::Ip {
             ipv4,
@@ -112,13 +109,21 @@ async fn handle_packet<'a>(
                 )
             {
                 let request =
-                    dhcp::Message::from_bytes(udp.payload()).map_err(dhcp::Error::from)?;
+                    dhcp::Packet::from_bytes(udp.payload()).map_err(dhcp::Error::from)?;
+
+                let network_config = dhcp.network_config();
+                let from = (
+                    network_config.router_hardware_address,
+                    network_config.dhcp_server,
+                    dhcp::SERVER_PORT,
+                );
 
                 dhcp.handle_message(
-                    request,
+                    &request,
                     DhcpSender {
                         sender,
-                        buf: &mut buf,
+                        from,
+                        to_hardware_address: packet.ethernet.source(),
                     },
                 )
                 .await?;
@@ -144,31 +149,61 @@ async fn handle_packet<'a>(
                 "tcp packet ignored"
             );
         }
-        NetworkPacket::Arp => {
-            // todo
-        }
+        NetworkPacket::Arp => if packet.ethernet.destination().is_broadcast() {},
         _ => {}
     }
 
     Ok(())
 }
 
+#[derive(Debug)]
 struct DhcpSender<'a> {
-    sender: &'a PacketSender,
-    buf: &'a mut Vec<u8>,
+    sender: &'a mut PacketSender,
+    from: (MacAddress, Ipv4Addr, u16),
+    to_hardware_address: MacAddress,
 }
 
 impl<'a> dhcp::Sender for DhcpSender<'a> {
     async fn send(
         &mut self,
-        response: &dhcp::Message,
-        _to: dhcp::SendTo,
-    ) -> Result<(), dhcp::Error> {
-        let mut encoder = dhcproto::Encoder::new(self.buf);
-        response.encode(&mut encoder)?;
+        response: &dhcp::Packet,
+        to: dhcp::SendTo,
+    ) -> Result<(), super::packet::SendError> {
+        let destination = to.to_socket_address();
 
-        todo!();
-        //Ok(())
+        UdpIpPacket {
+            builder: PacketBuilder::ethernet2(self.from.0.into(), self.to_hardware_address)
+                .ipv4(self.from.1.into(), destination.0, 64),
+            payload: todo!(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ArpSender<'a> {
+    sender: &'a mut PacketSender,
+    source: MacAddress,
+    destination: MacAddress,
+}
+
+impl<'a> arp::Sender for ArpSender<'a> {
+    async fn send<H: arp::HardwareAddress, P: arp::ProtocolAddress>(
+        &mut self,
+        response: &arp::ArpPacket<H, P>,
+    ) -> Result<(), super::packet::SendError> {
+        self.sender
+            .send(EthernetFrame {
+                header: Ethernet2Header {
+                    source: self.source.into(),
+                    destination: self.destination.into(),
+                    ether_type: EtherType::ARP,
+                }
+                .into(),
+                payload: response,
+            })
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -185,5 +220,41 @@ pub struct DisplayIpPort(pub Ipv4Addr, pub u16);
 impl Display for DisplayIpPort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.0, self.1)
+    }
+}
+
+#[derive(Debug)]
+pub struct NetworkConfig {
+    pub subnet: Ipv4Network,
+    pub dhcp_server: Ipv4Addr,
+    pub router: Ipv4Addr,
+    pub dns_servers: Vec<Ipv4Addr>,
+    pub pool: RangeInclusive<Ipv4Addr>,
+    pub router_hardware_address: MacAddress,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        let dhcp_server = Ipv4Addr::new(10, 0, 69, 1);
+        Self {
+            subnet: Ipv4Network::new(Ipv4Addr::new(10, 0, 69, 0), 24).unwrap(),
+            dhcp_server,
+            router: dhcp_server,
+            dns_servers: vec![dhcp_server],
+            pool: Ipv4Addr::new(10, 0, 69, 100)..=Ipv4Addr::new(10, 0, 69, 200),
+            router_hardware_address: DEFAULT_ROUTER_EOI,
+        }
+    }
+}
+
+pub const DEFAULT_ROUTER_EOI: MacAddress = MacAddress(*b"\xaaskunk");
+
+#[cfg(test)]
+mod tests {
+    use crate::proxy::pcap::vnet::DEFAULT_ROUTER_EOI;
+
+    #[test]
+    fn default_router_eoi_is_local_and_unicast() {
+        assert!(DEFAULT_ROUTER_EOI.is_local() && DEFAULT_ROUTER_EOI.is_unicast());
     }
 }

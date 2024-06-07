@@ -10,13 +10,16 @@ use std::{
         HashMap,
     },
     fmt::Debug,
+    io::Write,
     net::Ipv4Addr,
-    ops::RangeInclusive,
+    ops::{
+        
+        RangeInclusive,
+    },
 };
 
 use bytes::Bytes;
 pub use dhcproto::v4::{
-    Message,
     CLIENT_PORT,
     SERVER_PORT,
 };
@@ -24,9 +27,11 @@ use dhcproto::{
     v4::{
         DhcpOption,
         HType,
+        Message,
         MessageType,
         Opcode,
         OptionCode,
+        DecodeError
     },
     Decodable,
     Encodable,
@@ -37,7 +42,6 @@ use indexmap::{
     map::Entry,
     IndexMap,
 };
-use ip_network::Ipv4Network;
 use tokio::{
     io::ReadBuf,
     net::UdpSocket,
@@ -46,6 +50,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::{
+    packet::WritePacket,
+    vnet::NetworkConfig,
     Interface,
     MacAddress,
 };
@@ -57,9 +63,9 @@ const LEASE_TIME: u32 = 24 * 60 * 60;
 #[error("dhcp error")]
 pub enum Error {
     Io(#[from] std::io::Error),
-    Decode(#[from] dhcproto::error::DecodeError),
-    Encode(#[from] dhcproto::error::EncodeError),
     InvalidRequest(#[from] InvalidRequest),
+    DecodeError(#[from] DecodeError),
+    Send(#[from] super::packet::SendError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +73,32 @@ pub enum Error {
 pub enum InvalidRequest {
     #[error("DHCPREQUEST without IP address")]
     NoRequestedIpAddress,
+}
+
+pub struct Packet(pub dhcproto::v4::Message);
+
+impl Packet {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        Ok(Self(Message::from_bytes(bytes)?))
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, super::packet::EncodeError> {
+        // since we need to allocate a buffer here anyway, we might as well return it.
+        let mut buf = Vec::with_capacity(512);
+        let mut encoder = Encoder::new(&mut buf);
+        self.0
+            .encode(&mut encoder)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        Ok(buf)
+    }
+}
+
+impl WritePacket for Packet {
+    fn write_packet(&self, mut writer: impl Write) -> Result<(), super::packet::EncodeError> {
+        // allocating here is less than ideal :(
+        writer.write_all(&self.to_bytes()?)?;
+        Ok(())
+    }
 }
 
 /// Run a DHCP server on the given interface.
@@ -126,9 +158,11 @@ impl Service {
 
     pub async fn handle_message(
         &mut self,
-        message: Message,
+        packet: &Packet,
         sender: impl Sender,
     ) -> Result<(), Error> {
+        let message = &packet.0;
+
         if message.opcode() != Opcode::BootRequest
             || message.htype() != HType::Eth
             || message.hlen() != 6
@@ -158,7 +192,7 @@ impl Service {
 
     async fn handle_discover(
         &mut self,
-        message: Message,
+        message: &Message,
         mut sender: impl Sender,
     ) -> Result<(), Error> {
         let requested_ip_address = get_opt!(message, RequestedIpAddress).copied();
@@ -171,14 +205,14 @@ impl Service {
         ) {
             let mut offer_reply = self.create_reply(&message, MessageType::Offer);
             offer_reply.set_yiaddr(offer.ip_address);
-            sender.send(&offer_reply, target).await?;
+            sender.send(&Packet(offer_reply), target).await?;
 
             let ack = self.create_reply(&message, MessageType::Ack);
-            sender.send(&ack, target).await?;
+            sender.send(&Packet(ack), target).await?;
         }
         else {
             let nack = self.create_reply(&message, MessageType::Nak);
-            sender.send(&nack, target).await?;
+            sender.send(&Packet(nack), target).await?;
         }
 
         Ok(())
@@ -186,7 +220,7 @@ impl Service {
 
     async fn handle_request(
         &mut self,
-        message: Message,
+        message: &Message,
         mut sender: impl Sender,
     ) -> Result<(), Error> {
         if let Some(server_identifier) = get_opt!(message, ServerIdentifier).copied() {
@@ -219,11 +253,11 @@ impl Service {
             opts.insert(DhcpOption::DomainNameServer(
                 self.network_config.dns_servers.clone(),
             ));
-            sender.send(&ack, target).await?;
+            sender.send(&Packet(ack), target).await?;
         }
         else {
             let nack = self.create_reply(&message, MessageType::Nak);
-            sender.send(&nack, target).await?;
+            sender.send(&Packet(nack), target).await?;
         }
 
         Ok(())
@@ -290,11 +324,11 @@ impl Service {
 }
 
 pub trait Sender {
-    fn send(&mut self, response: &Message, to: SendTo) -> impl Future<Output = Result<(), Error>>;
+    fn send(&mut self, response: &Packet, to: SendTo) -> impl Future<Output = Result<(), super::packet::SendError>>;
 }
 
 impl<T: Sender> Sender for &mut T {
-    fn send(&mut self, response: &Message, to: SendTo) -> impl Future<Output = Result<(), Error>> {
+    fn send(&mut self, response: &Packet, to: SendTo) -> impl Future<Output = Result<(), super::packet::SendError>> {
         (*self).send(response, to)
     }
 }
@@ -347,11 +381,11 @@ impl Server {
                 continue;
             }
 
-            let request = Message::from_bytes(read_buf.filled())?;
+            let request = Packet::from_bytes(read_buf.filled())?;
 
             self.service
                 .handle_message(
-                    request,
+                    &request,
                     ServerSender {
                         socket: &self.socket,
                         buf: &mut self.buf,
@@ -368,11 +402,14 @@ struct ServerSender<'a> {
 }
 
 impl<'a> Sender for ServerSender<'a> {
-    async fn send(&mut self, response: &Message, to: SendTo) -> Result<(), Error> {
+    async fn send(&mut self, response: &Packet, to: SendTo) -> Result<(), super::packet::SendError> {
         let mut encoder = Encoder::new(self.buf);
-        response.encode(&mut encoder)?;
+        response
+            .0
+            .encode(&mut encoder)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-        tracing::debug!(message = ?MessageDebug(&response), ?to, "sending");
+        tracing::debug!(message = ?MessageDebug(&response.0), ?to, "sending");
 
         self.socket
             .send_to(encoder.buffer_filled(), to.to_socket_address())
@@ -408,28 +445,6 @@ impl SendTo {
             Self::Relay(ip_address) => (*ip_address, SERVER_PORT),
             Self::Client(ip_address) => (*ip_address, CLIENT_PORT),
             Self::Broadcast => (Ipv4Addr::BROADCAST, CLIENT_PORT),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct NetworkConfig {
-    pub subnet: Ipv4Network,
-    pub dhcp_server: Ipv4Addr,
-    pub router: Ipv4Addr,
-    pub dns_servers: Vec<Ipv4Addr>,
-    pub pool: RangeInclusive<Ipv4Addr>,
-}
-
-impl Default for NetworkConfig {
-    fn default() -> Self {
-        let dhcp_server = Ipv4Addr::new(10, 0, 69, 1);
-        Self {
-            subnet: Ipv4Network::new(Ipv4Addr::new(10, 0, 69, 0), 24).unwrap(),
-            dhcp_server,
-            router: dhcp_server,
-            dns_servers: vec![dhcp_server],
-            pool: Ipv4Addr::new(10, 0, 69, 100)..=Ipv4Addr::new(10, 0, 69, 200),
         }
     }
 }

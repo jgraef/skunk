@@ -1,5 +1,6 @@
 use std::{
     io::Write,
+    ops::Deref,
     os::fd::{
         AsRawFd,
         OwnedFd,
@@ -8,18 +9,7 @@ use std::{
 };
 
 use etherparse::{
-    EtherType,
-    Ethernet2Slice,
-    Icmpv4Header,
-    Icmpv4Slice,
-    IpNumber,
-    Ipv4Slice,
-    PacketBuilderStep,
-    TcpHeader,
-    TcpSlice,
-    TransportSlice,
-    UdpHeader,
-    UdpSlice,
+    EtherType, Ethernet2Header, Ethernet2Slice, Icmpv4Slice, IpHeaders, IpNumber, Ipv4Slice, PacketBuilderStep, TcpHeader, TcpSlice, TransportSlice, UdpSlice
 };
 use nix::sys::socket::{
     AddressFamily,
@@ -37,21 +27,44 @@ use super::{
     Interface,
     MacAddress,
 };
+use crate::util::io::WriteBuf;
 
-// todo: remove?
 #[derive(Debug, thiserror::Error)]
-#[error("capture error")]
-pub enum Error {
+#[error("packet receive error")]
+pub enum ReceiveError {
     Io(#[from] std::io::Error),
+    Encode(#[from] DecodeError),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("packet decode error")]
+pub enum DecodeError {
     Ethernet(#[source] etherparse::err::LenError),
     Ipv4(#[from] etherparse::err::ipv4::SliceError),
     Icmpv4(#[source] etherparse::err::LenError),
     Tcp(#[from] etherparse::err::tcp::HeaderSliceError),
     Udp(#[source] etherparse::err::LenError),
-    Encode(#[from] etherparse::err::packet::BuildWriteError),
 }
 
-impl From<nix::Error> for Error {
+#[derive(Debug, thiserror::Error)]
+#[error("packet send error")]
+pub enum SendError {
+    Io(#[from] std::io::Error),
+    Encode(#[from] EncodeError),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("packet encode error")]
+pub enum EncodeError {
+    Builder(#[from] etherparse::err::packet::BuildWriteError),
+
+    // this is not a IO error in the sense that something is being sent or received.
+    // but when encoding a packet into a buffer the [`Write`] implementation can retun an
+    // [`std::io::Error`]
+    Write(#[from] std::io::Error),
+}
+
+impl From<nix::Error> for SendError {
     fn from(e: nix::Error) -> Self {
         Self::Io(e.into())
     }
@@ -138,7 +151,7 @@ impl PacketListener {
         Self { socket, buf }
     }
 
-    pub async fn next<'a>(&'a mut self) -> Result<LinkPacket<'a>, Error> {
+    pub async fn next<'a>(&'a mut self) -> Result<LinkPacket<'a>, ReceiveError> {
         loop {
             // SAFETY
             // this hack is necessary because rust refuses to understand that we only borrow
@@ -160,12 +173,12 @@ impl PacketListener {
 async fn try_next_packet<'a>(
     socket: &PacketSocket,
     buf: &'a mut [u8],
-) -> Result<Option<LinkPacket<'a>>, Error> {
+) -> Result<Option<LinkPacket<'a>>, ReceiveError> {
     // we could also use https://docs.rs/etherparse/latest/etherparse/struct.SlicedPacket.html#method.from_linux_sll
 
     let n_read = socket.receive(buf).await?;
     let ethernet =
-        Ethernet2Slice::from_slice_without_fcs(&buf[..n_read]).map_err(Error::Ethernet)?;
+        Ethernet2Slice::from_slice_without_fcs(&buf[..n_read]).map_err(DecodeError::Ethernet)?;
 
     let network = match ethernet.ether_type() {
         EtherType::ARP => {
@@ -173,20 +186,23 @@ async fn try_next_packet<'a>(
             NetworkPacket::Arp
         }
         EtherType::IPV4 => {
-            let ipv4 = Ipv4Slice::from_slice(ethernet.payload_slice())?;
+            let ipv4 =
+                Ipv4Slice::from_slice(ethernet.payload_slice()).map_err(DecodeError::from)?;
             let ipv4_payload = ipv4.payload();
             let transport = match ipv4_payload.ip_number {
                 IpNumber::ICMP => {
-                    let icmpv4 =
-                        Icmpv4Slice::from_slice(&ipv4_payload.payload).map_err(Error::Icmpv4)?;
+                    let icmpv4 = Icmpv4Slice::from_slice(&ipv4_payload.payload)
+                        .map_err(DecodeError::Icmpv4)?;
                     TransportSlice::Icmpv4(icmpv4)
                 }
                 IpNumber::TCP => {
-                    let tcp = TcpSlice::from_slice(&ipv4_payload.payload)?;
+                    let tcp =
+                        TcpSlice::from_slice(&ipv4_payload.payload).map_err(DecodeError::from)?;
                     TransportSlice::Tcp(tcp)
                 }
                 IpNumber::UDP => {
-                    let udp = UdpSlice::from_slice(&ipv4_payload.payload).map_err(Error::Udp)?;
+                    let udp =
+                        UdpSlice::from_slice(&ipv4_payload.payload).map_err(DecodeError::Udp)?;
                     TransportSlice::Udp(udp)
                 }
                 _ => return Ok(None),
@@ -199,7 +215,10 @@ async fn try_next_packet<'a>(
         }
     };
 
-    Ok(Some(LinkPacket { ethernet, network }))
+    Ok(Some(LinkPacket {
+        ethernet: EthernetHeader(ethernet.to_header()),
+        network,
+    }))
 }
 
 /// Sender half used to send packets on an interface.
@@ -219,52 +238,88 @@ impl PacketSender {
         Self { socket, buf }
     }
 
-    pub async fn send(&mut self, packet: impl EncodePacket, payload: &[u8]) -> Result<(), Error> {
-        packet.encode_packet(payload, &mut self.buf)?;
-        self.socket.send(&self.buf).await?;
-        self.buf.clear();
+    pub async fn send(&mut self, packet: impl WritePacket) -> Result<(), SendError> {
+        let mut buf = WriteBuf::new(&mut self.buf);
+        packet.write_packet(&mut buf)?;
+        self.socket.send(buf.filled()).await?;
         Ok(())
     }
 }
 
-pub trait EncodePacket {
-    fn encode_packet(self, payload: &[u8], writer: impl Write) -> Result<(), Error>;
+pub trait WritePacket {
+    fn write_packet(&self, writer: impl Write) -> Result<(), EncodeError>;
 }
 
-impl EncodePacket for PacketBuilderStep<Icmpv4Header> {
-    fn encode_packet(self, payload: &[u8], mut writer: impl Write) -> Result<(), Error> {
-        self.write(&mut writer, payload)?;
+impl<T: WritePacket> WritePacket for &T {
+    fn write_packet(&self, writer: impl Write) -> Result<(), EncodeError> {
+        (*self).write_packet(writer)
+    }
+}
+
+pub struct EthernetFrame<P> {
+    pub header: EthernetHeader,
+    pub payload: P,
+}
+
+impl<P: WritePacket> WritePacket for EthernetFrame<P> {
+    fn write_packet(&self, mut writer: impl Write) -> Result<(), EncodeError> {
+        self.header.0.write(&mut writer)?;
+        self.payload.write_packet(&mut writer)?;
+        // todo: don't we have to write the frame check sequence?
         Ok(())
     }
 }
 
-impl EncodePacket for PacketBuilderStep<UdpHeader> {
-    fn encode_packet(self, payload: &[u8], mut writer: impl Write) -> Result<(), Error> {
-        self.write(&mut writer, payload)?;
-        Ok(())
-    }
+pub struct TcpIpPacket<P> {
+    pub builder: PacketBuilderStep<TcpHeader>,
+    pub payload: P,
 }
 
-impl EncodePacket for PacketBuilderStep<TcpHeader> {
-    fn encode_packet(self, payload: &[u8], mut writer: impl Write) -> Result<(), Error> {
-        self.write(&mut writer, payload)?;
+impl<P: WritePacket> WritePacket for TcpIpPacket<P> {
+    fn write_packet(&self, mut writer: impl Write) -> Result<(), EncodeError> {
+        // more allocations 🥴
+        let mut payload = vec![];
+        self.payload.write_packet(WriteBuf::new(&mut payload))?;
+
+        self.builder.clone().write(&mut writer, &payload)?;
+        
+        // todo: don't we have to write the frame check sequence?
         Ok(())
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct LinkPacket<'a> {
-    pub ethernet: Ethernet2Slice<'a>,
+    pub ethernet: EthernetHeader,
     pub network: NetworkPacket<'a>,
 }
 
-impl<'a> LinkPacket<'a> {
-    pub fn source_mac_address(&self) -> MacAddress {
-        MacAddress(self.ethernet.source())
+#[derive(Clone, Debug)]
+pub struct EthernetHeader(pub Ethernet2Header);
+
+impl From<Ethernet2Header> for EthernetHeader {
+    fn from(value: Ethernet2Header) -> Self {
+        Self(value)
+    }
+}
+
+impl EthernetHeader {
+    #[inline]
+    pub fn source(&self) -> MacAddress {
+        self.0.source.into()
     }
 
-    pub fn destination_mac_address(&self) -> MacAddress {
-        MacAddress(self.ethernet.destination())
+    #[inline]
+    pub fn destination(&self) -> MacAddress {
+        self.0.destination.into()
+    }
+}
+
+impl Deref for EthernetHeader {
+    type Target = Ethernet2Header;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

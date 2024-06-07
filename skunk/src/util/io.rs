@@ -342,3 +342,74 @@ impl<'a> SliceReader<'a> {
         self.0
     }
 }
+
+pub struct WriteBuf<B> {
+    buf: B,
+    offset: usize,
+}
+
+impl<B> WriteBuf<B> {
+    pub fn new(buf: B) -> Self {
+        Self { buf, offset: 0 }
+    }
+
+    pub fn filled_amount(&self) -> usize {
+        self.offset
+    }
+
+    pub fn into_inner(self) -> B {
+        self.buf
+    }
+}
+
+impl<B: AsRef<[u8]>> WriteBuf<B> {
+    pub fn filled(&self) -> &[u8] {
+        &self.buf.as_ref()[..self.offset]
+    }
+}
+
+macro_rules! impl_write_buf_for_slice {
+    ($ty:ty; $($generics:tt)*) => {        
+        impl<$($generics)*> std::io::Write for WriteBuf<$ty> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let remaining = self.buf.len() - self.offset;
+                let write_amount = std::cmp::min(remaining, buf.len());
+                if write_amount == 0 {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into());
+                }
+                self.buf[self.offset..][..write_amount].copy_from_slice(&buf[..write_amount]);
+                Ok(write_amount)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                // nop
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_write_buf_for_slice!(&mut [u8];);
+impl_write_buf_for_slice!([u8; N]; const N: usize);
+impl_write_buf_for_slice!(Box<[u8]>;);
+
+macro_rules! impl_write_buf_for_vec {
+    ($ty:ty) => {    
+        impl std::io::Write for WriteBuf<$ty> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let new_size = self.offset + buf.len();
+                self.buf.resize(new_size, 0);
+                self.buf[self.offset..][..buf.len()].copy_from_slice(&buf[..buf.len()]);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                // nop
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_write_buf_for_vec!(&mut Vec<u8>);
+impl_write_buf_for_vec!(Vec<u8>);

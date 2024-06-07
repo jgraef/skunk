@@ -23,8 +23,10 @@ use self::packet::PacketSocket;
 #[error("pcap error")]
 pub enum Error {
     Io(#[from] std::io::Error),
-
-    Packet(#[from] self::packet::Error),
+    Send(#[from] self::packet::SendError),
+    Receive(#[from] self::packet::ReceiveError),
+    Dhcp(#[from] self::dhcp::Error),
+    Arp(#[from] self::arp::Error),
 }
 
 impl From<nix::Error> for Error {
@@ -140,8 +142,54 @@ impl Iterator for InterfaceIter {
     }
 }
 
+/// todo: rename to EiuAddress. "MAC" is obsolete. see: https://en.wikipedia.org/wiki/MAC_address
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MacAddress(pub [u8; 6]);
+
+impl MacAddress {
+    pub const BROADCAST: MacAddress = MacAddress([0xff; 6]);
+    pub const UNSPECIFIED: MacAddress = MacAddress([0; 6]);
+
+    #[inline]
+    pub fn with_oui(&self, oui: [u8; 3]) -> Self {
+        Self([oui[0], oui[1], oui[2], self.0[3], self.0[4], self.0[5]])
+    }
+
+    #[inline]
+    pub fn with_nic(&self, nic: [u8; 3]) -> Self {
+        Self([self.0[0], self.0[1], self.0[2], nic[3], nic[4], nic[5]])
+    }
+
+    #[inline]
+    pub fn is_broadcast(&self) -> bool {
+        self == &Self::BROADCAST
+    }
+
+    #[inline]
+    pub fn is_unspecified(&self) -> bool {
+        self == &Self::UNSPECIFIED
+    }
+
+    #[inline]
+    pub fn is_universal(&self) -> bool {
+        self.0[0] & 2 == 0
+    }
+
+    #[inline]
+    pub fn is_local(&self) -> bool {
+        self.0[0] & 2 != 0
+    }
+
+    #[inline]
+    pub fn is_unicast(&self) -> bool {
+        self.0[0] & 1 == 0
+    }
+
+    #[inline]
+    pub fn is_multicast(&self) -> bool {
+        self.0[0] & 1 != 0
+    }
+}
 
 impl Display for MacAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -160,8 +208,16 @@ impl Debug for MacAddress {
 }
 
 impl From<[u8; 6]> for MacAddress {
+    #[inline]
     fn from(value: [u8; 6]) -> Self {
         Self(value)
+    }
+}
+
+impl From<MacAddress> for [u8; 6] {
+    #[inline]
+    fn from(value: MacAddress) -> Self {
+        value.0
     }
 }
 
@@ -183,9 +239,9 @@ pub async fn run(interface: &Interface, shutdown: CancellationToken) -> Result<(
             _ = shutdown.cancelled() => break,
         };
 
-        println!("link:");
-        println!("  source:      {}", packet.source_mac_address());
-        println!("  destination: {}", packet.destination_mac_address());
+        println!("ethernet:");
+        println!("  source:      {}", packet.ethernet.source());
+        println!("  destination: {}", packet.ethernet.destination());
 
         if let NetworkPacket::Ip { ipv4, transport } = packet.network {
             let ipv4_header = ipv4.header();
