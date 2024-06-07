@@ -9,7 +9,6 @@ use std::{
     },
 };
 
-use byteorder::ByteOrder;
 use bytes::{
     Buf,
     BufMut,
@@ -233,114 +232,6 @@ where
         buf.put_u8(b);
     }
     Ok(buf)
-}
-
-pub struct SliceReader<'a>(&'a [u8]);
-
-macro_rules! read_impl {
-    ($name:ident, $n:expr, $out:ty) => {
-        #[inline]
-        pub fn $name<B: ByteOrder>(&mut self) -> Result<$out, std::io::Error> {
-            if self.0.len() >= $n {
-                let v = B::$name(&self.0[..$n]);
-                self.0 = &self.0[$n..];
-                Ok(v)
-            }
-            else {
-                Err(std::io::ErrorKind::UnexpectedEof.into())
-            }
-        }
-    };
-}
-
-impl<'a> SliceReader<'a> {
-    #[inline]
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self(bytes)
-    }
-
-    #[inline]
-    pub fn read_u8(&mut self) -> Result<u8, std::io::Error> {
-        if self.0.len() >= 1 {
-            let b = self.0[0];
-            self.0 = &self.0[1..];
-            Ok(b)
-        }
-        else {
-            Err(std::io::ErrorKind::UnexpectedEof.into())
-        }
-    }
-
-    #[inline]
-    pub fn read_i8(&mut self) -> Result<i8, std::io::Error> {
-        Ok(self.read_u8()? as i8)
-    }
-
-    read_impl!(read_u16, 2, u16);
-    read_impl!(read_i16, 2, i16);
-    read_impl!(read_u32, 4, u32);
-    read_impl!(read_i32, 4, i32);
-    read_impl!(read_u64, 8, u64);
-    read_impl!(read_i64, 8, i64);
-    read_impl!(read_u128, 16, u128);
-    read_impl!(read_i128, 16, i128);
-
-    pub fn read_subslice(&mut self, n: impl Into<usize>) -> Result<&'a [u8], std::io::Error> {
-        let n = n.into();
-        if self.0.len() >= n {
-            let (sub, rest) = self.0.split_at(n);
-            self.0 = rest;
-            Ok(sub)
-        }
-        else {
-            Err(std::io::ErrorKind::UnexpectedEof.into())
-        }
-    }
-
-    #[inline]
-    pub fn sub_reader(&mut self, n: impl Into<usize>) -> Result<SliceReader, std::io::Error> {
-        Ok(SliceReader(self.read_subslice(n)?))
-    }
-
-    #[inline]
-    fn read_mac_address(&mut self) -> Result<MacAddress, std::io::Error> {
-        if self.0.len() >= 6 {
-            let v = MacAddress::from([
-                self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5],
-            ]);
-            self.0 = &self.0[6..];
-            Ok(v)
-        }
-        else {
-            Err(std::io::ErrorKind::UnexpectedEof.into())
-        }
-    }
-
-    #[inline]
-    fn read_ipv4_address(&mut self) -> Result<Ipv4Addr, std::io::Error> {
-        if self.0.len() >= 4 {
-            let v = Ipv4Addr::new(self.0[0], self.0[1], self.0[2], self.0[3]);
-            self.0 = &self.0[6..];
-            Ok(v)
-        }
-        else {
-            Err(std::io::ErrorKind::UnexpectedEof.into())
-        }
-    }
-
-    pub fn skip(&mut self, n: usize) -> Result<(), std::io::Error> {
-        if self.0.len() >= n {
-            self.0 = &self.0[n..];
-            Ok(())
-        }
-        else {
-            Err(std::io::ErrorKind::UnexpectedEof.into())
-        }
-    }
-
-    pub fn rest(self) -> &'a [u8] {
-        self.0
-    }
 }
 
 pub struct WriteBuf<B> {

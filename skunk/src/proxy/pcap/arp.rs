@@ -14,10 +14,6 @@ use std::{
     },
 };
 
-use byteorder::{
-    NetworkEndian,
-    WriteBytesExt,
-};
 pub use etherparse::{
     ArpHardwareId as HardwareType,
     EtherType as ProtocolType,
@@ -28,7 +24,13 @@ use super::{
     packet::WritePacket,
     MacAddress,
 };
-use crate::util::io::SliceReader;
+use crate::util::{
+    bytes_wip::NetworkEndian,
+    zc::{
+        self,
+        Reader as _,
+    },
+};
 
 #[derive(Debug, thiserror::Error)]
 #[error("arp error")]
@@ -69,17 +71,17 @@ pub struct ArpPacketSlice<'a> {
 
 impl<'a> ArpPacketSlice<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut reader = SliceReader::new(bytes);
+        let mut reader = zc::Cursor::new(bytes);
 
         let hardware_type = HardwareType(reader.read_u16::<NetworkEndian>()?);
         let protocol_type = ProtocolType(reader.read_u16::<NetworkEndian>()?);
         let hardware_address_length = reader.read_u8()?;
         let protocol_address_length = reader.read_u8()?;
         let operation = Operation::try_from(reader.read_u16::<NetworkEndian>()?)?;
-        let sender_hardware_address = reader.read_subslice(hardware_address_length)?;
-        let sender_protocol_address = reader.read_subslice(protocol_address_length)?;
-        let target_hardware_address = reader.read_subslice(hardware_address_length)?;
-        let target_protocol_address = reader.read_subslice(protocol_address_length)?;
+        let sender_hardware_address = reader.read_slice(hardware_address_length)?;
+        let sender_protocol_address = reader.read_slice(protocol_address_length)?;
+        let target_hardware_address = reader.read_slice(hardware_address_length)?;
+        let target_protocol_address = reader.read_slice(protocol_address_length)?;
 
         Ok(Self {
             hardware_type,
@@ -101,7 +103,7 @@ impl<'a> ArpPacketSlice<'a> {
     }
 
     pub fn write(&self, mut writer: impl Write) -> Result<(), EncodeError> {
-        writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
+        /*writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
         writer.write_u16::<NetworkEndian>(self.protocol_type.0)?;
         writer.write_u8(self.hardware_address_length)?;
         writer.write_u8(self.protocol_address_length)?;
@@ -110,7 +112,8 @@ impl<'a> ArpPacketSlice<'a> {
         writer.write_all(self.sender_protocol_address)?;
         writer.write_all(self.target_hardware_address)?;
         writer.write_all(self.target_protocol_address)?;
-        Ok(())
+        Ok(())*/
+        todo!();
     }
 }
 
@@ -143,7 +146,7 @@ impl<H: HardwareAddress, P: ProtocolAddress> ArpPacket<H, P> {
     }
 
     pub fn write(&self, mut writer: impl Write) -> Result<(), EncodeError> {
-        writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
+        /*writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
         writer.write_u16::<NetworkEndian>(self.protocol_type.0)?;
         writer.write_u8(H::SIZE as u8)?;
         writer.write_u8(P::SIZE as u8)?;
@@ -152,7 +155,8 @@ impl<H: HardwareAddress, P: ProtocolAddress> ArpPacket<H, P> {
         self.sender_protocol_address.write(&mut writer)?;
         self.target_hardware_address.write(&mut writer)?;
         self.target_protocol_address.write(&mut writer)?;
-        Ok(())
+        Ok(())*/
+        todo!();
     }
 }
 

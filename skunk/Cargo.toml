@@ -13,7 +13,7 @@ categories = [
 ]
 
 [dependencies]
-byteorder = "1.5.0"
+#byteorder = "1.5.0"
 bytes = "1.6.0"
 dhcproto = { version = "0.11.0", optional = true }
 etherparse = { version = "0.15.0", optional = true }

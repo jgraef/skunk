@@ -1,8 +1,10 @@
 //! Utilities.
 
 pub(crate) mod boolean;
+pub mod bytes_wip;
 pub(crate) mod error;
 pub mod io;
+pub mod zc;
 
 use std::{
     fmt::{

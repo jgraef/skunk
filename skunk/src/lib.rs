@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+// required by `crate::util::bytes::array_buf::ArrayBuf`.
+#![feature(maybe_uninit_slice, maybe_uninit_write_slice)]
 
 //! skunk - 🦨 A person-in-the-middle proxy
 //!

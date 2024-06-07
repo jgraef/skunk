@@ -115,9 +115,7 @@ async fn handle_packet<'a>(
 
                 let network_config = dhcp.network_config();
                 let from = (
-                    sender
-                        .interface()
-                        .hardware_address(),
+                    sender.interface().hardware_address(),
                     network_config.dhcp_server,
                     dhcp::SERVER_PORT,
                 );
