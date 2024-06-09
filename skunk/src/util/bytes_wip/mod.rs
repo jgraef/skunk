@@ -5,6 +5,7 @@ mod copy;
 mod endianness;
 mod range;
 mod read;
+mod write;
 
 pub use self::{
     array_buf::ArrayBuf,

@@ -1,4 +1,5 @@
 use super::{
+    buf::NonEmptyIter,
     copy,
     BigEndian,
     Buf,
@@ -9,6 +10,7 @@ use super::{
     NetworkEndian,
     RangeOutOfBounds,
 };
+use crate::util::Peekable;
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("End of reader")]
@@ -215,8 +217,9 @@ impl<B: Buf> Reader for BufReader<B> {
     #[inline]
     fn read_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
         let mut buf = [0u8; N];
-        copy(&mut buf, .., &mut self.buf, self.offset..(self.offset + N))
+        copy(&mut buf, .., &self.buf, self.offset..(self.offset + N))
             .map_err(End::from_copy_error)?;
+        self.offset += N;
         Ok(buf)
     }
 }
@@ -244,5 +247,23 @@ impl<B> From<B> for BufReader<B> {
     #[inline]
     fn from(value: B) -> Self {
         Self::new(value)
+    }
+}
+
+// todo: implement this. or do we even need this?
+struct ChunksReader<'a, I: Iterator<Item = &'a [u8]>> {
+    inner: Peekable<NonEmptyIter<I>>,
+}
+
+impl<'a, I: Iterator<Item = &'a [u8]>> ChunksReader<'a, I> {
+    pub fn new(inner: I) -> Self {
+        Self {
+            inner: Peekable::new(NonEmptyIter(inner)),
+        }
+    }
+
+    pub fn into_parts(self) -> (I, Option<&'a [u8]>) {
+        let (iter, peeked) = self.inner.into_parts();
+        (iter.0, peeked)
     }
 }

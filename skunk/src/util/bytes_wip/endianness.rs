@@ -1,3 +1,5 @@
+//! [Endianness](https://en.wikipedia.org/wiki/Endianness)
+
 macro_rules! endianness_trait {
     {$(
         $ty:ty : $bytes:expr => $from_name:ident, $to_name:ident;
@@ -11,10 +13,12 @@ macro_rules! endianness_trait {
 
         impl Endianness for BigEndian {
             $(
+                #[inline]
                 fn $from_name(bytes: [u8; $bytes]) -> $ty {
                     <$ty>::from_be_bytes(bytes)
                 }
 
+                #[inline]
                 fn $to_name(value: $ty) -> [u8; $bytes] {
                     <$ty>::to_be_bytes(value)
                 }
@@ -23,10 +27,12 @@ macro_rules! endianness_trait {
 
         impl Endianness for LittleEndian {
             $(
+                #[inline]
                 fn $from_name(bytes: [u8; $bytes]) -> $ty {
                     <$ty>::from_le_bytes(bytes)
                 }
 
+                #[inline]
                 fn $to_name(value: $ty) -> [u8; $bytes] {
                     <$ty>::to_le_bytes(value)
                 }
@@ -35,15 +41,27 @@ macro_rules! endianness_trait {
     }
 }
 
+/// Big endian byte order
 pub enum BigEndian {}
+
+/// Little endian byte order
 pub enum LittleEndian {}
 
+/// System native byte order.
+///
+/// On the system that generated these docs, this is little endian.
 #[cfg(target_endian = "little")]
 pub type NativeEndian = LittleEndian;
 
+/// System native byte order.
+///
+/// On the system that generated these docs, this is big endian.
 #[cfg(target_endian = "big")]
 pub type NativeEndian = BigEndian;
 
+/// Network byte order.
+///
+/// This is always big endian.
 pub type NetworkEndian = BigEndian;
 
 endianness_trait! {

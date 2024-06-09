@@ -171,6 +171,7 @@ pub trait BufMut: Buf {
         range: impl Into<Range>,
     ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds>;
 
+    /// Returns a mutable iterator over the bytes of this buffer.
     #[inline]
     fn iter_mut(
         &mut self,
@@ -205,7 +206,9 @@ pub trait BufMut: Buf {
     /// # Default implementation
     ///
     /// The default implementation will first call [`Self::grow_for`] to make
-    /// space and then copy to it.
+    /// space and then copy to it. You should override it, if there is a a way
+    /// to write the data without first allocating and initializing the space
+    /// for it.
     #[inline]
     fn write(
         &mut self,
@@ -395,7 +398,9 @@ pub struct SingleChunk<'a> {
 impl<'a> SingleChunk<'a> {
     #[inline]
     pub fn new(chunk: &'a [u8]) -> Self {
-        Self { chunk: Some(chunk) }
+        Self {
+            chunk: (!chunk.is_empty()).then_some(chunk),
+        }
     }
 }
 
@@ -434,7 +439,9 @@ pub struct SingleChunkMut<'a> {
 impl<'a> SingleChunkMut<'a> {
     #[inline]
     pub fn new(chunk: &'a mut [u8]) -> Self {
-        Self { chunk: Some(chunk) }
+        Self {
+            chunk: (!chunk.is_empty()).then_some(chunk),
+        }
     }
 }
 
@@ -488,6 +495,16 @@ impl<'b, B: Buf + ?Sized> Iterator for BufIter<'b, B> {
     }
 }
 
+impl<'b, B: Buf + ?Sized> DoubleEndedIterator for BufIter<'b, B>
+where
+    <B as Buf>::Chunks<'b>: DoubleEndedIterator,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back().copied()
+    }
+}
+
 impl<'b, B: Buf + ?Sized> FusedIterator for BufIter<'b, B> {}
 
 /// Mutable iterator over the bytes in a buffer.
@@ -505,20 +522,52 @@ impl<'b, B: BufMut + ?Sized> BufIterMut<'b, B> {
 }
 
 impl<'b, B: BufMut + ?Sized> Iterator for BufIterMut<'b, B> {
-    type Item = u8;
+    type Item = &'b mut u8;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied()
+        self.inner.next()
+    }
+}
+
+impl<'b, B: BufMut + ?Sized> DoubleEndedIterator for BufIterMut<'b, B>
+where
+    <B as BufMut>::ChunksMut<'b>: DoubleEndedIterator,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back()
     }
 }
 
 impl<'b, B: BufMut + ?Sized> FusedIterator for BufIterMut<'b, B> {}
 
-// todo: buffers than can grow (and shrink?). this should be implemented for
-// `ArrayBuf`, `Vec` and `VecDeque`. for `VecDeque` we have the interesting case
-// where it could also shrink from the beginning. but then we would need to make
-// sure that indices stay consistent, e.g. by tracking the apparent start index
-// of the buffer. we would probably just want to implement our own `RingBuf`. we
-// would also need a trait to shrink/grow from the start of the buffer.
-pub trait Grow: BufMut {}
+/// Iterator wrapper to skip empty chunks.
+#[derive(Debug)]
+pub struct NonEmptyIter<I>(pub I);
+
+impl<T: AsRef<[u8]>, I: Iterator<Item = T>> Iterator for NonEmptyIter<I> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let x = self.0.next()?;
+        (!x.as_ref().is_empty()).then_some(x)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, self.0.size_hint().1)
+    }
+}
+
+impl<T: AsRef<[u8]>, I: Iterator<Item = T> + DoubleEndedIterator> DoubleEndedIterator
+    for NonEmptyIter<I>
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back()
+    }
+}
+
+impl<T: AsRef<[u8]>, I: Iterator<Item = T>> FusedIterator for NonEmptyIter<I> {}

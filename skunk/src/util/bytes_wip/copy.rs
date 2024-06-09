@@ -4,6 +4,10 @@ use super::{
     Range,
     RangeOutOfBounds,
 };
+use crate::util::{
+    bytes_wip::buf::NonEmptyIter,
+    Peekable,
+};
 
 /// Error while copying from a [`Buf`] to a [`BufMut`].
 #[derive(Debug, thiserror::Error)]
@@ -26,7 +30,7 @@ pub enum CopyError {
 /// Copies bytes from `source` to `destination` with respective ranges.
 ///
 /// This can fail if either range is out of bounds, or the lengths of both
-/// ranges doesn't match up. See [`CopyError`].
+/// ranges aren't equal. See [`CopyError`].
 pub fn copy(
     mut destination: impl BufMut,
     destination_range: impl Into<Range>,
@@ -47,55 +51,109 @@ pub fn copy(
         });
     }
 
-    let mut dest_chunks = destination
-        .chunks_mut(destination_range)
-        .map_err(CopyError::DestinationRangeOutOfBounds)?;
-    let mut src_chunks = source
-        .chunks(source_range)
-        .map_err(CopyError::SourceRangeOutOfBounds)?;
+    let mut destination_chunks = Peekable::new(NonEmptyIter(
+        destination
+            .chunks_mut(destination_range)
+            .map_err(CopyError::DestinationRangeOutOfBounds)?,
+    ));
+    let mut source_chunks = Peekable::new(NonEmptyIter(
+        source
+            .chunks(source_range)
+            .map_err(CopyError::SourceRangeOutOfBounds)?,
+    ));
 
-    let mut current_dest_chunk: Option<&mut [u8]> = dest_chunks.next();
-    let mut current_src_chunk: Option<&[u8]> = src_chunks.next();
+    let copy_result = copy_chunks(
+        &mut destination_chunks,
+        0,
+        &mut source_chunks,
+        0,
+        source_length,
+    )?;
 
-    let mut dest_pos = 0;
-    let mut src_pos = 0;
+    assert_eq!(
+        copy_result.total_copied, source_length,
+        "Expected total amount of bytes copied to be equal to the destination and source length."
+    );
+    assert!(
+        destination_chunks.next().is_none(),
+        "Expected destination chunk iterator to be exhausted."
+    );
+    assert!(
+        source_chunks.next().is_none(),
+        "Expected source chunk iterator to be exhausted."
+    );
 
-    loop {
-        match (&mut current_dest_chunk, current_src_chunk) {
-            (None, None) => break Ok(()),
+    Ok(())
+}
+
+/// Copies 'amount' bytes from `source_chunks` to `destination_chunks` with the
+/// respective starting offsets.
+///
+/// The chunk iterators must be wrapped with [`Peekable`].
+///
+/// When this function starts, it will start with the chunks in the peek buffer,
+/// and use the specified offsets.
+///
+/// When this function returns, the chunk that was currently being copied
+/// to/from is in the peek buffer. The function returns the offsets in these
+/// chunks at which the copy ended.
+pub fn copy_chunks<'a, D: Iterator<Item = &'a mut [u8]>, S: Iterator<Item = &'a [u8]>>(
+    destination_chunks: &mut Peekable<D>,
+    mut destination_offset: usize,
+    source_chunks: &mut Peekable<S>,
+    mut source_offset: usize,
+    mut amount: usize,
+) -> Result<CopyChunksResult, CopyError> {
+    let mut total_copied = 0;
+
+    while amount > 0 {
+        match (destination_chunks.peek_mut(), source_chunks.peek()) {
             (Some(dest_chunk), Some(src_chunk)) => {
-                let n = std::cmp::min(dest_chunk.len() - dest_pos, src_chunk.len() - src_pos);
+                let n = std::cmp::min(
+                    std::cmp::min(
+                        dest_chunk.len() - destination_offset,
+                        src_chunk.len() - source_offset,
+                    ),
+                    amount,
+                );
 
-                dest_chunk[dest_pos..][..n].copy_from_slice(&src_chunk[src_pos..][..n]);
+                dest_chunk[destination_offset..][..n]
+                    .copy_from_slice(&src_chunk[source_offset..][..n]);
 
-                dest_pos += n;
-                src_pos += n;
+                destination_offset += n;
+                source_offset += n;
+                total_copied += n;
+                amount -= n;
 
-                if dest_pos == dest_chunk.len() {
-                    current_dest_chunk = dest_chunks.next();
-                    dest_pos = 0;
+                if destination_offset == dest_chunk.len() {
+                    destination_chunks.next();
+                    destination_offset = 0;
                 }
-                if src_pos == src_chunk.len() {
-                    current_src_chunk = src_chunks.next();
-                    dest_pos = 0;
+                if source_offset == src_chunk.len() {
+                    source_chunks.next();
+                    source_offset = 0;
                 }
             }
-            (Some(dest_chunk), None) => {
-                if dest_chunk.is_empty() {
-                    current_dest_chunk = dest_chunks.next();
-                }
-                else {
-                    panic!("destination not full");
-                }
-            }
-            (None, Some(src_chunk)) => {
-                if src_chunk.is_empty() {
-                    current_src_chunk = src_chunks.next();
-                }
-                else {
-                    panic!("source not exhaused");
-                }
-            }
+            _ => break,
         }
     }
+
+    Ok(CopyChunksResult {
+        destination_offset,
+        source_offset,
+        total_copied,
+    })
+}
+
+/// Result of [`copy_chunks`]
+#[derive(Debug)]
+pub struct CopyChunksResult {
+    /// Offset into `destination_chunk` after copying.
+    pub destination_offset: usize,
+
+    /// Offset into `source_chunk` after copying.
+    pub source_offset: usize,
+
+    /// Total number of bytes copied between chunk iterators.
+    pub total_copied: usize,
 }
