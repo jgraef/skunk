@@ -1,5 +1,3 @@
-use std::ops::RangeBounds;
-
 use super::{
     copy,
     BigEndian,
@@ -17,15 +15,14 @@ use super::{
 pub struct End;
 
 impl End {
-    fn from_copy_error<D: RangeBounds<usize>, S: RangeBounds<usize>>(e: CopyError<D, S>) -> Self {
-        use super::buf::CopyError::*;
+    fn from_copy_error(e: CopyError) -> Self {
         match e {
-            SourceRangeOutOfBounds(_) => Self,
+            CopyError::SourceRangeOutOfBounds(_) => Self,
             _ => panic!("Unexpected error while copying: {e}"),
         }
     }
 
-    fn from_range_out_of_bounds<R: RangeBounds<usize>>(_: RangeOutOfBounds<R>) -> Self {
+    fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
         // todo: we could do some checks here, if it's really an error that can be
         // interpreted as end of buffer.
         End
@@ -65,7 +62,7 @@ pub trait Reader: Sized {
     fn read_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
         let view = self.read_view(N)?;
         let mut buf = [0u8; N];
-        super::buf::copy(&mut buf, .., view, ..).map_err(End::from_copy_error)?;
+        copy(&mut buf, .., view, ..).map_err(End::from_copy_error)?;
         Ok(buf)
     }
 

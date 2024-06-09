@@ -5,45 +5,16 @@ use std::{
         Flatten,
         FusedIterator,
     },
-    ops::{
-        Bound,
-        RangeBounds,
-        RangeFull,
-    },
     sync::Arc,
 };
 
 use super::{
+    copy,
     read::BufReader,
-    slice_get_mut_range,
-    slice_get_range,
+    CopyError,
+    Range,
+    RangeOutOfBounds,
 };
-
-#[derive(Debug, thiserror::Error)]
-#[error("Range out of bounds: {:?} not in buffer (..{buf_length})", DebugRange(.range))]
-pub struct RangeOutOfBounds<R: RangeBounds<usize>> {
-    pub range: R,
-    pub buf_length: usize,
-}
-
-struct DebugRange<'r, R: RangeBounds<usize>>(&'r R);
-
-impl<'r, R: RangeBounds<usize>> Debug for DebugRange<'r, R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0.start_bound() {
-            Bound::Included(start) => write!(f, "{start}")?,
-            Bound::Excluded(start) => write!(f, "{}", *start + 1)?,
-            Bound::Unbounded => {}
-        }
-        write!(f, "..")?;
-        match self.0.end_bound() {
-            Bound::Included(end) => write!(f, "{end}")?,
-            Bound::Excluded(end) => write!(f, "={end}")?,
-            Bound::Unbounded => {}
-        }
-        Ok(())
-    }
-}
 
 /// Read access to a buffer of bytes.
 pub trait Buf {
@@ -58,14 +29,11 @@ pub trait Buf {
         Self: 'a;
 
     /// Returns a view of a portion of the buffer.
-    fn view<R: RangeBounds<usize>>(&self, range: R) -> Result<Self::View<'_>, RangeOutOfBounds<R>>;
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds>;
 
     /// Returns an iterator over contiguous byte chunks that make up this
     /// buffer.
-    fn chunks<R: RangeBounds<usize>>(
-        &self,
-        range: R,
-    ) -> Result<Self::Chunks<'_>, RangeOutOfBounds<R>>;
+    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds>;
 
     /// Returns the length of this buffer in bytes.
     fn len(&self) -> usize;
@@ -74,6 +42,16 @@ pub trait Buf {
     #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Returns whether this buffer contains bytes for the given range.
+    ///
+    /// # Default implementation
+    ///
+    /// The default implementation will check if the range is contained by
+    /// `..self.len()`.
+    fn contains(&self, range: impl Into<Range>) -> bool {
+        range.into().contained_by(..self.len())
     }
 
     #[inline]
@@ -85,10 +63,7 @@ pub trait Buf {
     }
 
     #[inline]
-    fn iter<R: RangeBounds<usize>>(
-        &self,
-        range: R,
-    ) -> Result<BufIter<'_, Self>, RangeOutOfBounds<R>> {
+    fn iter(&self, range: impl Into<Range>) -> Result<BufIter<'_, Self>, RangeOutOfBounds> {
         Ok(BufIter::new(self.chunks(range)?))
     }
 }
@@ -105,12 +80,12 @@ macro_rules! impl_buf_with_deref {
                 type Chunks<'a> = <B as Buf>::Chunks<'a> where Self: 'a;
 
                 #[inline]
-                fn view<R: RangeBounds<usize>>(&self, range: R) -> Result<Self::View<'_>, RangeOutOfBounds<R>> {
+                fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
                     <B as Buf>::view(*self, range)
                 }
 
                 #[inline]
-                fn chunks<R: RangeBounds<usize>>(&self, range: R) -> Result<Self::Chunks<'_>, RangeOutOfBounds<R>> {
+                fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
                     <B as Buf>::chunks(*self, range)
                 }
 
@@ -124,8 +99,8 @@ macro_rules! impl_buf_with_deref {
 }
 
 impl_buf_with_deref! {
-    ('b, B: Buf), &'b B;
-    ('b, B: Buf), &'b mut B;
+    ('b, B: Buf + ?Sized), &'b B;
+    ('b, B: Buf + ?Sized), &'b mut B;
 }
 
 macro_rules! impl_buf_for_slice_like {
@@ -141,13 +116,13 @@ macro_rules! impl_buf_for_slice_like {
                 type Chunks<'a> = SingleChunk<'a> where Self: 'a;
 
                 #[inline]
-                fn view<R: RangeBounds<usize>>(&self, range: R) -> Result<Self::View<'_>, RangeOutOfBounds<R>> {
-                    slice_get_range(self, range)
+                fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
+                    range.into().slice_get(self)
                 }
 
                 #[inline]
-                fn chunks<R: RangeBounds<usize>>(&self, range: R) -> Result<Self::Chunks<'_>, RangeOutOfBounds<R>> {
-                    Ok(SingleChunk::new(slice_get_range(self, range)?))
+                fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
+                    Ok(SingleChunk::new(range.into().slice_get(self)?))
                 }
 
                 #[inline]
@@ -186,45 +161,93 @@ pub trait BufMut: Buf {
         Self: 'a;
 
     /// Returns a mutable view of a portion of the buffer.
-    fn view_mut<R: RangeBounds<usize>>(
-        &mut self,
-        range: R,
-    ) -> Result<Self::ViewMut<'_>, RangeOutOfBounds<R>>;
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds>;
 
     /// Returns an iterator over contiguous mutable byte chunks that make up
     /// this buffer.
-    fn chunks_mut<R: RangeBounds<usize>>(
+    fn chunks_mut(
         &mut self,
-        range: R,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds<R>>;
+        range: impl Into<Range>,
+    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds>;
 
     #[inline]
-    fn iter_mut<R: RangeBounds<usize>>(
+    fn iter_mut(
         &mut self,
-        range: R,
-    ) -> Result<BufIterMut<'_, Self>, RangeOutOfBounds<R>> {
+        range: impl Into<Range>,
+    ) -> Result<BufIterMut<'_, Self>, RangeOutOfBounds> {
         Ok(BufIterMut::new(self.chunks_mut(range)?))
+    }
+
+    /// Grows the buffer such that it can hold the given range.
+    ///
+    /// # Default implementation
+    ///
+    /// The default implementation will check if the buffer can already hold the
+    /// range, and fail if it can't.
+    #[inline]
+    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
+        let range = range.into();
+        range
+            .contained_by(0..self.len())
+            .then_some(())
+            .ok_or_else(|| {
+                RangeOutOfBounds {
+                    required: range,
+                    bounds: (0, self.len()),
+                }
+            })
+    }
+
+    /// Writes the given buffer `source` into this one at `offset`, growing it
+    /// as necessary
+    ///
+    /// # Default implementation
+    ///
+    /// The default implementation will first call [`Self::grow_for`] to make
+    /// space and then copy to it.
+    #[inline]
+    fn write(
+        &mut self,
+        destination_range: impl Into<Range>,
+        source: impl Buf,
+        source_range: impl Into<Range>,
+    ) -> Result<(), WriteError> {
+        let source_range = source_range.into();
+        self.grow_for(source_range).map_err(|e| {
+            WriteError::Full {
+                required: e.required,
+                buf_length: e.bounds.1,
+            }
+        })?;
+        copy(self, destination_range, source, source_range)?;
+        Ok(())
     }
 }
 
-impl<'b, B: BufMut> BufMut for &'b mut B {
+#[derive(Debug, thiserror::Error)]
+pub enum WriteError {
+    #[error("buffer is full: range ({required:?}) can't fit into buffer with length {buf_length}")]
+    Full { required: Range, buf_length: usize },
+
+    #[error("{0}")]
+    Copy(#[from] CopyError),
+}
+
+impl<'b, B: BufMut + ?Sized> BufMut for &'b mut B {
     type ViewMut<'a> = <B as BufMut>::ViewMut<'a> where Self: 'a;
 
     type ChunksMut<'a> = <B as BufMut>::ChunksMut<'a> where Self: 'a;
 
     #[inline]
-    fn view_mut<R: RangeBounds<usize>>(
-        &mut self,
-        range: R,
-    ) -> Result<Self::ViewMut<'_>, RangeOutOfBounds<R>> {
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
         <B as BufMut>::view_mut(*self, range)
     }
 
     #[inline]
-    fn chunks_mut<R: RangeBounds<usize>>(
+    fn chunks_mut(
         &mut self,
-        range: R,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds<R>> {
+        range: impl Into<Range>,
+    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
         <B as BufMut>::chunks_mut(*self, range)
     }
 }
@@ -242,17 +265,16 @@ macro_rules! impl_buf_mut_for_slice_like {
                 type ChunksMut<'a> = SingleChunkMut<'a> where Self: 'a;
 
                 #[inline]
-                fn view_mut<R: RangeBounds<usize>>(&mut self, range: R) -> Result<Self::ViewMut<'_>, RangeOutOfBounds<R>> {
-                    slice_get_mut_range(self, range)
+                fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+                    range.into().slice_get_mut(self)
                 }
 
                 #[inline]
-                fn chunks_mut<R: RangeBounds<usize>>(
+                fn chunks_mut(
                     &mut self,
-                    range: R,
-                ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds<R>>
-                {
-                    Ok(SingleChunkMut::new(slice_get_mut_range(self, range)?))
+                    range: impl Into<Range>,
+                ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
+                    Ok(SingleChunkMut::new(range.into().slice_get_mut(self)?))
                 }
             }
         )*
@@ -262,89 +284,44 @@ macro_rules! impl_buf_mut_for_slice_like {
 impl_buf_mut_for_slice_like! {
     ('b), &'b mut [u8];
     (const N: usize), [u8; N];
-    (), Vec<u8>;
     (), Box<[u8]>;
 }
 
-/// Error while copying from a [`Buf`] to a [`BufMut`].
-#[derive(Debug, thiserror::Error)]
-pub enum CopyError<D: RangeBounds<usize>, S: RangeBounds<usize>> {
-    #[error("Destination index out of bounds")]
-    DestinationRangeOutOfBounds(RangeOutOfBounds<D>),
+impl BufMut for Vec<u8> {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
 
-    #[error("Source index out of bounds")]
-    SourceRangeOutOfBounds(RangeOutOfBounds<S>),
+    type ChunksMut<'a> = SingleChunkMut<'a> where Self: 'a;
 
-    #[error("The destination buffer has remaining space after exhausting the source buffer")]
-    DestinationSpaceRemaining,
+    #[inline]
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        range.into().slice_get_mut(self)
+    }
 
-    #[error("The source buffer has remaining data after filling the destination buffer")]
-    SourceDataRemaining,
-}
+    #[inline]
+    fn chunks_mut(
+        &mut self,
+        range: impl Into<Range>,
+    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
+        Ok(SingleChunkMut::new(range.into().slice_get_mut(self)?))
+    }
 
-/// Copies bytes from `source` to `destination` with respective ranges.
-///
-/// This can fail if either range is out of bounds, or the lengths of both
-/// ranges doesn't match up. See [`CopyError`].
-pub fn copy<D: RangeBounds<usize>, S: RangeBounds<usize>>(
-    mut destination: impl BufMut,
-    destination_range: D,
-    source: impl Buf,
-    source_range: S,
-) -> Result<(), CopyError<D, S>> {
-    // note: we can't actually check if the lengths match up here, because either
-    // range can be open (e.g. `123..`).
+    #[inline]
+    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
+        self.resize(range.into().len_in(0, self.len()), 0);
+        Ok(())
+    }
 
-    let mut dest_chunks = destination
-        .chunks_mut(destination_range)
-        .map_err(CopyError::DestinationRangeOutOfBounds)?;
-    let mut src_chunks = source
-        .chunks(source_range)
-        .map_err(CopyError::SourceRangeOutOfBounds)?;
-
-    let mut current_dest_chunk: Option<&mut [u8]> = dest_chunks.next();
-    let mut current_src_chunk: Option<&[u8]> = src_chunks.next();
-
-    let mut dest_pos = 0;
-    let mut src_pos = 0;
-
-    loop {
-        match (&mut current_dest_chunk, current_src_chunk) {
-            (None, None) => break Ok(()),
-            (Some(dest_chunk), Some(src_chunk)) => {
-                let n = std::cmp::min(dest_chunk.len() - dest_pos, src_chunk.len() - src_pos);
-
-                dest_chunk[dest_pos..][..n].copy_from_slice(&src_chunk[src_pos..][..n]);
-
-                dest_pos += n;
-                src_pos += n;
-
-                if dest_pos == dest_chunk.len() {
-                    current_dest_chunk = dest_chunks.next();
-                    dest_pos = 0;
-                }
-                if src_pos == src_chunk.len() {
-                    current_src_chunk = src_chunks.next();
-                    dest_pos = 0;
-                }
-            }
-            (Some(dest_chunk), None) => {
-                if dest_chunk.is_empty() {
-                    current_dest_chunk = dest_chunks.next();
-                }
-                else {
-                    break Err(CopyError::DestinationSpaceRemaining);
-                }
-            }
-            (None, Some(src_chunk)) => {
-                if src_chunk.is_empty() {
-                    current_src_chunk = src_chunks.next();
-                }
-                else {
-                    break Err(CopyError::SourceDataRemaining);
-                }
-            }
-        }
+    fn write(
+        &mut self,
+        destination_range: impl Into<Range>,
+        source: impl Buf,
+        source_range: impl Into<Range>,
+    ) -> Result<(), WriteError> {
+        let source_range = source_range.into();
+        self.grow_for(source_range)
+            .map_err(|e| CopyError::DestinationRangeOutOfBounds(e))?;
+        copy(self, destination_range, source, source_range)?;
+        Ok(())
     }
 }
 

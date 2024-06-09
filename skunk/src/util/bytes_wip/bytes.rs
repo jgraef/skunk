@@ -1,20 +1,14 @@
 use std::{
     fmt::Debug,
-    ops::{
-        Bound,
-        Deref,
-        RangeBounds,
-    },
+    ops::Deref,
     sync::Arc,
 };
 
 use super::{
-    buf::{
-        RangeOutOfBounds,
-        SingleChunk,
-    },
-    slice_get_range,
+    buf::SingleChunk,
     Buf,
+    Range,
+    RangeOutOfBounds,
 };
 
 /// Type alias for [`Bytes`] that are `'static`.
@@ -241,65 +235,45 @@ impl<'b> Buf for Bytes<'b> {
 
     type Chunks<'a> = SingleChunk<'a> where Self: 'a;
 
-    fn view<R: RangeBounds<usize>>(&self, range: R) -> Result<Self, RangeOutOfBounds<R>> {
+    fn view(&self, range: impl Into<Range>) -> Result<Self, RangeOutOfBounds> {
+        let range = range.into();
         match &self.inner {
             Inner::Static { buf } => {
                 Ok(Self {
                     inner: Inner::Borrowed {
-                        buf: slice_get_range(buf, range)?,
+                        buf: range.slice_get(buf)?,
                     },
                 })
             }
             Inner::Borrowed { buf } => {
                 Ok(Self {
                     inner: Inner::Borrowed {
-                        buf: slice_get_range(buf, range)?,
+                        buf: range.slice_get(buf)?,
                     },
                 })
             }
             Inner::Shared { buf, start, end } => {
-                let slice_start = match range.start_bound() {
-                    Bound::Included(&bound) => start + bound,
-                    Bound::Excluded(&bound) => start + bound + 1,
-                    Bound::Unbounded => *start,
-                };
-                let slice_end = match range.end_bound() {
-                    Bound::Included(&bound) => start + bound + 1,
-                    Bound::Excluded(&bound) => start + bound,
-                    Bound::Unbounded => *end,
-                };
-
-                if slice_end > *end {
-                    Err(RangeOutOfBounds {
-                        range,
-                        buf_length: end - start,
-                    })
-                }
-                else if slice_start < slice_end {
-                    Ok(Self::default())
-                }
-                else {
+                if let Some((start, end)) = range.indices_checked_in(*start, *end)? {
                     Ok(Self {
                         inner: Inner::Shared {
                             buf: buf.clone(),
-                            start: slice_start,
-                            end: slice_end,
+                            start,
+                            end,
                         },
                     })
+                }
+                else {
+                    Ok(Self::default())
                 }
             }
         }
     }
 
     #[inline]
-    fn chunks<R: RangeBounds<usize>>(
-        &self,
-        range: R,
-    ) -> Result<Self::Chunks<'_>, RangeOutOfBounds<R>> {
-        Ok(SingleChunk::new(slice_get_range(
-            self.inner.bytes(),
-            range,
-        )?))
+    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
+        Ok(SingleChunk::new(
+            range.into().slice_get(self.inner.bytes())?,
+        ))
     }
 
     #[inline]

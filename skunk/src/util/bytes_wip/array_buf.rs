@@ -4,15 +4,13 @@ use std::{
     ops::{
         Deref,
         DerefMut,
-        RangeBounds,
     },
 };
 
 use super::{
-    slice_get_mut_range,
-    slice_get_range,
     Buf,
     BufMut,
+    Range,
     RangeOutOfBounds,
     SingleChunk,
     SingleChunkMut,
@@ -54,6 +52,23 @@ impl<const N: usize> ArrayBuf<N> {
     #[inline]
     pub fn is_full(&self) -> bool {
         self.initialized == N
+    }
+
+    pub fn resize(&mut self, new_len: usize, value: u8) {
+        if new_len > N {
+            panic!("Can't resize ArrayBuf<{N}> to length {new_len}");
+        }
+
+        // after this the struct invariant still holds
+        if new_len > self.initialized {
+            MaybeUninit::fill(&mut self.buf[self.initialized..new_len], value);
+        }
+        self.initialized = new_len;
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.initialized = 0;
     }
 }
 
@@ -140,16 +155,13 @@ impl<const N: usize> Buf for ArrayBuf<N> {
         Self: 'a;
 
     #[inline]
-    fn view<R: RangeBounds<usize>>(&self, range: R) -> Result<Self::View<'_>, RangeOutOfBounds<R>> {
-        Ok(slice_get_range(self.bytes(), range)?)
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
+        Ok(range.into().slice_get(self.bytes())?)
     }
 
     #[inline]
-    fn chunks<R: RangeBounds<usize>>(
-        &self,
-        range: R,
-    ) -> Result<Self::Chunks<'_>, RangeOutOfBounds<R>> {
-        Ok(SingleChunk::new(slice_get_range(self.bytes(), range)?))
+    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
+        Ok(SingleChunk::new(range.into().slice_get(self.bytes())?))
     }
 
     #[inline]
@@ -168,21 +180,33 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
         Self: 'a;
 
     #[inline]
-    fn view_mut<R: RangeBounds<usize>>(
-        &mut self,
-        range: R,
-    ) -> Result<Self::ViewMut<'_>, RangeOutOfBounds<R>> {
-        Ok(slice_get_mut_range(self.bytes_mut(), range)?)
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        Ok(range.into().slice_get_mut(self.bytes_mut())?)
     }
 
     #[inline]
-    fn chunks_mut<R: RangeBounds<usize>>(
+    fn chunks_mut(
         &mut self,
-        range: R,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds<R>> {
-        Ok(SingleChunkMut::new(slice_get_mut_range(
-            self.bytes_mut(),
-            range,
-        )?))
+        range: impl Into<Range>,
+    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
+        Ok(SingleChunkMut::new(
+            range.into().slice_get_mut(self.bytes_mut())?,
+        ))
+    }
+
+    #[inline]
+    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
+        let range = range.into();
+        let new_len = range.len_in(0, self.len());
+        if new_len <= N {
+            self.resize(new_len, 0);
+            Ok(())
+        }
+        else {
+            Err(RangeOutOfBounds {
+                required: range,
+                bounds: (0, N),
+            })
+        }
     }
 }
