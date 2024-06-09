@@ -8,8 +8,11 @@ use std::{
 };
 
 use super::{
+    buf::WriteError,
+    copy,
     Buf,
     BufMut,
+    CopyError,
     Range,
     RangeOutOfBounds,
     SingleChunk,
@@ -194,7 +197,6 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
         ))
     }
 
-    #[inline]
     fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
         let range = range.into();
         let new_len = range.len_in(0, self.len());
@@ -208,5 +210,87 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
                 bounds: (0, N),
             })
         }
+    }
+
+    fn write(
+        &mut self,
+        destination_range: impl Into<Range>,
+        source: impl Buf,
+        source_range: impl Into<Range>,
+    ) -> Result<(), WriteError> {
+        let destination_range = destination_range.into();
+        let source_range = source_range.into();
+        let mut len = self.initialized;
+        let destination_length = destination_range.len_in(0, len);
+        let source_length = source_range.len_in(0, source.len());
+
+        if destination_length != source_length {
+            return Err(WriteError::Copy(CopyError::LengthMismatch {
+                destination_range,
+                destination_length,
+                source_range,
+                source_length,
+            }));
+        }
+
+        if destination_length > N {
+            return Err(CopyError::DestinationRangeOutOfBounds(RangeOutOfBounds {
+                required: destination_range,
+                bounds: (0, N),
+            })
+            .into());
+        }
+
+        let (dest_start, dest_end) = destination_range.indices_unchecked_in(0, len);
+        let (src_start, src_end) = destination_range.indices_unchecked_in(0, source.len());
+
+        // copy portion that is already allocated
+        if dest_start < len {
+            copy(
+                self.bytes_mut(),
+                dest_start..len,
+                &source,
+                src_start..(src_start + len - dest_start),
+            )
+            .map_err(|e| {
+                match e {
+                    CopyError::DestinationRangeOutOfBounds(e) => {
+                        CopyError::DestinationRangeOutOfBounds(RangeOutOfBounds {
+                            required: destination_range,
+                            bounds: e.bounds,
+                        })
+                    }
+                    CopyError::SourceRangeOutOfBounds(e) => {
+                        CopyError::SourceRangeOutOfBounds(RangeOutOfBounds {
+                            required: source_range,
+                            bounds: e.bounds,
+                        })
+                    }
+                    CopyError::LengthMismatch { .. } => {
+                        // we already checked that
+                        unreachable!()
+                    }
+                }
+            })?;
+        }
+
+        // extend with chunks that we need to allocate space for
+        if dest_end > len {
+            let chunks = source
+                .chunks((src_start + len - dest_end)..src_end)
+                .map_err(|e| {
+                    CopyError::SourceRangeOutOfBounds(RangeOutOfBounds {
+                        required: source_range,
+                        bounds: e.bounds,
+                    })
+                })?;
+            for chunk in chunks {
+                MaybeUninit::copy_from_slice(&mut self.buf[len..(len + chunk.len())], chunk);
+                len += chunk.len();
+            }
+            self.initialized = len;
+        }
+
+        Ok(())
     }
 }

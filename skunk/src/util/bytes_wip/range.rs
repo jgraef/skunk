@@ -101,15 +101,25 @@ impl Range {
             _ => {}
         }
         match (self.end(), other.end()) {
-            (Some(left), Some(right)) if left < right => return false,
-            _ => {}
+            (Some(left), Some(right)) if left < right => false,
+            _ => true,
         }
-        true
     }
 
     #[inline]
     pub fn contained_by(&self, other: impl Into<Range>) -> bool {
         other.into().contains(self)
+    }
+
+    pub fn contains_index(&self, index: usize) -> bool {
+        match self.start() {
+            Some(start) if start > index => return false,
+            _ => {}
+        }
+        match self.end() {
+            Some(end) if end < index => false,
+            _ => true,
+        }
     }
 }
 
