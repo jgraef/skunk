@@ -7,5 +7,3 @@ members = [
 
 [patch.crates-io]
 hyper = { git = "https://github.com/jgraef/hyper.git", branch = "switch/main" }
-#dhcproto = { git = "https://github.com/jgraef/dhcproto.git", branch = "switch/encoder-buffer-filled" }
-dhcproto = { git = "https://github.com/bluecatengineering/dhcproto.git", branch = "master" }
