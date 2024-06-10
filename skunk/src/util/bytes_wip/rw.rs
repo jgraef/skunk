@@ -31,14 +31,16 @@ impl End {
     fn from_copy_error(e: CopyError) -> Self {
         match e {
             CopyError::SourceRangeOutOfBounds(_) => Self,
-            _ => panic!("Unexpected error while copying: {e}"),
+            _ => {
+                panic!("Unexpected error while copying: {e}");
+            },
         }
     }
 
     fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
         // todo: we could do some checks here, if it's really an error that can be
         // interpreted as end of buffer.
-        End
+        Self
     }
 }
 
@@ -100,18 +102,20 @@ pub trait Reader: Sized {
     /// Reads a view of length `n`.
     fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End>;
 
+    /// Reads into `destination`, filling that buffer, but not growing it.
+    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End>;
+
     /// Reads an array of length `N`.
     ///
     /// # Default implementation
     ///
-    /// This has a default implementation that uses [`Self::read_view`],
+    /// This has a default implementation that uses [`Self::read_into`],
     /// but you should override the implementation if there is a cheaper way of
     /// reading an array.
     #[inline]
     fn read_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
-        let view = self.read_view(N)?;
         let mut buf = [0u8; N];
-        copy(&mut buf, .., view, ..).map_err(End::from_copy_error)?;
+        self.read_into(&mut buf)?;
         Ok(buf)
     }
 
@@ -210,6 +214,11 @@ impl<R: Reader, E: Endianness> Reader for WithXe<R, E> {
     #[inline]
     fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End> {
         self.inner.read_view(n)
+    }
+
+    #[inline]
+    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
+        self.inner.read_into(destination)
     }
 
     #[inline]
@@ -340,12 +349,12 @@ impl<B: Buf> Reader for Cursor<B> {
         Ok(output)
     }
 
-    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
-        let mut buf = [0u8; N];
-        let range = self.get_range(N);
-        copy(&mut buf, .., &self.buf, range).map_err(End::from_copy_error)?;
-        self.offset += N;
-        Ok(buf)
+    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
+        let n = destination.len();
+        let range = self.get_range(n);
+        copy(destination, .., &self.buf, range).map_err(End::from_copy_error)?;
+        self.offset += n;
+        Ok(())
     }
 
     fn skip(&mut self, n: usize) -> Result<(), End> {

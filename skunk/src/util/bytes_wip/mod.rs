@@ -3,6 +3,7 @@ mod buf;
 mod bytes;
 mod copy;
 mod endianness;
+mod hexdump;
 mod range;
 mod rw;
 
@@ -34,6 +35,11 @@ pub use self::{
         NetworkEndian,
         Size,
     },
+    hexdump::{
+        Hexdump,
+        HexdumpLine,
+        HexdumpLines,
+    },
     range::{
         Range,
         RangeOutOfBounds,
@@ -43,8 +49,10 @@ pub use self::{
         End,
         Full,
         HasEndianness,
+        Position,
         Read,
         Reader,
+        Remaining,
         WithXe,
         Write,
         Writer,

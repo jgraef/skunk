@@ -31,6 +31,11 @@ pub enum CopyError {
 ///
 /// This can fail if either range is out of bounds, or the lengths of both
 /// ranges aren't equal. See [`CopyError`].
+///
+/// # Todo
+///
+/// Either modify this or create a similar function that will grow the
+/// destination buffer as necessary.
 pub fn copy(
     mut destination: impl BufMut,
     destination_range: impl Into<Range>,
