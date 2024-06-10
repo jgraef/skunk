@@ -33,7 +33,7 @@ impl End {
             CopyError::SourceRangeOutOfBounds(_) => Self,
             _ => {
                 panic!("Unexpected error while copying: {e}");
-            },
+            }
         }
     }
 
@@ -103,7 +103,18 @@ pub trait Reader: Sized {
     fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End>;
 
     /// Reads into `destination`, filling that buffer, but not growing it.
-    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End>;
+    ///
+    /// # Default implementation
+    ///
+    /// This has a default implementation that uses [`Self::read_view`],
+    /// but you should override it if there is a cheaper way of writing into
+    /// `destination`.
+    #[inline]
+    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
+        let n = destination.len();
+        copy(destination, .., self.read_view(n)?, ..).unwrap();
+        Ok(())
+    }
 
     /// Reads an array of length `N`.
     ///

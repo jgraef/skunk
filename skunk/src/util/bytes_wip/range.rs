@@ -7,22 +7,60 @@ use std::{
     },
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Range {
     pub start: Bound<usize>,
     pub end: Bound<usize>,
 }
 
-impl<R: RangeBounds<usize>> From<R> for Range {
-    fn from(value: R) -> Self {
+impl Range {
+    #[inline]
+    pub fn from_range_bounds(range: impl RangeBounds<usize>) -> Self {
         Self {
-            start: value.start_bound().cloned(),
-            end: value.end_bound().cloned(),
+            start: range.start_bound().cloned(),
+            end: range.end_bound().cloned(),
+        }
+    }
+}
+
+macro_rules! impl_from_range_bounds {
+    {
+        $(
+            $ty:ty;
+        )*
+    } => {
+        $(
+            impl From<$ty> for Range {
+                #[inline]
+                fn from(value: $ty) -> Self {
+                    Self::from_range_bounds(value)
+                }
+            }
+        )*
+    };
+}
+
+impl_from_range_bounds! {
+    std::ops::Range<usize>;
+    std::ops::RangeFrom<usize>;
+    std::ops::RangeFull;
+    std::ops::RangeInclusive<usize>;
+    std::ops::RangeTo<usize>;
+    std::ops::RangeToInclusive<usize>;
+}
+
+impl From<usize> for Range {
+    #[inline]
+    fn from(value: usize) -> Self {
+        Self {
+            start: Bound::Included(value),
+            end: Bound::Included(value),
         }
     }
 }
 
 impl<'a> From<&'a Range> for Range {
+    #[inline]
     fn from(value: &'a Range) -> Self {
         *value
     }
@@ -57,7 +95,7 @@ impl Range {
     }
 
     pub fn end(&self) -> Option<usize> {
-        match self.start {
+        match self.end {
             Bound::Included(bound) => Some(bound + 1),
             Bound::Excluded(bound) => Some(bound),
             Bound::Unbounded => None,
@@ -145,4 +183,31 @@ impl Debug for Range {
 pub struct RangeOutOfBounds {
     pub required: Range,
     pub bounds: (usize, usize),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unbounded_range() {
+        let r = Range::from(..);
+
+        assert_eq!(r.start(), None);
+        assert_eq!(r.end(), None);
+        assert_eq!(r.indices_unchecked_in(12, 34), (12, 34));
+        assert_eq!(r.indices_checked_in(12, 34).unwrap(), Some((12, 34)));
+        assert_eq!(r.len_in(12, 34), 34 - 12);
+    }
+
+    #[test]
+    fn range_with_upper_bound() {
+        let r = Range::from(..4);
+
+        assert_eq!(r.start(), None);
+        assert_eq!(r.end(), Some(4));
+        assert_eq!(r.indices_unchecked_in(12, 34), (12, 16));
+        assert_eq!(r.indices_checked_in(12, 34).unwrap(), Some((12, 16)));
+        assert_eq!(r.len_in(12, 34), 4);
+    }
 }

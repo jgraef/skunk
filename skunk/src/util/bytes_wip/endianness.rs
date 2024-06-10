@@ -131,6 +131,7 @@ impl_encode_decode! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::bytes_wip::Hexdump;
 
     macro_rules! make_tests {
         {
@@ -141,10 +142,59 @@ mod tests {
             $(
                 #[test]
                 fn $name() {
-                    assert_eq!(<$ty as Encode::<BigEndian>>::encode(&$value), *$be, "encode big endian");
-                    assert_eq!(<$ty as Encode::<LittleEndian>>::encode(&$value), *$le, "encode little endian");
-                    assert_eq!(<$ty as Decode::<BigEndian>>::decode($be), $value, "decode big endian");
-                    assert_eq!(<$ty as Decode::<LittleEndian>>::decode($le), $value, "decode little endian");
+                    let got = <$ty as Encode::<BigEndian>>::encode(&$value);
+                    if got != *$be {
+                        panic!(
+                            r#"encoding big endian:
+
+expected:
+{}
+
+got:
+{}"#,
+                            Hexdump::new($be),
+                            Hexdump::new(&got),
+                        )
+                    }
+
+                    let got = <$ty as Encode::<LittleEndian>>::encode(&$value);
+                    if got != *$le {
+                        panic!(
+                            r#"encoding little endian:
+
+expected:
+{}
+
+got:
+{}"#,
+                            Hexdump::new($le),
+                            Hexdump::new(&got),
+                        )
+                    }
+
+                    let got = <$ty as Decode::<BigEndian>>::decode($be);
+                    let expected: $ty = $value;
+                    if got != expected {
+                        panic!(
+                            r#"decoding big endian:
+expected: {:?}
+got:      {:?}"#,
+                            expected,
+                            got,
+                        )
+                    }
+
+                    let got = <$ty as Decode::<LittleEndian>>::decode($le);
+                    let expected: $ty = $value;
+                    if got != expected {
+                        panic!(
+                            r#"decoding little endian:
+expected: {:?}
+got:      {:?}"#,
+                            expected,
+                            got,
+                        )
+                    }
                 }
             )*
         };
@@ -165,7 +215,7 @@ mod tests {
             b"\x12\x34\x56\x78\x9a\xbc\xde\xf0",
             b"\xf0\xde\xbc\x9a\x78\x56\x34\x12"
         };
-        test_i64 : i64 => { 0x12345678abcdef0 } == {
+        test_i64 : i64 => { 0x123456789abcdef0 } == {
             b"\x12\x34\x56\x78\x9a\xbc\xde\xf0",
             b"\xf0\xde\xbc\x9a\x78\x56\x34\x12"
         };
@@ -174,12 +224,9 @@ mod tests {
             b"\x12\x34\x56\x78\x9a\xbc\xde\xf0\x0f\xed\xcb\xa9\x87\x65\x43\x21",
             b"\x21\x43\x65\x87\xa9\xcb\xed\x0f\xf0\xde\xbc\x9a\x78\x56\x34\x12"
         };
-        test_i128 : i128 => { 0x12345678abcdef00fedcba987654321 } == {
+        test_i128 : i128 => { 0x123456789abcdef00fedcba987654321 } == {
             b"\x12\x34\x56\x78\x9a\xbc\xde\xf0\x0f\xed\xcb\xa9\x87\x65\x43\x21",
             b"\x21\x43\x65\x87\xa9\xcb\xed\x0f\xf0\xde\xbc\x9a\x78\x56\x34\x12"
         };
-
-
-
     }
 }

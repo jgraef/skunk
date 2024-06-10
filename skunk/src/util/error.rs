@@ -65,11 +65,12 @@ impl<T, E: Error> ResultExt for Result<T, E> {
 }
 
 fn make_relative(path: &str) -> &str {
-    static DIR: &'static str = env!("CARGO_RUSTC_CURRENT_DIR");
-    path.strip_prefix(DIR)
-        .map(|path| {
+    static DIR: Option<&'static str> = option_env!("CARGO_RUSTC_CURRENT_DIR");
+    DIR.and_then(|dir| {
+        path.strip_prefix(dir).map(|path| {
             path.strip_prefix(std::path::MAIN_SEPARATOR_STR)
                 .unwrap_or(path)
         })
-        .unwrap_or(path)
+    })
+    .unwrap_or(path)
 }

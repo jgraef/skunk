@@ -75,6 +75,7 @@ pub fn copy(
         source_length,
     )?;
 
+    // write a test for this
     assert_eq!(
         copy_result.total_copied, source_length,
         "Expected total amount of bytes copied to be equal to the destination and source length."
@@ -161,4 +162,177 @@ pub struct CopyChunksResult {
 
     /// Total number of bytes copied between chunk iterators.
     pub total_copied: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::bytes_wip::{
+        SingleChunk,
+        SingleChunkMut,
+    };
+
+    #[test]
+    fn fails_if_source_longer_than_destination() {
+        let mut destination = [0; 4];
+        let source = [1; 16];
+
+        match copy(&mut destination, .., &source, ..) {
+            Ok(_) => panic!("copy didn't fail"),
+            Err(CopyError::LengthMismatch {
+                destination_range,
+                destination_length,
+                source_range,
+                source_length,
+            }) => {
+                assert_eq!(destination_range, Range::from(..));
+                assert_eq!(source_range, Range::from(..));
+                assert_eq!(destination_length, 4);
+                assert_eq!(source_length, 16);
+            }
+            Err(e) => panic!("copy failed with incorrect error: {e}"),
+        }
+    }
+
+    #[test]
+    fn fails_if_source_shorter_than_destination() {
+        let mut destination = [0; 16];
+        let source = [1; 4];
+
+        match copy(&mut destination, .., &source, ..) {
+            Ok(_) => panic!("copy didn't fail"),
+            Err(CopyError::LengthMismatch {
+                destination_range,
+                destination_length,
+                source_range,
+                source_length,
+            }) => {
+                assert_eq!(destination_range, Range::from(..));
+                assert_eq!(source_range, Range::from(..));
+                assert_eq!(destination_length, 16);
+                assert_eq!(source_length, 4);
+            }
+            Err(e) => panic!("copy failed with incorrect error: {e}"),
+        }
+    }
+
+    #[test]
+    fn fails_if_source_range_longer_than_destination_range() {
+        let mut destination = [0; 16];
+        let source = [1; 16];
+
+        match copy(&mut destination, .., &source, ..4) {
+            Ok(_) => panic!("copy didn't fail"),
+            Err(CopyError::LengthMismatch {
+                destination_range,
+                destination_length,
+                source_range,
+                source_length,
+            }) => {
+                assert_eq!(destination_range, Range::from(..));
+                assert_eq!(source_range, Range::from(..4));
+                assert_eq!(destination_length, 16);
+                assert_eq!(source_length, 4);
+            }
+            Err(e) => panic!("copy failed with incorrect error: {e}"),
+        }
+    }
+
+    #[test]
+    fn fails_if_source_range_shorter_than_destination_range() {
+        let mut destination = [0; 16];
+        let source = [1; 16];
+
+        match copy(&mut destination, ..4, &source, ..) {
+            Ok(_) => panic!("copy didn't fail"),
+            Err(CopyError::LengthMismatch {
+                destination_range,
+                destination_length,
+                source_range,
+                source_length,
+            }) => {
+                assert_eq!(destination_range, Range::from(..4));
+                assert_eq!(source_range, Range::from(..));
+                assert_eq!(destination_length, 4);
+                assert_eq!(source_length, 16);
+            }
+            Err(e) => panic!("copy failed with incorrect error: {e}"),
+        }
+    }
+
+    #[test]
+    fn copy_full_range() {
+        let mut destination = [42; 16];
+        let mut source = [0; 16];
+        for i in 0..16 {
+            source[i] = i as u8;
+        }
+        let expected = source;
+
+        match copy(&mut destination, .., source, ..) {
+            Err(e) => panic!("copy failed: {e}"),
+            Ok(()) => {
+                assert_eq!(expected, destination);
+            }
+        }
+    }
+
+    #[test]
+    fn copy_single_chunk_full_range() {
+        let mut destination = [42; 16];
+        let mut source = [0; 16];
+        for i in 0..16 {
+            source[i] = i as u8;
+        }
+        let expected = source;
+
+        let mut dest_chunks = Peekable::new(SingleChunkMut::new(&mut destination));
+        let mut src_chunks = Peekable::new(SingleChunk::new(&source));
+
+        match copy_chunks(&mut dest_chunks, 0, &mut src_chunks, 0, 16) {
+            Err(e) => panic!("copy_chunks failed: {e}"),
+            Ok(CopyChunksResult {
+                destination_offset,
+                source_offset,
+                total_copied,
+            }) => {
+                assert_eq!(destination_offset, 0);
+                assert_eq!(source_offset, 0);
+                assert_eq!(total_copied, 16);
+                assert_eq!(dest_chunks.peek(), None);
+                assert_eq!(src_chunks.peek(), None);
+                assert_eq!(expected, destination);
+            }
+        }
+    }
+
+    #[test]
+    fn copy_single_chunk_partially() {
+        let mut destination = [42; 16];
+        let mut source = [0; 16];
+        let mut expected = destination;
+        for i in 0..16 {
+            source[i] = i as u8;
+        }
+        expected[1..9].copy_from_slice(&source[4..12]);
+
+        let mut dest_chunks = Peekable::new(SingleChunkMut::new(&mut destination));
+        let mut src_chunks = Peekable::new(SingleChunk::new(&source));
+
+        match copy_chunks(&mut dest_chunks, 1, &mut src_chunks, 4, 8) {
+            Err(e) => panic!("copy_chunks failed: {e}"),
+            Ok(CopyChunksResult {
+                destination_offset,
+                source_offset,
+                total_copied,
+            }) => {
+                assert_eq!(destination_offset, 9);
+                assert_eq!(source_offset, 12);
+                assert_eq!(total_copied, 8);
+                assert!(dest_chunks.peek().is_some());
+                assert_eq!(src_chunks.peek(), Some(&source.as_ref()));
+                assert_eq!(expected, destination);
+            }
+        }
+    }
 }
