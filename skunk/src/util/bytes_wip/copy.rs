@@ -167,7 +167,7 @@ pub struct CopyChunksResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::bytes_wip::{
+    use crate::util::bytes_wip::buf::{
         SingleChunk,
         SingleChunkMut,
     };

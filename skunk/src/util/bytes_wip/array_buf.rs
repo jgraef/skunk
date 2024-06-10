@@ -9,17 +9,21 @@ use std::{
 
 use super::{
     buf::{
+        Buf,
+        BufMut,
+        SingleChunk,
+        SingleChunkMut,
         SizeLimit,
         WriteError,
     },
-    copy,
-    Buf,
-    BufMut,
-    CopyError,
-    Range,
-    RangeOutOfBounds,
-    SingleChunk,
-    SingleChunkMut,
+    copy::{
+        copy,
+        CopyError,
+    },
+    range::{
+        Range,
+        RangeOutOfBounds,
+    },
 };
 
 /// A buffer backed by an array. The array is initially empty, but can grow

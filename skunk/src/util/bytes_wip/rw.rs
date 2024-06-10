@@ -5,21 +5,25 @@ use std::{
 
 use super::{
     buf::{
+        Buf,
+        BufMut,
         NonEmptyIter,
         WriteError,
     },
-    copy,
+    copy::{
+        copy,
+        CopyError,
+    },
     endianness::{
         Decode,
+        Endianness,
+        NativeEndian,
         Size,
     },
-    Buf,
-    BufMut,
-    CopyError,
-    Endianness,
-    NativeEndian,
-    Range,
-    RangeOutOfBounds,
+    range::{
+        Range,
+        RangeOutOfBounds,
+    },
 };
 use crate::util::Peekable;
 

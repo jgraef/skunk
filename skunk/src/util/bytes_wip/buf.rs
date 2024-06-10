@@ -5,18 +5,19 @@ use std::{
         Flatten,
         FusedIterator,
     },
-    ops::{
-        Bound,
-        DerefMut,
-    },
+    ops::DerefMut,
     sync::Arc,
 };
 
 use super::{
-    copy,
-    CopyError,
-    Range,
-    RangeOutOfBounds,
+    copy::{
+        copy,
+        CopyError,
+    },
+    range::{
+        Range,
+        RangeOutOfBounds,
+    },
 };
 
 /// Read access to a buffer of bytes.
@@ -404,17 +405,24 @@ impl BufMut for Vec<u8> {
 }
 
 /// Chunk iterator for contiguous buffers.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SingleChunk<'a> {
-    chunk: Option<&'a [u8]>,
+    chunk: &'a [u8],
+    exhausted: bool,
 }
 
 impl<'a> SingleChunk<'a> {
     #[inline]
     pub fn new(chunk: &'a [u8]) -> Self {
         Self {
-            chunk: (!chunk.is_empty()).then_some(chunk),
+            chunk,
+            exhausted: chunk.is_empty(),
         }
+    }
+
+    #[inline]
+    pub fn get(&self) -> &'a [u8] {
+        self.chunk
     }
 }
 
@@ -423,12 +431,18 @@ impl<'a> Iterator for SingleChunk<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.chunk.take()
+        if self.exhausted {
+            None
+        }
+        else {
+            self.exhausted = true;
+            Some(self.chunk)
+        }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.chunk.is_some().then_some(1).unwrap_or_default();
+        let n = self.exhausted.then_some(0).unwrap_or(1);
         (n, Some(n))
     }
 }
@@ -436,7 +450,7 @@ impl<'a> Iterator for SingleChunk<'a> {
 impl<'a> DoubleEndedIterator for SingleChunk<'a> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.chunk.take()
+        self.next()
     }
 }
 

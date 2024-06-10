@@ -131,7 +131,7 @@ impl_encode_decode! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::bytes_wip::Hexdump;
+    use crate::util::bytes_wip::hexdump::Hexdump;
 
     macro_rules! make_tests {
         {

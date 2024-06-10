@@ -4,8 +4,7 @@ use std::ops::RangeBounds;
 
 use bytes::Bytes;
 
-use super::bytes_wip::{
-    Decode,
+use super::bytes_wip::endianness::{
     Endianness,
     Size,
 };

@@ -4,33 +4,89 @@ use std::fmt::{
 };
 
 use super::{
-    Buf,
-    Cursor,
-    Reader,
-    Remaining,
+    buf::Buf,
+    rw::{
+        Cursor,
+        Reader,
+        Remaining,
+    },
 };
 
-pub struct HexdumpLines<B> {
+pub struct Hexdump<B> {
+    buf: B,
+    config: Config,
+}
+
+impl<B> Hexdump<B> {
+    #[inline]
+    pub fn new(buf: B) -> Self {
+        Self::with_config(buf, Default::default())
+    }
+
+    #[inline]
+    pub fn with_config(buf: B, config: Config) -> Self {
+        Self { buf, config }
+    }
+}
+
+impl<B: Buf> Display for Hexdump<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut lines = Lines::new(&self.buf, &self.config);
+
+        if let Some(line) = lines.next() {
+            write!(f, "{line}")?;
+        }
+
+        while let Some(line) = lines.next() {
+            write!(f, "\n{line}")?;
+        }
+
+        if self.config.trailing_newline {
+            writeln!(f, "")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Config {
+    pub offset: usize,
+    pub trailing_newline: bool,
+    pub at_least_one_line: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            trailing_newline: true,
+            at_least_one_line: true,
+        }
+    }
+}
+
+pub struct Lines<B> {
     cursor: Cursor<B>,
     pad_offset_to: usize,
     offset: usize,
     emit_empty_line: bool,
 }
 
-impl<B: Buf> HexdumpLines<B> {
-    pub fn new(buf: B, offset: usize) -> Self {
-        let pad_offset_to = std::cmp::max(num_hex_digits(offset + buf.len()), 4);
+impl<B: Buf> Lines<B> {
+    pub fn new(buf: B, config: &Config) -> Self {
+        let pad_offset_to = std::cmp::max(num_hex_digits(config.offset + buf.len()), 4);
         Self {
             cursor: Cursor::new(buf),
             pad_offset_to,
-            offset,
-            emit_empty_line: true,
+            offset: config.offset,
+            emit_empty_line: config.at_least_one_line,
         }
     }
 }
 
-impl<B: Buf> Iterator for HexdumpLines<B> {
-    type Item = HexdumpLine;
+impl<B: Buf> Iterator for Lines<B> {
+    type Item = Line;
 
     fn next(&mut self) -> Option<Self::Item> {
         let remaining = self.cursor.remaining();
@@ -47,7 +103,7 @@ impl<B: Buf> Iterator for HexdumpLines<B> {
             let offset = self.offset;
             self.offset += num_bytes;
 
-            HexdumpLine {
+            Line {
                 line,
                 num_bytes,
                 offset,
@@ -57,14 +113,14 @@ impl<B: Buf> Iterator for HexdumpLines<B> {
     }
 }
 
-pub struct HexdumpLine {
+pub struct Line {
     pub line: [u8; 16],
     pub num_bytes: usize,
     pub offset: usize,
     pub pad_offset_to: usize,
 }
 
-impl Display for HexdumpLine {
+impl Display for Line {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // print offset
         for _ in 0..(self.pad_offset_to - num_hex_digits(self.offset)) {
@@ -95,31 +151,6 @@ impl Display for HexdumpLine {
             }
         }
 
-        Ok(())
-    }
-}
-
-pub struct Hexdump<B> {
-    buf: B,
-    offset: usize,
-}
-
-impl<B> Hexdump<B> {
-    pub fn new(buf: B) -> Self {
-        Self { buf, offset: 0 }
-    }
-
-    pub fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = offset;
-        self
-    }
-}
-
-impl<B: Buf> Display for Hexdump<B> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for line in HexdumpLines::new(&self.buf, self.offset) {
-            writeln!(f, "{line}")?;
-        }
         Ok(())
     }
 }
