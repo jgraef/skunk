@@ -142,6 +142,30 @@ pub trait Reader: Sized {
     }
 }
 
+pub trait Write<E: Endianness> {
+    fn write<W: Writer>(writer: &mut W, value: &Self) -> Result<(), Full>;
+}
+
+pub trait Writer: Sized {
+    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full>;
+
+    #[inline]
+    fn write_xe<T: Write<E>, E: Endianness>(&mut self, value: &T) -> Result<(), Full> {
+        <T as Write<E>>::write(self, value)
+    }
+
+    #[inline]
+    fn write<T: Write<<Self as HasEndianness>::Endianness>>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Full>
+    where
+        Self: HasEndianness,
+    {
+        self.write_xe::<T, <Self as HasEndianness>::Endianness>(value)
+    }
+}
+
 /// Trait for readers and writers that have an inherent endianness.
 ///
 /// An useful implementor of this trait is [`WithXe`], which is a wrapper that
@@ -151,14 +175,14 @@ pub trait HasEndianness {
 }
 
 /// Wrapper around reader that gives it an inherent endianness.
-pub struct WithXe<R: Reader, E: Endianness> {
-    inner: R,
+pub struct WithXe<T, E: Endianness> {
+    inner: T,
     _endianness: PhantomData<E>,
 }
 
-impl<R: Reader, E: Endianness> WithXe<R, E> {
+impl<T, E: Endianness> WithXe<T, E> {
     #[inline]
-    pub fn new(inner: R) -> Self {
+    pub fn new(inner: T) -> Self {
         Self {
             inner,
             _endianness: PhantomData,
@@ -166,14 +190,14 @@ impl<R: Reader, E: Endianness> WithXe<R, E> {
     }
 
     #[inline]
-    pub fn into_inner(self) -> R {
+    pub fn into_inner(self) -> T {
         self.inner
     }
 }
 
-impl<R: Reader, E: Endianness> From<R> for WithXe<R, E> {
+impl<T, E: Endianness> From<T> for WithXe<T, E> {
     #[inline]
-    fn from(value: R) -> Self {
+    fn from(value: T) -> Self {
         Self::new(value)
     }
 }
@@ -204,43 +228,31 @@ impl<R: Reader, E: Endianness> Reader for WithXe<R, E> {
     }
 }
 
-impl<R: Reader, E: Endianness> HasEndianness for WithXe<R, E> {
+impl<W: Writer, E: Endianness> Writer for WithXe<W, E> {
+    #[inline]
+    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
+        self.inner.write_buf(source)
+    }
+
+    #[inline]
+    fn write_xe<T: Write<E2>, E2: Endianness>(&mut self, value: &T) -> Result<(), Full> {
+        self.inner.write_xe::<T, E2>(value)
+    }
+}
+
+impl<T, E: Endianness> HasEndianness for WithXe<T, E> {
     type Endianness = E;
 }
 
-impl<R: Reader, E: Endianness> AsRef<R> for WithXe<R, E> {
-    fn as_ref(&self) -> &R {
+impl<T, E: Endianness> AsRef<T> for WithXe<T, E> {
+    fn as_ref(&self) -> &T {
         &self.inner
     }
 }
 
-impl<R: Reader, E: Endianness> AsMut<R> for WithXe<R, E> {
-    fn as_mut(&mut self) -> &mut R {
+impl<T, E: Endianness> AsMut<T> for WithXe<T, E> {
+    fn as_mut(&mut self) -> &mut T {
         &mut self.inner
-    }
-}
-
-pub trait Write<E: Endianness> {
-    fn write<W: Writer>(writer: &mut W, value: &Self) -> Result<(), Full>;
-}
-
-pub trait Writer: Sized {
-    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full>;
-
-    #[inline]
-    fn write_xe<T: Write<E>, E: Endianness>(&mut self, value: &T) -> Result<(), Full> {
-        <T as Write<E>>::write(self, value)
-    }
-
-    #[inline]
-    fn write<T: Write<<Self as HasEndianness>::Endianness>>(
-        &mut self,
-        value: &T,
-    ) -> Result<(), Full>
-    where
-        Self: HasEndianness,
-    {
-        self.write_xe::<T, <Self as HasEndianness>::Endianness>(value)
     }
 }
 
