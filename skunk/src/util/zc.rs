@@ -4,14 +4,22 @@ use std::ops::RangeBounds;
 
 use bytes::Bytes;
 
-use super::bytes_wip::Endianness;
+use super::bytes_wip::{
+    Decode,
+    Endianness,
+    Size,
+};
 
 macro_rules! default_read_int_impls {
-    {$($out:ty: $name:ident => $from_bytes:ident;)*} => {
+    {$($out:ty => $name:ident;)*} => {
         $(
             #[inline]
-            fn $name<E: Endianness>(&mut self) -> Result<$out, std::io::Error> {
-                Ok(E::$from_bytes(self.read_array()?))
+            fn $name<E: Endianness>(&mut self) -> Result<$out, std::io::Error>
+            where
+                [(); <$out as Size>::BYTES]: Sized,
+            {
+                //Ok(<$out as Decode<E>>::decode(&self.read_array()?))
+                todo!();
             }
         )*
     };
@@ -49,14 +57,14 @@ pub trait Reader: Sized {
     }
 
     default_read_int_impls! {
-        u16: read_u16 => u16_from_bytes;
-        i16: read_i16 => i16_from_bytes;
-        u32: read_u32 => u32_from_bytes;
-        i32: read_i32 => i32_from_bytes;
-        u64: read_u64 => u64_from_bytes;
-        i64: read_i64 => i64_from_bytes;
-        u128: read_u128 => u128_from_bytes;
-        i128: read_i128 => i128_from_bytes;
+        u16 => read_u16;
+        i16 => read_i16;
+        u32 => read_u32;
+        i32 => read_i32;
+        u64 => read_u64;
+        i64 => read_i64;
+        u128 => read_u128;
+        i128 => read_i128;
     }
 }
 

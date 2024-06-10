@@ -5,13 +5,15 @@ use std::{
         Flatten,
         FusedIterator,
     },
-    ops::DerefMut,
+    ops::{
+        Bound,
+        DerefMut,
+    },
     sync::Arc,
 };
 
 use super::{
     copy,
-    read::BufReader,
     CopyError,
     Range,
     RangeOutOfBounds,
@@ -53,14 +55,6 @@ pub trait Buf {
     /// `..self.len()`.
     fn contains(&self, range: impl Into<Range>) -> bool {
         range.into().contained_by(..self.len())
-    }
-
-    #[inline]
-    fn reader(self) -> BufReader<Self>
-    where
-        Self: Sized,
-    {
-        BufReader::new(self)
     }
 
     #[inline]
@@ -226,6 +220,11 @@ pub trait BufMut: Buf {
         copy(self, destination_range, source, source_range)?;
         Ok(())
     }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        SizeLimit::Unknown
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -254,6 +253,11 @@ impl<'b, B: BufMut + ?Sized> BufMut for &'b mut B {
     ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
         <B as BufMut>::chunks_mut(*self, range)
     }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        <B as BufMut>::size_limit(*self)
+    }
 }
 
 macro_rules! impl_buf_mut_for_slice_like {
@@ -279,6 +283,11 @@ macro_rules! impl_buf_mut_for_slice_like {
                     range: impl Into<Range>,
                 ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
                     Ok(SingleChunkMut::new(range.into().slice_get_mut(self)?))
+                }
+
+                #[inline]
+                fn size_limit(&self) -> SizeLimit {
+                    self.len().into()
                 }
             }
         )*
@@ -386,6 +395,11 @@ impl BufMut for Vec<u8> {
         }
 
         Ok(())
+    }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        SizeLimit::Unlimited
     }
 }
 
@@ -571,3 +585,18 @@ impl<T: AsRef<[u8]>, I: Iterator<Item = T> + DoubleEndedIterator> DoubleEndedIte
 }
 
 impl<T: AsRef<[u8]>, I: Iterator<Item = T>> FusedIterator for NonEmptyIter<I> {}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum SizeLimit {
+    #[default]
+    Unknown,
+    Unlimited,
+    Exact(usize),
+}
+
+impl From<usize> for SizeLimit {
+    #[inline]
+    fn from(value: usize) -> Self {
+        Self::Exact(value)
+    }
+}

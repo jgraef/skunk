@@ -4,8 +4,7 @@ mod bytes;
 mod copy;
 mod endianness;
 mod range;
-mod read;
-mod write;
+mod rw;
 
 pub use self::{
     array_buf::ArrayBuf,
@@ -14,6 +13,8 @@ pub use self::{
         BufMut,
         SingleChunk,
         SingleChunkMut,
+        SizeLimit,
+        WriteError,
     },
     bytes::{
         Bytes,
@@ -25,18 +26,27 @@ pub use self::{
     },
     endianness::{
         BigEndian,
+        Decode,
+        Encode,
         Endianness,
         LittleEndian,
         NativeEndian,
         NetworkEndian,
+        Size,
     },
     range::{
         Range,
         RangeOutOfBounds,
     },
-    read::{
+    rw::{
+        Cursor,
         End,
+        Full,
+        HasEndianness,
         Read,
         Reader,
+        WithXe,
+        Write,
+        Writer,
     },
 };

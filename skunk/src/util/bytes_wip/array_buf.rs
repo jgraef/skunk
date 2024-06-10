@@ -8,7 +8,10 @@ use std::{
 };
 
 use super::{
-    buf::WriteError,
+    buf::{
+        SizeLimit,
+        WriteError,
+    },
     copy,
     Buf,
     BufMut,
@@ -292,5 +295,10 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
         }
 
         Ok(())
+    }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        N.into()
     }
 }

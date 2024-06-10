@@ -1,6 +1,10 @@
+// during development we don't want these
 #![allow(dead_code)]
 // required by `crate::util::bytes::array_buf::ArrayBuf`.
 #![feature(maybe_uninit_slice, maybe_uninit_write_slice, maybe_uninit_fill)]
+// required by `crate::util::bytes::endianness::{Encode, Decode}`.
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
 
 //! skunk - 🦨 A person-in-the-middle proxy
 //!
