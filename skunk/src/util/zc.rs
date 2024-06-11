@@ -4,7 +4,7 @@ use std::ops::RangeBounds;
 
 use bytes::Bytes;
 
-use super::bytes_wip::endianness::{
+use super::bytes::endianness::{
     Endianness,
     Size,
 };

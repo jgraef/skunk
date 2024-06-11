@@ -1,7 +1,7 @@
 //! Utilities.
 
 pub(crate) mod boolean;
-pub mod bytes_wip;
+pub mod bytes;
 pub(crate) mod error;
 pub mod io;
 pub mod zc;
@@ -9,16 +9,11 @@ pub mod zc;
 use std::{
     fmt::{
         Debug,
-        Formatter,
-    },
-    hash::{
-        Hash,
-        Hasher,
+        
     },
     iter::FusedIterator,
     num::NonZeroUsize,
-    ops::Deref,
-    sync::{
+        sync::{
         atomic::{
             AtomicUsize,
             Ordering,
@@ -27,8 +22,6 @@ use std::{
     },
 };
 
-pub use bytes;
-use bytes::Bytes;
 use parking_lot::Mutex;
 pub use tokio_util::sync::CancellationToken;
 
@@ -51,70 +44,6 @@ impl<T> Lazy<T> {
             *guard = Some(value.clone());
             Ok(value)
         }
-    }
-}
-
-/// Borrowed or owned bytes >:3
-///
-/// This type can either be a byte slice `&[u8]` or a `Bytes`.
-pub enum Boob<'a> {
-    Borrowed(&'a [u8]),
-    Owned(Bytes),
-}
-
-impl<'a> Boob<'a> {
-    pub fn into_owned(self) -> Bytes {
-        match self {
-            Self::Borrowed(b) => Bytes::copy_from_slice(b),
-            Self::Owned(b) => b,
-        }
-    }
-}
-
-impl<'a> AsRef<[u8]> for Boob<'a> {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::Borrowed(b) => b,
-            Self::Owned(b) => &b,
-        }
-    }
-}
-
-impl<'a> Deref for Boob<'a> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<'a, R: AsRef<[u8]>> PartialEq<R> for Boob<'a> {
-    fn eq(&self, other: &R) -> bool {
-        self.as_ref() == other.as_ref()
-    }
-}
-
-impl<'a> Hash for Boob<'a> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.deref().hash(state);
-    }
-}
-
-impl<'a> Debug for Boob<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.deref().fmt(f)
-    }
-}
-
-impl<'a> From<&'a [u8]> for Boob<'a> {
-    fn from(value: &'a [u8]) -> Self {
-        Self::Borrowed(value)
-    }
-}
-
-impl From<Bytes> for Boob<'static> {
-    fn from(value: Bytes) -> Self {
-        Self::Owned(value)
     }
 }
 

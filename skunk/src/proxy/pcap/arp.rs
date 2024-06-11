@@ -25,7 +25,7 @@ use super::{
     MacAddress,
 };
 use crate::util::{
-    bytes_wip::NetworkEndian,
+    bytes::NetworkEndian,
     zc::{
         self,
         Reader as _,
