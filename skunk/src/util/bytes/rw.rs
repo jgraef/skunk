@@ -3,6 +3,12 @@ use std::{
     ops::Bound,
 };
 
+#[cfg(feature = "macros")]
+pub use skunk_macros::{
+    Read,
+    Write,
+};
+
 use super::{
     buf::{
         Buf,
@@ -15,10 +21,8 @@ use super::{
         CopyError,
     },
     endianness::{
-        Decode,
         Endianness,
         NativeEndian,
-        Size,
     },
     range::{
         Range,
@@ -78,17 +82,15 @@ impl Full {
 /// This trait is used when by [`Reader::read_xe`] or [`WithXe::read`].
 /// Todo: note that you need to avoid unbounded recursion.
 pub trait Read<E: Endianness>: Sized {
-    fn read<R: Reader>(reader: &mut R) -> Result<Self, End>;
+    fn read<R: Reader>(reader: R) -> Result<Self, End>;
 }
 
-/// implement `Read` for anything that can be decoded with
-/// [`Decode<E>`][Decode].
-impl<E: Endianness, T: Decode<E>> Read<E> for T
-where
-    [(); <Self as Size>::BYTES]: Sized,
-{
-    fn read<R: Reader>(reader: &mut R) -> Result<Self, End> {
-        Ok(<T as Decode<E>>::decode(&reader.read_array()?))
+impl<E: Endianness, const N: usize> Read<E> for [u8; N] {
+    #[inline]
+    fn read<R: Reader>(mut reader: R) -> Result<Self, End> {
+        let mut buf = [0u8; N];
+        reader.read_into(&mut buf)?;
+        Ok(buf)
     }
 }
 
@@ -120,20 +122,6 @@ pub trait Reader: Sized {
         Ok(())
     }
 
-    /// Reads an array of length `N`.
-    ///
-    /// # Default implementation
-    ///
-    /// This has a default implementation that uses [`Self::read_into`],
-    /// but you should override the implementation if there is a cheaper way of
-    /// reading an array.
-    #[inline]
-    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
-        let mut buf = [0u8; N];
-        self.read_into(&mut buf)?;
-        Ok(buf)
-    }
-
     /// Reads the value with the given endianness.
     #[inline]
     fn read_xe<T: Read<E>, E: Endianness>(&mut self) -> Result<T, End> {
@@ -151,18 +139,54 @@ pub trait Reader: Sized {
         self.read_view(n)?;
         Ok(())
     }
+}
+
+impl<'r, R: Reader> Reader for &'r mut R {
+    type View<'a> = <R as Reader>::View<'a>
+    where
+        Self: 'a;
 
     #[inline]
+    fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End> {
+        (*self).read_view(n)
+    }
+
+    #[inline]
+    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
+        (*self).read_into(destination)
+    }
+
+    #[inline]
+    fn read_xe<T: Read<E>, E: Endianness>(&mut self) -> Result<T, End> {
+        (*self).read_xe::<T, E>()
+    }
+
+    #[inline]
+    fn skip(&mut self, n: usize) -> Result<(), End> {
+        (*self).skip(n)
+    }
+}
+
+impl<'r, R: Reader + HasEndianness> HasEndianness for &'r mut R {
+    type Endianness = <R as HasEndianness>::Endianness;
+
     fn read<T: Read<<Self as HasEndianness>::Endianness>>(&mut self) -> Result<T, End>
     where
-        Self: HasEndianness,
+        Self: Reader,
     {
-        self.read_xe::<T, <Self as HasEndianness>::Endianness>()
+        (*self).read()
     }
 }
 
 pub trait Write<E: Endianness> {
-    fn write<W: Writer>(writer: &mut W, value: &Self) -> Result<(), Full>;
+    fn write<W: Writer>(&self, writer: W) -> Result<(), Full>;
+}
+
+impl<E: Endianness, const N: usize> Write<E> for [u8; N] {
+    #[inline]
+    fn write<W: Writer>(&self, mut writer: W) -> Result<(), Full> {
+        writer.write_buf(self)
+    }
 }
 
 pub trait Writer: Sized {
@@ -170,18 +194,17 @@ pub trait Writer: Sized {
 
     #[inline]
     fn write_xe<T: Write<E>, E: Endianness>(&mut self, value: &T) -> Result<(), Full> {
-        <T as Write<E>>::write(self, value)
+        <T as Write<E>>::write(value, self)
+    }
+}
+
+impl<'w, W: Writer> Writer for &'w mut W {
+    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
+        (*self).write_buf(source)
     }
 
-    #[inline]
-    fn write<T: Write<<Self as HasEndianness>::Endianness>>(
-        &mut self,
-        value: &T,
-    ) -> Result<(), Full>
-    where
-        Self: HasEndianness,
-    {
-        self.write_xe::<T, <Self as HasEndianness>::Endianness>(value)
+    fn write_xe<T: Write<E>, E: Endianness>(&mut self, value: &T) -> Result<(), Full> {
+        (*self).write_xe::<T, E>(value)
     }
 }
 
@@ -191,6 +214,25 @@ pub trait Writer: Sized {
 /// gives any [`Reader`] or [`Writer`] an inherent endianness.
 pub trait HasEndianness {
     type Endianness: Endianness;
+
+    #[inline]
+    fn read<T: Read<<Self as HasEndianness>::Endianness>>(&mut self) -> Result<T, End>
+    where
+        Self: Reader,
+    {
+        self.read_xe::<T, <Self as HasEndianness>::Endianness>()
+    }
+
+    #[inline]
+    fn write<T: Write<<Self as HasEndianness>::Endianness>>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), Full>
+    where
+        Self: Writer,
+    {
+        self.write_xe::<T, <Self as HasEndianness>::Endianness>(value)
+    }
 }
 
 /// Wrapper around reader that gives it an inherent endianness.
@@ -234,11 +276,6 @@ impl<R: Reader, E: Endianness> Reader for WithXe<R, E> {
     #[inline]
     fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
         self.inner.read_into(destination)
-    }
-
-    #[inline]
-    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
-        self.inner.read_array()
     }
 
     #[inline]

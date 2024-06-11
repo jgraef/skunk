@@ -1,5 +1,14 @@
 //! [Endianness](https://en.wikipedia.org/wiki/Endianness)
 
+use super::rw::{
+    End,
+    Full,
+    Read,
+    Reader,
+    Write,
+    Writer,
+};
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -107,6 +116,28 @@ macro_rules! impl_encode_decode {
                 #[inline]
                 fn decode(bytes: &[u8; $bytes]) -> Self {
                     <$ty>::from_le_bytes(*bytes)
+                }
+            }
+
+            impl<E: Endianness> Read<E> for $ty
+            where
+                [(); <Self as Size>::BYTES]: Sized,
+                Self: Decode<E>,
+            {
+                #[inline]
+                fn read<R: Reader>(mut reader: R) -> Result<Self, End> {
+                    Ok(<Self as Decode<E>>::decode(&reader.read_xe::<_, E>()?))
+                }
+            }
+
+            impl<E: Endianness> Write<E> for $ty
+            where
+                [(); <Self as Size>::BYTES]: Sized,
+                Self: Encode<E>,
+            {
+                #[inline]
+                fn write<W: Writer>(&self, mut writer: W) -> Result<(), Full> {
+                    writer.write_xe::<_, E>(&<Self as Encode<E>>::encode(self))
                 }
             }
         )*

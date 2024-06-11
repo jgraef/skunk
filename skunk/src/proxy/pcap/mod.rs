@@ -12,6 +12,10 @@ use std::fmt::{
 };
 
 use etherparse::TransportSlice;
+use skunk_macros::{
+    Read,
+    Write,
+};
 use tokio_util::sync::CancellationToken;
 
 pub use self::interface::Interface;
@@ -38,7 +42,7 @@ impl From<nix::Error> for Error {
 }
 
 /// todo: rename to EiuAddress. "MAC" is obsolete. see: https://en.wikipedia.org/wiki/MAC_address
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Read, Write)]
 pub struct MacAddress(pub [u8; 6]);
 
 impl MacAddress {

@@ -7,13 +7,10 @@ pub mod io;
 pub mod zc;
 
 use std::{
-    fmt::{
-        Debug,
-        
-    },
+    fmt::Debug,
     iter::FusedIterator,
     num::NonZeroUsize,
-        sync::{
+    sync::{
         atomic::{
             AtomicUsize,
             Ordering,

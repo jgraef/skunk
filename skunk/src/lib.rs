@@ -15,6 +15,8 @@
 //!
 //! TODO
 
+#[doc(hidden)]
+pub mod __private;
 pub mod address;
 pub mod connect;
 pub mod protocol;
@@ -23,6 +25,9 @@ pub mod rule;
 #[cfg(feature = "store")]
 pub mod store;
 pub mod util;
+
+// hack to get the proc-macro working from this crate
+extern crate self as skunk;
 
 /// skunk's error type
 #[derive(Debug, thiserror::Error)]

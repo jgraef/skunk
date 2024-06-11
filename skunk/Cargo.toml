@@ -12,6 +12,11 @@ categories = [
     "network-programming",
 ]
 
+[dependencies.skunk-macros]
+version = "0.1.0"
+path = "../skunk-macros"
+optional = true
+
 [dependencies]
 bytes = "1.6.0"
 derive_more = "0.99.17"
@@ -31,7 +36,6 @@ nom = "7.1.3"
 parking_lot = { version = "0.12.2", features = ["arc_lock"] }
 petgraph = "0.6.5"
 pin-project-lite = "0.2.14"
-pretty-hex = { version = "0.4.1", optional = true }
 rcgen = { version = "0.13.1", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"], optional = true }
 regex = "1.10.4"
 rustls = { version = "0.23.5", optional = true }
@@ -51,12 +55,12 @@ tracing = "0.1.40"
 url = { version = "2.5.0", features = ["serde"] }
 
 [features]
-default = ["full", "debug"]
+default = ["full", "macros"]
 full = ["socks", "http", "tls", "store", "graph-vis", "pcap"]
+macros = ["dep:skunk-macros"]
 socks = []
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:rustls-pemfile"]
 store = ["dep:sqlx"]
 graph-vis = []
 pcap = ["dep:etherparse", "dep:dhcproto", "dep:nix"]
-debug = ["dep:pretty-hex"]
