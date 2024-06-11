@@ -1,14 +1,22 @@
 //! [Endianness](https://en.wikipedia.org/wiki/Endianness)
+//!
+//! # TODO
+//!
+//! - Remove `Size`, `Encode` and `Decode` traits as they require unstable
+//!   features, and we don't really need them.
 
 use super::rw::{
     End,
     Full,
-    Read,
-    Reader,
-    Write,
-    Writer,
+    ReadIntoBuf,
+    ReadXe,
+    WriteFromBuf,
+    WriteXe,
 };
 
+/// Note: Although the [`endianness`][`self`] module is not public, we seal this
+/// into yet another module, in case we want to make the [`endianness`](self)
+/// module public in future. Just to be safe :)
 mod sealed {
     pub trait Sealed {}
 }
@@ -46,7 +54,7 @@ pub type NativeEndian = BigEndian;
 /// This is always big endian.
 pub type NetworkEndian = BigEndian;
 
-/// Trait defining what size in bytes a value has.
+/// Trait defining what length in bytes.
 pub trait Size {
     const BYTES: usize;
 }
@@ -61,26 +69,9 @@ pub trait Decode<E: Endianness>: Size {
     fn decode(bytes: &[u8; <Self as Size>::BYTES]) -> Self;
 }
 
-impl Size for () {
-    const BYTES: usize = 0;
-}
-
-impl<E: Endianness> Encode<E> for () {
-    #[inline]
-    fn encode(&self) -> [u8; 0] {
-        []
-    }
-}
-
-impl<E: Endianness> Decode<E> for () {
-    fn decode(_bytes: &[u8; 0]) -> Self {
-        ()
-    }
-}
-
 // this implements `Encode` and `Decode` for integer (and float) types from
 // [`core`].
-macro_rules! impl_encode_decode {
+macro_rules! impl_endianness {
     {
         $(
             $ty:ty : $bytes:expr;
@@ -91,62 +82,46 @@ macro_rules! impl_encode_decode {
                 const BYTES: usize = $bytes;
             }
 
-            impl Encode<BigEndian> for $ty {
-                #[inline]
-                fn encode(&self) -> [u8; $bytes] {
-                    <$ty>::to_be_bytes(*self)
-                }
-            }
-
-            impl Decode<BigEndian> for $ty {
-                #[inline]
-                fn decode(bytes: &[u8; $bytes]) -> Self {
-                    <$ty>::from_be_bytes(*bytes)
-                }
-            }
-
-            impl Encode<LittleEndian> for $ty {
-                #[inline]
-                fn encode(&self) -> [u8; $bytes] {
-                    <$ty>::to_le_bytes(*self)
-                }
-            }
-
-            impl Decode<LittleEndian> for $ty {
-                #[inline]
-                fn decode(bytes: &[u8; $bytes]) -> Self {
-                    <$ty>::from_le_bytes(*bytes)
-                }
-            }
-
-            impl<E: Endianness> Read<E> for $ty
-            where
-                [(); <Self as Size>::BYTES]: Sized,
-                Self: Decode<E>,
-            {
-                #[inline]
-                fn read<R: Reader>(mut reader: R) -> Result<Self, End> {
-                    Ok(<Self as Decode<E>>::decode(&reader.read_xe::<_, E>()?))
-                }
-            }
-
-            impl<E: Endianness> Write<E> for $ty
-            where
-                [(); <Self as Size>::BYTES]: Sized,
-                Self: Encode<E>,
-            {
-                #[inline]
-                fn write<W: Writer>(&self, mut writer: W) -> Result<(), Full> {
-                    writer.write_xe::<_, E>(&<Self as Encode<E>>::encode(self))
-                }
-            }
+            impl_endianness!(for<BigEndian> $ty: $bytes => from_be_bytes, to_be_bytes);
+            impl_endianness!(for<LittleEndian> $ty: $bytes => from_le_bytes, to_le_bytes);
         )*
+    };
+    (for<$endianness:ty> $ty:ty: $bytes:expr => $from_bytes:ident, $to_bytes:ident) => {
+        impl Encode<$endianness> for $ty {
+            #[inline]
+            fn encode(&self) -> [u8; $bytes] {
+                <$ty>::$to_bytes(*self)
+            }
+        }
+
+        impl Decode<$endianness> for $ty {
+            #[inline]
+            fn decode(bytes: &[u8; $bytes]) -> Self {
+                <$ty>::$from_bytes(*bytes)
+            }
+        }
+
+        impl<R: ReadIntoBuf> ReadXe<R, $endianness> for $ty
+        {
+            #[inline]
+            fn read(mut reader: R) -> Result<Self, End> {
+                let mut buf = [0u8; $bytes];
+                reader.read_into_buf(&mut buf)?;
+                Ok(<$ty>::$from_bytes(buf))
+            }
+        }
+
+        impl<W: WriteFromBuf> WriteXe<W, $endianness> for $ty {
+            #[inline]
+            fn write(&self, mut writer: W) -> Result<(), Full> {
+                let buf = <$ty>::$to_bytes(*self);
+                writer.write_from_buf(&buf)
+            }
+        }
     };
 }
 
-impl_encode_decode! {
-    u8: 1;
-    i8: 1;
+impl_endianness! {
     u16: 2;
     i16: 2;
     u32: 4;
@@ -232,10 +207,6 @@ got:      {:?}"#,
     }
 
     make_tests! {
-        test_unit : () => { () } == { b"", b"" };
-        test_u8 : u8 => { 0x12 } == { b"\x12", b"\x12" };
-        test_i8 : i8 => { 0x12 } == { b"\x12", b"\x12" };
-
         test_u16 : u16 => { 0x1234 } == { b"\x12\x34", b"\x34\x12" };
         test_i16 : i16 => { 0x1234 } == { b"\x12\x34", b"\x34\x12" };
 

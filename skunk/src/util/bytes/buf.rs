@@ -331,77 +331,122 @@ impl BufMut for Vec<u8> {
         source: impl Buf,
         source_range: impl Into<Range>,
     ) -> Result<(), WriteError> {
-        let destination_range = destination_range.into();
-        let source_range = source_range.into();
-        let len = self.len();
-        let destination_length = destination_range.len_in(0, len);
-        let source_length = source_range.len_in(0, source.len());
-
-        if destination_length != source_length {
-            return Err(WriteError::Copy(CopyError::LengthMismatch {
-                destination_range,
-                destination_length,
-                source_range,
-                source_length,
-            }));
-        }
-
-        let (dest_start, dest_end) = destination_range.indices_unchecked_in(0, len);
-        let (src_start, src_end) = destination_range.indices_unchecked_in(0, source.len());
-
-        // copy portion that is already allocated
-        if dest_start < len {
-            copy(
-                self.deref_mut(),
-                dest_start..len,
-                &source,
-                src_start..(src_start + len - dest_start),
-            )
-            .map_err(|e| {
-                match e {
-                    CopyError::DestinationRangeOutOfBounds(e) => {
-                        CopyError::DestinationRangeOutOfBounds(RangeOutOfBounds {
-                            required: destination_range,
-                            bounds: e.bounds,
-                        })
-                    }
-                    CopyError::SourceRangeOutOfBounds(e) => {
-                        CopyError::SourceRangeOutOfBounds(RangeOutOfBounds {
-                            required: source_range,
-                            bounds: e.bounds,
-                        })
-                    }
-                    CopyError::LengthMismatch { .. } => {
-                        // we already checked that
-                        unreachable!()
-                    }
-                }
-            })?;
-        }
-
-        // extend with chunks that we need to allocate space for
-        if dest_end > len {
-            self.reserve_exact(dest_end - len);
-            let chunks = source
-                .chunks((src_start + len - dest_end)..src_end)
-                .map_err(|e| {
-                    CopyError::SourceRangeOutOfBounds(RangeOutOfBounds {
-                        required: source_range,
-                        bounds: e.bounds,
-                    })
-                })?;
-            for chunk in chunks {
-                self.extend(chunk.iter().copied());
-            }
-        }
-
-        Ok(())
+        write_helper(
+            self,
+            destination_range,
+            &source,
+            source_range,
+            |_, _| Ok(()),
+            |this, n| this.reserve_exact(n),
+            |this, n| this.resize(n, 0),
+            |this, chunk| this.extend(chunk.iter().copied()),
+        )
     }
 
     #[inline]
     fn size_limit(&self) -> SizeLimit {
         SizeLimit::Unlimited
     }
+}
+
+pub(super) fn write_helper<D: BufMut, S: Buf>(
+    mut destination: &mut D,
+    destination_range: impl Into<Range>,
+    source: &S,
+    source_range: impl Into<Range>,
+    check_space: impl FnOnce(&D, usize) -> Result<(), usize>,
+    reserve: impl FnOnce(&mut D, usize),
+    fill_to: impl FnOnce(&mut D, usize),
+    mut extend: impl FnMut(&mut D, &[u8]),
+) -> Result<(), WriteError> {
+    let source_range = source_range.into();
+    let (source_start, source_end) = source_range.indices_unchecked_in(0, source.len());
+    let source_range_length = source_end.saturating_sub(source_start);
+
+    let destination_length = destination.len();
+    let destination_range = destination_range.into();
+    let destination_start = destination_range.start().unwrap_or_default();
+    let (destination_end, _destination_range_length) =
+        if let Some(destination_end) = destination_range.end() {
+            let destination_range_length = destination_end.saturating_sub(destination_start);
+            if destination_range_length != source_range_length {
+                return Err(WriteError::Copy(CopyError::LengthMismatch {
+                    destination_range,
+                    destination_length,
+                    source_range,
+                    source_length: source.len(),
+                }));
+            }
+            (destination_end, destination_range_length)
+        }
+        else {
+            // if no upper bound for destination, we will write as much as needed to consume
+            // the source range
+            (destination_start + source_range_length, source_range_length)
+        };
+
+    if let Err(buf_length) = check_space(&destination, destination_end) {
+        return Err(WriteError::Full {
+            required: destination_range,
+            buf_length,
+        });
+    }
+
+    let mut part_written = 0;
+
+    if destination_start < destination_length {
+        // a portion is written by writing into the existing buffer
+        part_written = source_start + destination.len() - destination_start;
+
+        // todo: do this with [`copy_chunks`](super::copy_chunks), so we can use
+        // [`BufMut::write`] to actually implement copy
+        copy(
+            &mut destination,
+            destination_start..,
+            &source,
+            source_start..part_written,
+        )
+        .map_err(|e| {
+            match e {
+                CopyError::DestinationRangeOutOfBounds(e) => {
+                    CopyError::DestinationRangeOutOfBounds(RangeOutOfBounds {
+                        required: destination_range,
+                        bounds: e.bounds,
+                    })
+                }
+                CopyError::SourceRangeOutOfBounds(e) => {
+                    CopyError::SourceRangeOutOfBounds(RangeOutOfBounds {
+                        required: source_range,
+                        bounds: e.bounds,
+                    })
+                }
+                CopyError::LengthMismatch { .. } => {
+                    // we already checked that
+                    unreachable!()
+                }
+            }
+        })?;
+    }
+
+    if destination_end > destination_length {
+        // reserve space
+        reserve(&mut destination, destination_end - destination_length);
+    }
+
+    if destination_start > destination_length {
+        // the destination has to be filled with some zeros.
+        fill_to(&mut destination, destination_length);
+    }
+
+    if destination_end > destination_length {
+        // write rest to destination
+
+        for chunk in source.chunks(part_written..source_end).unwrap() {
+            extend(&mut destination, chunk);
+        }
+    }
+
+    Ok(())
 }
 
 /// Chunk iterator for contiguous buffers.

@@ -35,7 +35,8 @@ pub enum CopyError {
 /// # Todo
 ///
 /// Either modify this or create a similar function that will grow the
-/// destination buffer as necessary.
+/// destination buffer as necessary (see
+/// [`write_helper`](super::buf::write_helper))
 pub fn copy(
     mut destination: impl BufMut,
     destination_range: impl Into<Range>,

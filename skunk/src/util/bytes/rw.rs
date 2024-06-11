@@ -3,7 +3,7 @@ use std::{
     ops::Bound,
 };
 
-#[cfg(feature = "macros")]
+use skunk_macros::for_tuple;
 pub use skunk_macros::{
     Read,
     Write,
@@ -19,10 +19,6 @@ use super::{
     copy::{
         copy,
         CopyError,
-    },
-    endianness::{
-        Endianness,
-        NativeEndian,
     },
     range::{
         Range,
@@ -77,244 +73,40 @@ impl Full {
     }
 }
 
-/// Trait for types that can be read.
+/// Something that can be read without specifying endianness.
+pub trait Read<R>: Sized {
+    fn read(reader: R) -> Result<Self, End>;
+}
+
+/// Something that can be read with endianness.
+pub trait ReadXe<R, E>: Sized {
+    fn read(reader: R) -> Result<Self, End>;
+}
+
+/// A reader that can read into a buffer.
 ///
-/// This trait is used when by [`Reader::read_xe`] or [`WithXe::read`].
-/// Todo: note that you need to avoid unbounded recursion.
-pub trait Read<E: Endianness>: Sized {
-    fn read<R: Reader>(reader: R) -> Result<Self, End>;
+/// Implementing this will cause [`Read`] and [`ReadXe`] to be implemented for
+/// many common types.
+pub trait ReadIntoBuf {
+    fn read_into_buf<B: BufMut>(&mut self, buf: B) -> Result<(), End>;
 }
 
-impl<E: Endianness, const N: usize> Read<E> for [u8; N] {
-    #[inline]
-    fn read<R: Reader>(mut reader: R) -> Result<Self, End> {
-        let mut buf = [0u8; N];
-        reader.read_into(&mut buf)?;
-        Ok(buf)
-    }
+/// Something that can be written without specifying endianness.
+pub trait Write<W> {
+    fn write(&self, writer: W) -> Result<(), Full>;
 }
 
-/// Something that can be read from.
+/// Something that can be written with endianness.
+pub trait WriteXe<W, E> {
+    fn write(&self, writer: W) -> Result<(), Full>;
+}
+
+/// A writer that can write bytes from a buffer.
 ///
-/// This reader has no inherent endianness, so it must be specified when using
-/// [`Self::read_xe`]. If you want a reader with fixed endianness, use a reader
-/// that also implements [`WithXe`], such as [`ReaderXe`].
-pub trait Reader: Sized {
-    /// The slice type returned by [`Reader::read_slice`].
-    type View<'a>: Buf + 'a
-    where
-        Self: 'a;
-
-    /// Reads a view of length `n`.
-    fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End>;
-
-    /// Reads into `destination`, filling that buffer, but not growing it.
-    ///
-    /// # Default implementation
-    ///
-    /// This has a default implementation that uses [`Self::read_view`],
-    /// but you should override it if there is a cheaper way of writing into
-    /// `destination`.
-    #[inline]
-    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
-        let n = destination.len();
-        copy(destination, .., self.read_view(n)?, ..).unwrap();
-        Ok(())
-    }
-
-    /// Reads the value with the given endianness.
-    #[inline]
-    fn read_xe<T: Read<E>, E: Endianness>(&mut self) -> Result<T, End> {
-        <T as Read<E>>::read(self)
-    }
-
-    /// Skips `n` bytes.
-    ///
-    /// # Default implementation
-    ///
-    /// This has a default implementation that uses [`Self::skip`]. You should
-    /// override this, if there is a cheaper way of skipping bytes.
-    #[inline]
-    fn skip(&mut self, n: usize) -> Result<(), End> {
-        self.read_view(n)?;
-        Ok(())
-    }
-}
-
-impl<'r, R: Reader> Reader for &'r mut R {
-    type View<'a> = <R as Reader>::View<'a>
-    where
-        Self: 'a;
-
-    #[inline]
-    fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End> {
-        (*self).read_view(n)
-    }
-
-    #[inline]
-    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
-        (*self).read_into(destination)
-    }
-
-    #[inline]
-    fn read_xe<T: Read<E>, E: Endianness>(&mut self) -> Result<T, End> {
-        (*self).read_xe::<T, E>()
-    }
-
-    #[inline]
-    fn skip(&mut self, n: usize) -> Result<(), End> {
-        (*self).skip(n)
-    }
-}
-
-impl<'r, R: Reader + HasEndianness> HasEndianness for &'r mut R {
-    type Endianness = <R as HasEndianness>::Endianness;
-
-    fn read<T: Read<<Self as HasEndianness>::Endianness>>(&mut self) -> Result<T, End>
-    where
-        Self: Reader,
-    {
-        (*self).read()
-    }
-}
-
-pub trait Write<E: Endianness> {
-    fn write<W: Writer>(&self, writer: W) -> Result<(), Full>;
-}
-
-impl<E: Endianness, const N: usize> Write<E> for [u8; N] {
-    #[inline]
-    fn write<W: Writer>(&self, mut writer: W) -> Result<(), Full> {
-        writer.write_buf(self)
-    }
-}
-
-pub trait Writer: Sized {
-    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full>;
-
-    #[inline]
-    fn write_xe<T: Write<E>, E: Endianness>(&mut self, value: &T) -> Result<(), Full> {
-        <T as Write<E>>::write(value, self)
-    }
-}
-
-impl<'w, W: Writer> Writer for &'w mut W {
-    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
-        (*self).write_buf(source)
-    }
-
-    fn write_xe<T: Write<E>, E: Endianness>(&mut self, value: &T) -> Result<(), Full> {
-        (*self).write_xe::<T, E>(value)
-    }
-}
-
-/// Trait for readers and writers that have an inherent endianness.
-///
-/// An useful implementor of this trait is [`WithXe`], which is a wrapper that
-/// gives any [`Reader`] or [`Writer`] an inherent endianness.
-pub trait HasEndianness {
-    type Endianness: Endianness;
-
-    #[inline]
-    fn read<T: Read<<Self as HasEndianness>::Endianness>>(&mut self) -> Result<T, End>
-    where
-        Self: Reader,
-    {
-        self.read_xe::<T, <Self as HasEndianness>::Endianness>()
-    }
-
-    #[inline]
-    fn write<T: Write<<Self as HasEndianness>::Endianness>>(
-        &mut self,
-        value: &T,
-    ) -> Result<(), Full>
-    where
-        Self: Writer,
-    {
-        self.write_xe::<T, <Self as HasEndianness>::Endianness>(value)
-    }
-}
-
-/// Wrapper around reader that gives it an inherent endianness.
-pub struct WithXe<T, E: Endianness> {
-    inner: T,
-    _endianness: PhantomData<E>,
-}
-
-impl<T, E: Endianness> WithXe<T, E> {
-    #[inline]
-    pub fn new(inner: T) -> Self {
-        Self {
-            inner,
-            _endianness: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.inner
-    }
-}
-
-impl<T, E: Endianness> From<T> for WithXe<T, E> {
-    #[inline]
-    fn from(value: T) -> Self {
-        Self::new(value)
-    }
-}
-
-impl<R: Reader, E: Endianness> Reader for WithXe<R, E> {
-    type View<'a> = R::View<'a>
-    where
-        Self: 'a;
-
-    #[inline]
-    fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End> {
-        self.inner.read_view(n)
-    }
-
-    #[inline]
-    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
-        self.inner.read_into(destination)
-    }
-
-    #[inline]
-    fn read_xe<T: Read<E2>, E2: Endianness>(&mut self) -> Result<T, End> {
-        self.inner.read_xe::<T, E2>()
-    }
-
-    #[inline]
-    fn skip(&mut self, n: usize) -> Result<(), End> {
-        self.inner.skip(n)
-    }
-}
-
-impl<W: Writer, E: Endianness> Writer for WithXe<W, E> {
-    #[inline]
-    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
-        self.inner.write_buf(source)
-    }
-
-    #[inline]
-    fn write_xe<T: Write<E2>, E2: Endianness>(&mut self, value: &T) -> Result<(), Full> {
-        self.inner.write_xe::<T, E2>(value)
-    }
-}
-
-impl<T, E: Endianness> HasEndianness for WithXe<T, E> {
-    type Endianness = E;
-}
-
-impl<T, E: Endianness> AsRef<T> for WithXe<T, E> {
-    fn as_ref(&self) -> &T {
-        &self.inner
-    }
-}
-
-impl<T, E: Endianness> AsMut<T> for WithXe<T, E> {
-    fn as_mut(&mut self) -> &mut T {
-        &mut self.inner
-    }
+/// Implementing this will cause [`Write`] and [`WriteXe`] to be implemented for
+/// many common types.
+pub trait WriteFromBuf {
+    fn write_from_buf<B: Buf>(&mut self, buf: B) -> Result<(), Full>;
 }
 
 /// A reader that knows how many bytes are remaining.
@@ -354,6 +146,160 @@ pub trait Position {
     }
 }
 
+/// A reader or writer that can skip bytes.
+pub trait Skip {
+    fn skip(&mut self, n: usize) -> Result<(), End>;
+}
+
+impl<'r, R: ReadIntoBuf> ReadIntoBuf for &'r mut R {
+    #[inline]
+    fn read_into_buf<B: BufMut>(&mut self, buf: B) -> Result<(), End> {
+        (*self).read_into_buf(buf)
+    }
+}
+
+impl<'w, W: WriteFromBuf> WriteFromBuf for &'w mut W {
+    #[inline]
+    fn write_from_buf<B: Buf>(&mut self, buf: B) -> Result<(), Full> {
+        (*self).write_from_buf(buf)
+    }
+}
+
+impl<R> Read<R> for () {
+    #[inline]
+    fn read(_reader: R) -> Result<Self, End> {
+        Ok(())
+    }
+}
+
+impl<W> Write<W> for () {
+    #[inline]
+    fn write(&self, _writer: W) -> Result<(), Full> {
+        Ok(())
+    }
+}
+
+impl<R, T> Read<R> for PhantomData<T> {
+    #[inline]
+    fn read(_reader: R) -> Result<Self, End> {
+        Ok(PhantomData)
+    }
+}
+
+impl<W, T> Write<W> for PhantomData<T> {
+    #[inline]
+    fn write(&self, _writer: W) -> Result<(), Full> {
+        Ok(())
+    }
+}
+
+impl<R: ReadIntoBuf, const N: usize> Read<R> for [u8; N] {
+    #[inline]
+    fn read(mut reader: R) -> Result<Self, End> {
+        let mut buf = [0u8; N];
+        reader.read_into_buf(&mut buf)?;
+        Ok(buf)
+    }
+}
+
+impl<W: WriteFromBuf, const N: usize> Write<W> for [u8; N] {
+    #[inline]
+    fn write(&self, mut writer: W) -> Result<(), Full> {
+        writer.write_from_buf(self)
+    }
+}
+
+impl<R: ReadIntoBuf> Read<R> for u8 {
+    #[inline]
+    fn read(mut reader: R) -> Result<Self, End> {
+        let mut buf = [0u8; 1];
+        reader.read_into_buf(&mut buf)?;
+        Ok(buf[0])
+    }
+}
+
+impl<W: WriteFromBuf> Write<W> for u8 {
+    #[inline]
+    fn write(&self, mut writer: W) -> Result<(), Full> {
+        let buf = [*self];
+        writer.write_from_buf(&buf)
+    }
+}
+
+impl<R: ReadIntoBuf> Read<R> for i8 {
+    #[inline]
+    fn read(mut reader: R) -> Result<Self, End> {
+        let mut buf = [0u8; 1];
+        reader.read_into_buf(&mut buf)?;
+        Ok(buf[0] as i8)
+    }
+}
+
+impl<W: WriteFromBuf> Write<W> for i8 {
+    #[inline]
+    fn write(&self, mut writer: W) -> Result<(), Full> {
+        let buf = [*self as u8];
+        writer.write_from_buf(&buf)
+    }
+}
+
+// implement `Read` and `Write` for tuples.
+macro_rules! impl_tuple {
+    ($($index:tt => $name:ident: $ty:ident),*) => {
+        impl<R, $($ty),*> Read<R> for ($($ty,)*)
+        where
+            $($ty: for<'r> Read<&'r mut R>,)*
+        {
+            fn read(mut reader: R) -> Result<Self, End> {
+                $(
+                    let $name = <$ty as Read<&mut R>>::read(&mut reader)?;
+                )*
+                Ok(($(
+                    $name,
+                )*))
+            }
+        }
+
+        impl<W, $($ty),*> Write<W> for ($($ty,)*)
+        where
+            $($ty: for<'w> Write<&'w mut W>,)*
+        {
+            fn write(&self, mut writer: W) -> Result<(), Full> {
+                $(
+                    let $name = &self.$index;
+                )*
+                $(
+                    <$ty as Write<&mut W>>::write($name, &mut writer)?;
+                )*
+                Ok(())
+            }
+        }
+    };
+}
+for_tuple!(impl_tuple! for 1..=8);
+
+/// Read macro
+#[macro_export]
+macro_rules! read {
+    ($reader:ident => $ty:ty as $endianness:ty) => {
+        {
+            <$ty as ::skunk::__private::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
+        }
+    };
+    ($reader:ident => $ty:ty) => {
+        {
+            <$ty as ::skunk::__private::rw::Read::<_>>::read(&mut $reader)
+        }
+    };
+    ($reader:ident as $endianness:ty) => {
+        read!($reader => _ as $endianness)
+    };
+    ($reader:ident) => {
+        read!($reader => _)
+    };
+}
+pub use read;
+
 /// A [`Reader`] and [`Writer`] that reads and writes from and to a [`Buf`].
 ///
 /// This reader/writer has an inherent endianness of [`NativeEndian`]. You can
@@ -391,24 +337,57 @@ impl<B: Buf> Cursor<B> {
     }
 }
 
-impl<B: Buf> Reader for Cursor<B> {
-    type View<'a> = <B as Buf>::View<'a> where Self: 'a;
-
-    fn read_view(&mut self, n: usize) -> Result<Self::View<'_>, End> {
+impl<B: Buf> ReadIntoBuf for Cursor<B> {
+    fn read_into_buf<D: BufMut>(&mut self, buf: D) -> Result<(), End> {
+        let n = buf.len();
         let range = self.get_range(n);
-        let output = self.buf.view(range).unwrap();
-        self.offset += n;
-        Ok(output)
-    }
-
-    fn read_into<D: BufMut>(&mut self, destination: D) -> Result<(), End> {
-        let n = destination.len();
-        let range = self.get_range(n);
-        copy(destination, .., &self.buf, range).map_err(End::from_copy_error)?;
+        copy(buf, .., &self.buf, range).map_err(End::from_copy_error)?;
         self.offset += n;
         Ok(())
     }
+}
 
+impl<B: BufMut> WriteFromBuf for Cursor<B> {
+    fn write_from_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
+        let n = source.len();
+        let range = self.get_range(n);
+        self.buf
+            .write(range, source, ..)
+            .map_err(Full::from_write_error)?;
+        self.offset += n;
+        Ok(())
+    }
+}
+
+/// Wrapper type for reading views.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    derive_more::From,
+    derive_more::Deref,
+    derive_more::DerefMut,
+    derive_more::AsRef,
+    derive_more::AsMut,
+)]
+pub struct View<B: Buf>(pub B);
+
+impl<'b, B: Buf<View<'b> = V> + 'b, V: Buf> Read<&'b mut Cursor<B>> for View<V> {
+    fn read(reader: &'b mut Cursor<B>) -> Result<Self, End> {
+        let range = Range {
+            start: Bound::Included(reader.offset),
+            end: Bound::Unbounded,
+        };
+        let view = reader
+            .buf
+            .view(range)
+            .map_err(End::from_range_out_of_bounds)?;
+        reader.offset += view.len();
+        Ok(View(view))
+    }
+}
+
+impl<B: Buf> Skip for Cursor<B> {
     fn skip(&mut self, n: usize) -> Result<(), End> {
         let range = self.get_range(n);
         if self.buf.contains(range) {
@@ -420,24 +399,6 @@ impl<B: Buf> Reader for Cursor<B> {
         }
     }
 }
-
-impl<B: BufMut> Writer for Cursor<B> {
-    fn write_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
-        let n = source.len();
-        let range = self.get_range(n);
-        self.buf
-            .write(range, source, ..)
-            .map_err(Full::from_write_error)?;
-        self.offset += n;
-        Ok(())
-    }
-}
-
-impl<B: Buf> HasEndianness for Cursor<B> {
-    type Endianness = NativeEndian;
-}
-
-//impl<B: BufMUt> Writer
 
 impl<B> AsRef<B> for Cursor<B> {
     #[inline]

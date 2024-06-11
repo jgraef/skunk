@@ -7,9 +7,9 @@ use super::{
     buf::Buf,
     rw::{
         Cursor,
-        Reader,
         Remaining,
     },
+    ReadIntoBuf,
 };
 
 pub struct Hexdump<B> {
@@ -98,7 +98,7 @@ impl<B: Buf> Iterator for Lines<B> {
             // step through this
 
             self.cursor
-                .read_into(&mut line[..num_bytes])
+                .read_into_buf(&mut line[..num_bytes])
                 .unwrap_or_else(|_| panic!("Expected at least {num_bytes} more bytes"));
             let offset = self.offset;
             self.offset += num_bytes;
