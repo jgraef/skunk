@@ -6,4 +6,4 @@ pub mod http;
 pub mod tls;
 
 // todo: feature flag
-pub mod ethernet;
+pub mod inet;

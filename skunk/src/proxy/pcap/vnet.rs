@@ -4,14 +4,9 @@ use std::{
     ops::RangeInclusive,
 };
 
-use dhcproto::{
-    Decodable,
-    Encodable,
-};
 use etherparse::{
     EtherType,
     Ethernet2Header,
-    PacketBuilder,
     TransportSlice,
 };
 use ip_network::Ipv4Network;
@@ -21,19 +16,17 @@ use tokio_util::sync::CancellationToken;
 use super::{
     arp,
     dhcp,
+    interface::Socket,
     packet::{
         EthernetFrame,
         LinkPacket,
         NetworkPacket,
         PacketListener,
         PacketSender,
-        PacketSocket,
-        TcpIpPacket,
     },
     Error,
     MacAddress,
 };
-use crate::proxy::pcap::packet::WritePacket;
 
 #[derive(Debug)]
 pub struct VirtualNetwork {
@@ -43,8 +36,8 @@ pub struct VirtualNetwork {
 }
 
 impl VirtualNetwork {
-    pub fn new(socket: PacketSocket, network_config: NetworkConfig) -> Self {
-        let (listener, sender) = socket.pair();
+    pub fn new(socket: Socket, network_config: NetworkConfig) -> Self {
+        let (listener, sender) = socket.into_pair();
         let shutdown = CancellationToken::new();
 
         let dhcp = dhcp::Service::new(network_config);
@@ -168,10 +161,10 @@ struct DhcpSender<'a> {
 impl<'a> dhcp::Sender for DhcpSender<'a> {
     async fn send(
         &mut self,
-        response: &dhcp::Packet,
+        _response: &dhcp::Packet,
         to: dhcp::SendTo,
     ) -> Result<(), super::packet::SendError> {
-        let destination = to.to_socket_address();
+        let _destination = to.to_socket_address();
 
         /*UdpIpPacket {
             builder: PacketBuilder::ethernet2(self.from.0.into(), self.to_hardware_address)

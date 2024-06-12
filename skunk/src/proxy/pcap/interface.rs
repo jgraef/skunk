@@ -4,14 +4,35 @@ use std::{
         Ipv4Addr,
         Ipv6Addr,
     },
+    os::fd::{
+        AsRawFd,
+        OwnedFd,
+    },
     sync::Arc,
 };
 
 pub use nix::net::if_::InterfaceFlags as Flags;
-use nix::sys::socket::LinkAddr;
+use nix::sys::socket::{
+    AddressFamily,
+    LinkAddr,
+    MsgFlags,
+    SockFlag,
+    SockProtocol,
+    SockType,
+};
 use smallvec::SmallVec;
+use tokio::io::{
+    unix::AsyncFd,
+    Interest,
+};
 
-use super::MacAddress;
+use super::{
+    packet::{
+        PacketListener,
+        PacketSender,
+    },
+    MacAddress,
+};
 
 /// A network interface.
 #[derive(Clone)]
@@ -226,8 +247,12 @@ impl Interface {
 
     /// A LinkAddr we can use to bind a raw socket with
     #[inline]
-    pub(crate) fn raw_bind_address(&self) -> Option<nix::sys::socket::LinkAddr> {
+    fn raw_bind_address(&self) -> Option<nix::sys::socket::LinkAddr> {
         self.link.interface.address?.as_link_addr().copied()
+    }
+
+    pub fn socket(&self) -> Result<Socket, std::io::Error> {
+        Socket::open(self.clone())
     }
 }
 
@@ -415,3 +440,84 @@ impl<'a, T> DoubleEndedIterator for ConfigIter<'a, T> {
 }
 
 impl<'a, T> ExactSizeIterator for ConfigIter<'a, T> {}
+
+/// A "raw" socket. This can be used to send and receive ethernet frames.[1]
+///
+/// This can be created with [`Interface::socket`]
+///
+/// [1]: https://www.man7.org/linux/man-pages/man7/packet.7.html
+#[derive(Debug)]
+pub struct Socket {
+    socket: AsyncFd<OwnedFd>,
+    interface: Interface,
+}
+
+impl Socket {
+    fn open(interface: Interface) -> Result<Self, std::io::Error> {
+        // note: the returned OwnedFd will close the socket on drop.
+        let socket = nix::sys::socket::socket(
+            AddressFamily::Packet,
+            SockType::Raw,
+            SockFlag::SOCK_NONBLOCK,
+            SockProtocol::EthAll,
+        )?;
+
+        let bind_address = interface
+            .raw_bind_address()
+            .expect("interface has no address we can bind to");
+        // note: we might need to set the protocol field in `bind_addr`, but this is
+        // currently not possible. see https://github.com/nix-rust/nix/issues/2059
+        nix::sys::socket::bind(socket.as_raw_fd(), &bind_address)?;
+
+        let socket = AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?;
+
+        Ok(Self { socket, interface })
+    }
+
+    /// Receives a packet from the interface.
+    ///
+    /// The real packet size is returned, even if the buffer wasn't large
+    /// enough.
+    pub async fn receive(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+        self.socket
+            .async_io(Interest::READABLE, |socket| {
+                // MsgFlags::MSG_TRUNC tells the kernel to return the real packet length, even
+                // if the buffer is not large enough.
+                Ok(nix::sys::socket::recv(
+                    socket.as_raw_fd(),
+                    buf,
+                    MsgFlags::MSG_TRUNC,
+                )?)
+            })
+            .await
+    }
+
+    pub async fn send(&self, buf: &[u8]) -> Result<(), std::io::Error> {
+        // can we send one packet with multiple `send` calls? then we can send `impl
+        // Buf`.
+        let bytes_sent = self
+            .socket
+            .async_io(Interest::WRITABLE, |socket| {
+                Ok(nix::sys::socket::send(
+                    socket.as_raw_fd(),
+                    buf,
+                    MsgFlags::empty(),
+                )?)
+            })
+            .await?;
+        if bytes_sent < buf.len() {
+            tracing::warn!(buf_len = buf.len(), bytes_sent, "sent truncated packet");
+        }
+        Ok(())
+    }
+
+    pub fn interface(&self) -> &Interface {
+        &self.interface
+    }
+
+    // todo: remove this
+    pub fn into_pair(self) -> (PacketListener, PacketSender) {
+        let this = Arc::new(self);
+        (PacketListener::new(this.clone()), PacketSender::new(this))
+    }
+}

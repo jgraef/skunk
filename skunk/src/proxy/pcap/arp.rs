@@ -102,7 +102,7 @@ impl<'a> ArpPacketSlice<'a> {
             + usize::from(self.protocol_address_length) * 2
     }
 
-    pub fn write(&self, mut writer: impl Write) -> Result<(), EncodeError> {
+    pub fn write(&self, _writer: impl Write) -> Result<(), EncodeError> {
         /*writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
         writer.write_u16::<NetworkEndian>(self.protocol_type.0)?;
         writer.write_u8(self.hardware_address_length)?;
@@ -145,7 +145,7 @@ impl<H: HardwareAddress, P: ProtocolAddress> ArpPacket<H, P> {
         FIXED_SIZE + H::SIZE * 2 + P::SIZE * 2
     }
 
-    pub fn write(&self, mut writer: impl Write) -> Result<(), EncodeError> {
+    pub fn write(&self, _writer: impl Write) -> Result<(), EncodeError> {
         /*writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
         writer.write_u16::<NetworkEndian>(self.protocol_type.0)?;
         writer.write_u8(H::SIZE as u8)?;

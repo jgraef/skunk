@@ -63,6 +63,12 @@ impl<'a> Inner<'a> {
 ///
 /// If you think writing `Bytes<'static>` all the time is too much writing,
 /// there is a type alias [`Sbytes`] for it :3
+///
+/// # TODO
+///
+/// Some of the conversions (e.g. from `Box<[u8]>` or `Vec<u8>`) allocate. We
+/// could create create an enum for them, put that into [`Inner::Shared`] and
+/// also store a pointer for faster access (after pinning it).
 #[derive(Clone)]
 pub struct Bytes<'a> {
     inner: Inner<'a>,

@@ -1,4 +1,5 @@
 use std::fmt::{
+    Debug,
     Display,
     Write as _,
 };
@@ -33,6 +34,10 @@ impl<B: Buf> Display for Hexdump<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut lines = Lines::new(&self.buf, &self.config);
 
+        if self.config.header {
+            writeln!(f, "Hexdump: {} bytes", self.buf.len())?;
+        }
+
         if let Some(line) = lines.next() {
             write!(f, "{line}")?;
         }
@@ -49,11 +54,29 @@ impl<B: Buf> Display for Hexdump<B> {
     }
 }
 
+impl<B: Buf> Debug for Hexdump<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        //writeln!(f, "Hexdump ({} bytes):", self.buf.len())?;
+        let hex = Hexdump {
+            buf: &self.buf,
+            config: Config {
+                offset: self.config.offset,
+                trailing_newline: false,
+                at_least_one_line: false,
+                header: false,
+            },
+        };
+        Display::fmt(&hex, f)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub offset: usize,
     pub trailing_newline: bool,
     pub at_least_one_line: bool,
+    pub header: bool,
 }
 
 impl Default for Config {
@@ -62,6 +85,7 @@ impl Default for Config {
             offset: 0,
             trailing_newline: true,
             at_least_one_line: true,
+            header: true,
         }
     }
 }

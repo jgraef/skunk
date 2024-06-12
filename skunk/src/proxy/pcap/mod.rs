@@ -12,11 +12,8 @@ use etherparse::TransportSlice;
 use tokio_util::sync::CancellationToken;
 
 pub use self::interface::Interface;
-use self::packet::{
-    NetworkPacket,
-    PacketSocket,
-};
-pub use crate::protocol::ethernet::MacAddress;
+use self::packet::NetworkPacket;
+pub use crate::protocol::inet::MacAddress;
 
 // todo: remove?
 #[derive(Debug, thiserror::Error)]
@@ -36,8 +33,7 @@ impl From<nix::Error> for Error {
 }
 
 pub async fn run(interface: Interface, shutdown: CancellationToken) -> Result<(), Error> {
-    //let mut packets = PacketStream::open(interface)?;
-    let (mut reader, _sender) = PacketSocket::open(interface)?.pair();
+    let (mut reader, _sender) = interface.socket()?.into_pair();
 
     loop {
         let packet = tokio::select! {

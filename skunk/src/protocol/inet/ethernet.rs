@@ -1,10 +1,9 @@
-mod mac_address;
-pub mod vlan;
-
 use smallvec::SmallVec;
 
-pub use self::mac_address::MacAddress;
-use self::vlan::VlanTag;
+use super::{
+    mac_address::MacAddress,
+    vlan::VlanTag,
+};
 use crate::util::bytes::{
     rw::{
         read,

@@ -1,10 +1,6 @@
 use std::{
     io::Write,
     ops::Deref,
-    os::fd::{
-        AsRawFd,
-        OwnedFd,
-    },
     sync::Arc,
 };
 
@@ -13,7 +9,6 @@ use etherparse::{
     Ethernet2Header,
     Ethernet2Slice,
     Icmpv4Slice,
-    IpHeaders,
     IpNumber,
     Ipv4Slice,
     PacketBuilderStep,
@@ -22,20 +17,12 @@ use etherparse::{
     TransportSlice,
     UdpSlice,
 };
-use nix::sys::socket::{
-    AddressFamily,
-    MsgFlags,
-    SockFlag,
-    SockProtocol,
-    SockType,
-};
-use tokio::io::{
-    unix::AsyncFd,
-    Interest,
-};
 
 use super::{
-    interface::Interface,
+    interface::{
+        Interface,
+        Socket,
+    },
     MacAddress,
 };
 use crate::util::io::WriteBuf;
@@ -81,90 +68,17 @@ impl From<nix::Error> for SendError {
     }
 }
 
-/// A "raw" socket. This can be used to send and receive ethernet frames.
-#[derive(Debug)]
-pub struct PacketSocket {
-    socket: AsyncFd<OwnedFd>,
-    interface: Interface,
-}
-
-impl PacketSocket {
-    pub fn open(interface: Interface) -> Result<Self, std::io::Error> {
-        // note: the returned OwnedFd will close the socket on drop.
-        let socket = nix::sys::socket::socket(
-            AddressFamily::Packet,
-            SockType::Raw,
-            SockFlag::SOCK_NONBLOCK,
-            SockProtocol::EthAll,
-        )?;
-
-        let bind_address = interface
-            .raw_bind_address()
-            .expect("interface has no address we can bind to");
-        // note: we might need to set the protocol field in `bind_addr`, but this is
-        // currently not possible. see https://github.com/nix-rust/nix/issues/2059
-        nix::sys::socket::bind(socket.as_raw_fd(), &bind_address)?;
-
-        let socket = AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?;
-
-        Ok(Self { socket, interface })
-    }
-
-    pub async fn receive(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.socket
-            .async_io(Interest::READABLE, |socket| {
-                // MsgFlags::MSG_TRUNC tells the kernel to return the real packet length, even
-                // if the buffer is not large enough.
-                Ok(nix::sys::socket::recv(
-                    socket.as_raw_fd(),
-                    buf,
-                    MsgFlags::MSG_TRUNC,
-                )?)
-            })
-            .await
-    }
-
-    pub async fn send(&self, buf: &[u8]) -> Result<(), std::io::Error> {
-        let bytes_sent = self
-            .socket
-            .async_io(Interest::WRITABLE, |socket| {
-                Ok(nix::sys::socket::send(
-                    socket.as_raw_fd(),
-                    buf,
-                    MsgFlags::empty(),
-                )?)
-            })
-            .await?;
-        if bytes_sent < buf.len() {
-            tracing::warn!(buf_len = buf.len(), bytes_sent, "sent truncated packet");
-        }
-        Ok(())
-    }
-
-    pub fn pair(self) -> (PacketListener, PacketSender) {
-        let socket = Arc::new(self);
-        (
-            PacketListener::new(socket.clone()),
-            PacketSender::new(socket),
-        )
-    }
-
-    pub fn interface(&self) -> &Interface {
-        &self.interface
-    }
-}
-
 /// Listener half used to listen to packets on a socket.
 #[derive(Debug)]
 pub struct PacketListener {
-    socket: Arc<PacketSocket>,
+    socket: Arc<Socket>,
     buf: Vec<u8>,
 }
 
 impl PacketListener {
     const BUF_SIZE: usize = 2048;
 
-    pub fn new(socket: Arc<PacketSocket>) -> Self {
+    pub fn new(socket: Arc<Socket>) -> Self {
         let buf = vec![0; Self::BUF_SIZE];
         Self { socket, buf }
     }
@@ -188,12 +102,12 @@ impl PacketListener {
     }
 
     pub fn interface(&self) -> &Interface {
-        &self.socket.interface
+        self.socket.interface()
     }
 }
 
 async fn try_next_packet<'a>(
-    socket: &PacketSocket,
+    socket: &Socket,
     buf: &'a mut [u8],
 ) -> Result<Option<LinkPacket<'a>>, ReceiveError> {
     // we could also use https://docs.rs/etherparse/latest/etherparse/struct.SlicedPacket.html#method.from_linux_sll
@@ -248,14 +162,14 @@ async fn try_next_packet<'a>(
 /// This is cheap to clone.
 #[derive(Clone, Debug)]
 pub struct PacketSender {
-    socket: Arc<PacketSocket>,
+    socket: Arc<Socket>,
     buf: Vec<u8>,
 }
 
 impl PacketSender {
     const BUF_SIZE: usize = 2048;
 
-    pub fn new(socket: Arc<PacketSocket>) -> Self {
+    pub fn new(socket: Arc<Socket>) -> Self {
         let buf = vec![0; Self::BUF_SIZE];
         Self { socket, buf }
     }
@@ -268,7 +182,7 @@ impl PacketSender {
     }
 
     pub fn interface(&self) -> &Interface {
-        &self.socket.interface
+        self.socket.interface()
     }
 }
 
@@ -302,7 +216,7 @@ pub struct TcpIpPacket<P> {
 }
 
 impl<P: WritePacket> WritePacket for TcpIpPacket<P> {
-    fn write_packet(&self, mut writer: impl Write) -> Result<(), EncodeError> {
+    fn write_packet(&self, _writer: impl Write) -> Result<(), EncodeError> {
         // more allocations 🥴
         let mut payload = vec![];
         self.payload.write_packet(WriteBuf::new(&mut payload))?;

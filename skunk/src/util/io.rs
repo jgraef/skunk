@@ -1,7 +1,6 @@
 //! IO utilities.
 
 use std::{
-    net::Ipv4Addr,
     pin::Pin,
     task::{
         Context,
@@ -22,8 +21,6 @@ use tokio::io::{
     AsyncWrite,
     ReadBuf,
 };
-
-use crate::proxy::pcap::MacAddress;
 
 pin_project! {
     /// Wrapper for [`AsyncRead`]/[`AsyncWrite`] types that "rewinds" a read operation.
