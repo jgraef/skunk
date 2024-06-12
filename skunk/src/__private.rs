@@ -1,11 +1,13 @@
 //! Re-exports for use by macros.
 
 pub use std::{
+    convert::From,
     option::Option::{
         self,
         None,
         Some,
     },
+    primitive::usize,
     result::Result::{
         self,
         Err,
