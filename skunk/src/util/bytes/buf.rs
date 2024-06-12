@@ -227,7 +227,7 @@ pub trait BufMut: Buf {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum WriteError {
     #[error("buffer is full: range ({required:?}) can't fit into buffer with length {buf_length}")]
     Full { required: Range, buf_length: usize },
@@ -365,7 +365,7 @@ pub(super) fn write_helper<D: BufMut, S: Buf>(
     let destination_length = destination.len();
     let destination_range = destination_range.into();
     let destination_start = destination_range.start().unwrap_or_default();
-    let (destination_end, _destination_range_length) =
+    let (destination_end, destination_range_length) =
         if let Some(destination_end) = destination_range.end() {
             let destination_range_length = destination_end.saturating_sub(destination_start);
             if destination_range_length != source_range_length {
@@ -434,7 +434,7 @@ pub(super) fn write_helper<D: BufMut, S: Buf>(
 
     if destination_start > destination_length {
         // the destination has to be filled with some zeros.
-        fill_to(&mut destination, destination_length);
+        fill_to(&mut destination, destination_range_length);
     }
 
     if destination_end > destination_length {

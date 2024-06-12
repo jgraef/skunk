@@ -67,8 +67,13 @@ impl<'a> From<&'a Range> for Range {
 }
 
 impl Range {
+    #[inline]
+    pub fn index(&self) -> (Bound<usize>, Bound<usize>) {
+        (self.start, self.end)
+    }
+
     pub fn slice_get<'a>(&self, slice: &'a [u8]) -> Result<&'a [u8], RangeOutOfBounds> {
-        slice.get((self.start, self.end)).ok_or_else(|| {
+        slice.get(self.index()).ok_or_else(|| {
             RangeOutOfBounds {
                 required: *self,
                 bounds: (0, slice.len()),
@@ -78,7 +83,7 @@ impl Range {
 
     pub fn slice_get_mut<'a>(&self, slice: &'a mut [u8]) -> Result<&'a mut [u8], RangeOutOfBounds> {
         let buf_length = slice.len();
-        slice.get_mut((self.start, self.end)).ok_or_else(|| {
+        slice.get_mut(self.index()).ok_or_else(|| {
             RangeOutOfBounds {
                 required: *self,
                 bounds: (0, buf_length),
@@ -178,7 +183,7 @@ impl Debug for Range {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("Range out of bounds: {required:?} not in buffer ({}..{})", .bounds.0, .bounds.1)]
 pub struct RangeOutOfBounds {
     pub required: Range,

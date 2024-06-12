@@ -24,7 +24,7 @@ use crate::{
 /// Deriving [`Read`][1] on a struct will generate an implementation that reads
 /// the fields in the order they appear in the declaration.
 ///
-/// ```
+/// ```ignore
 /// # use skunk_macros::Read;
 /// # type NetworkEndian = ();
 /// # type Bar = ();
@@ -65,7 +65,7 @@ pub fn derive_write(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// The callback macro will be passed a comma-separated list of
 ///
-/// ```
+/// ```no_rust
 /// $index:tt => $name:ident : $ty:ident
 /// ```
 ///
@@ -83,7 +83,7 @@ pub fn derive_write(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// # trait Foo { fn foo(&self); }
 /// macro_rules! impl_tuple {
 ///     ($($index:tt => $name:ident : $ty:ident),*) => {
-///         impl Foo for ($($ty,)) {
+///         impl<$($ty),*> Foo for ($($ty,)*) {
 ///             fn foo(&self) {
 ///                 $(
 ///                     let $name = &self.$index;
@@ -116,7 +116,7 @@ pub fn for_tuple(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// # Example
 ///
 /// ```
-/// # use skunk_macros::bitmask;
+/// # use skunk_macros::bit_range;
 /// let x = bit_range!(4..=8);
 /// ```
 #[proc_macro]

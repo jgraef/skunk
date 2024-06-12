@@ -6,6 +6,7 @@ pub(crate) mod endianness;
 pub mod hexdump;
 mod range;
 pub(crate) mod rw;
+pub mod slab;
 
 use std::ops::{
     BitAnd,

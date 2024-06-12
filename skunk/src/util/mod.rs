@@ -180,3 +180,11 @@ impl<I: Iterator> Iterator for Peekable<I> {
 impl<I: Iterator + ExactSizeIterator> ExactSizeIterator for Peekable<I> {}
 
 impl<I: Iterator> FusedIterator for Peekable<I> {}
+
+#[inline]
+fn ptr_len<T>(ptr: *const [T]) -> usize {
+    let ptr: *const [()] = ptr as _;
+    // SAFETY: There is no aliasing as () is zero-sized
+    let slice: &[()] = unsafe { &*ptr };
+    slice.len()
+}

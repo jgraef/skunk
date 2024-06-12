@@ -10,7 +10,7 @@ use crate::util::{
 };
 
 /// Error while copying from a [`Buf`] to a [`BufMut`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CopyError {
     #[error("Destination index out of bounds")]
     DestinationRangeOutOfBounds(RangeOutOfBounds),

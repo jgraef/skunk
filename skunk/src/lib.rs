@@ -5,6 +5,8 @@
 // required by `crate::util::bytes::endianness::{Encode, Decode}`.
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+// required by `crate::util::bytes::slab`
+#![feature(new_uninit, slice_ptr_get)]
 
 //! skunk - 🦨 A person-in-the-middle proxy
 //!

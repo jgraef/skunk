@@ -201,7 +201,8 @@ mod tests {
     fn test_display() {
         let data = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
         let formatted = Hexdump::new(&data).to_string();
-        let expected = r#"0000  4c 6f 72 65 6d 20 69 70 73 75 6d 20 64 6f 6c 6f  Lorem ipsum dolo
+        let expected = r#"Hexdump: 123 bytes
+0000  4c 6f 72 65 6d 20 69 70 73 75 6d 20 64 6f 6c 6f  Lorem ipsum dolo
 0010  72 20 73 69 74 20 61 6d 65 74 2c 20 63 6f 6e 73  r sit amet, cons
 0020  65 63 74 65 74 75 72 20 61 64 69 70 69 73 63 69  ectetur adipisci
 0030  6e 67 20 65 6c 69 74 2c 20 73 65 64 20 64 6f 20  ng elit, sed do 
