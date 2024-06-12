@@ -16,7 +16,6 @@
 //! TODO
 
 #[doc(hidden)]
-pub mod __private;
 pub mod address;
 pub mod connect;
 pub mod protocol;

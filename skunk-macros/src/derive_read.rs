@@ -57,17 +57,17 @@ fn derive_read_for_struct(
         let field_ty = &field.ty;
 
         let read_field = if let Some(endianness) = field_options.endianness.ty() {
-            where_clause.predicates.push(parse_quote! { #field_ty: for<'r> ::skunk::__private::rw::ReadXe::<&'r mut __R, #endianness> });
+            where_clause.predicates.push(parse_quote! { #field_ty: for<'r> ::skunk::util::bytes::rw::ReadXe::<&'r mut __R, #endianness> });
             quote! {
-                ::skunk::__private::rw::ReadXe::<_, #endianness>::read(&mut reader)?
+                ::skunk::util::bytes::rw::ReadXe::<_, #endianness>::read(&mut reader)?
             }
         }
         else {
             where_clause.predicates.push(
-                parse_quote! { #field_ty: for<'r> ::skunk::__private::rw::Read::<&'r mut __R> },
+                parse_quote! { #field_ty: for<'r> ::skunk::util::bytes::rw::Read::<&'r mut __R> },
             );
             quote! {
-                ::skunk::__private::rw::Read::<_>::read(&mut reader)?
+                ::skunk::util::bytes::rw::Read::<_>::read(&mut reader)?
             }
         };
 
@@ -78,8 +78,8 @@ fn derive_read_for_struct(
 
     Ok(quote! {
         #[automatically_derived]
-        impl<__R, #impl_generics> ::skunk::__private::rw::Read<__R> for #ident<#type_generics> #where_clause {
-            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::__private::rw::End> {
+        impl<__R, #impl_generics> ::skunk::util::bytes::rw::Read<__R> for #ident<#type_generics> #where_clause {
+            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::util::bytes::rw::End> {
                 ::std::result::Result::Ok(Self {
                     #(#struct_init)*
                 })
@@ -103,18 +103,18 @@ fn derive_read_for_struct_bitfield(
 
     let read_value = if let Some(endianness) = bitfield.endianness.ty() {
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: for<'r> ::skunk::__private::rw::ReadXe::<&'r mut __R, #endianness>
+            #bitfield_ty: for<'r> ::skunk::util::bytes::rw::ReadXe::<&'r mut __R, #endianness>
         });
         quote! {
-            ::skunk::__private::rw::ReadXe::<_, #endianness>::read(&mut reader)?
+            ::skunk::util::bytes::rw::ReadXe::<_, #endianness>::read(&mut reader)?
         }
     }
     else {
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: for<'r> ::skunk::__private::rw::Read::<&'r mut __R>
+            #bitfield_ty: for<'r> ::skunk::util::bytes::rw::Read::<&'r mut __R>
         });
         quote! {
-            ::skunk::__private::rw::Read::<_>::read(&mut reader)?
+            ::skunk::util::bytes::rw::Read::<_>::read(&mut reader)?
         }
     };
 
@@ -166,11 +166,11 @@ fn derive_read_for_struct_bitfield(
         }
 
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: ::skunk::__private::bits::BitFieldExtract<#field_ty>
+            #bitfield_ty: ::skunk::util::bytes::BitFieldExtract<#field_ty>
         });
 
         struct_init.push(quote!{
-            #field_name: ::skunk::__private::bits::BitFieldExtract::extract::<#field_ty>::(#start, #bits),
+            #field_name: ::skunk::util::bytes::BitFieldExtract::extract::<#field_ty>::(#start, #bits),
         });
 
         bit_index = start + bits;
@@ -178,8 +178,8 @@ fn derive_read_for_struct_bitfield(
 
     Ok(quote! {
         #[automatically_derived]
-        impl<__R, #impl_generics> ::skunk::__private::rw::Read<__R> for #ident<#type_generics> #where_clause {
-            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::__private::rw::End> {
+        impl<__R, #impl_generics> ::skunk::util::bytes::rw::Read<__R> for #ident<#type_generics> #where_clause {
+            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::util::bytes::rw::End> {
                 let _value: #bitfield_ty = #read_value;
                 ::std::result::Result::Ok(Self {
                     #(#struct_init)*

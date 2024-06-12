@@ -283,12 +283,12 @@ for_tuple!(impl_tuple! for 1..=8);
 macro_rules! read {
     ($reader:ident => $ty:ty as $endianness:ty) => {
         {
-            <$ty as ::skunk::__private::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
+            <$ty as ::skunk::util::bytes::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
         }
     };
     ($reader:ident => $ty:ty) => {
         {
-            <$ty as ::skunk::__private::rw::Read::<_>>::read(&mut $reader)
+            <$ty as ::skunk::util::bytes::rw::Read::<_>>::read(&mut $reader)
         }
     };
     ($reader:ident as $endianness:ty) => {

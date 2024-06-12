@@ -64,15 +64,17 @@ impl Endianness {
             &self.endianness,
         ) {
             (false, false, false, false, None) => None,
-            (true, false, false, false, None) => Some(quote! { ::skunk::__private::rw::BigEndian }),
+            (true, false, false, false, None) => {
+                Some(quote! { ::skunk::util::bytes::endianness::BigEndian })
+            }
             (false, true, false, false, None) => {
-                Some(quote! { ::skunk::__private::rw::LittleEndian })
+                Some(quote! { ::skunk::util::bytes::endianness::LittleEndian })
             }
             (false, false, true, false, None) => {
-                Some(quote! { ::skunk::__private::rw::NetworkEndian })
+                Some(quote! { ::skunk::util::bytes::endianness::NetworkEndian })
             }
             (false, false, false, true, None) => {
-                Some(quote! { ::skunk::__private::rw::NativeEndian })
+                Some(quote! { ::skunk::util::bytes::endianness::NativeEndian })
             }
             (false, false, false, false, Some(path)) => Some(quote! { #path }),
             _ => {

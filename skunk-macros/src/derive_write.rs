@@ -57,24 +57,24 @@ fn derive_write_for_struct(
 
         if let Some(endianness) = field_options.endianness.ty() {
             write_fields.push(quote! {
-                ::skunk::__private::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
+                ::skunk::util::bytes::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
             });
-            where_clause.predicates.push(parse_quote! { #field_ty: for<'w> ::skunk::__private::rw::WriteXe::<&'w mut __W, #endianness> });
+            where_clause.predicates.push(parse_quote! { #field_ty: for<'w> ::skunk::util::bytes::rw::WriteXe::<&'w mut __W, #endianness> });
         }
         else {
             write_fields.push(quote! {
-                ::skunk::__private::rw::Write::<_>::write(&self.#field_name, &mut writer)?;
+                ::skunk::util::bytes::rw::Write::<_>::write(&self.#field_name, &mut writer)?;
             });
             where_clause.predicates.push(
-                parse_quote! { #field_ty: for<'w> ::skunk::__private::rw::Write::<&'w mut __W> },
+                parse_quote! { #field_ty: for<'w> ::skunk::util::bytes::rw::Write::<&'w mut __W> },
             );
         }
     }
 
     Ok(quote! {
         #[automatically_derived]
-        impl<__W, #impl_generics> ::skunk::__private::rw::Write<__W> for #ident<#type_generics> #where_clause {
-            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::skunk::__private::rw::Full> {
+        impl<__W, #impl_generics> ::skunk::util::bytes::rw::Write<__W> for #ident<#type_generics> #where_clause {
+            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::skunk::util::bytes::rw::Full> {
                 #(#write_fields)*
                 ::std::result::Result::Ok(())
             }

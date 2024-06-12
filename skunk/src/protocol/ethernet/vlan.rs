@@ -5,15 +5,16 @@ use crate::util::bytes::{
         Read,
         ReadXe,
         Write,
+        WriteXe,
     },
     NetworkEndian,
     ReadIntoBuf,
+    WriteFromBuf,
 };
 
 /// Vlan tagged ethernet frames[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/IEEE_802.1Q
-
 #[derive(Clone, Copy, Debug)]
 pub struct VlanTag {
     pub priority_code_point: PriorityCodePoint,
@@ -35,13 +36,13 @@ impl<R: ReadIntoBuf> Read<R> for VlanTag {
     }
 }
 
-impl<W> Write<W> for VlanTag {
-    fn write(&self, mut writer: W) -> Result<(), Full> {
+impl<W: WriteFromBuf> Write<W> for VlanTag {
+    fn write(&self, writer: W) -> Result<(), Full> {
         let value = (self.priority_code_point.0 as u16) << 13
             & self.drop_eligible.then_some(0x1000).unwrap_or_default()
             & self.vlan_identifier.0;
-        //writer.write::<_, NetworkEndian>(&value)
-        todo!();
+        WriteXe::<_, NetworkEndian>::write(&value, writer)?;
+        Ok(())
     }
 }
 
