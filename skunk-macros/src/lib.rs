@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+
+mod bitmask;
 mod derive_read;
 mod derive_write;
 mod error;
@@ -9,6 +12,7 @@ use proc_macro_error::proc_macro_error;
 use syn::parse_macro_input;
 
 use crate::{
+    bitmask::BitRangeInput,
     for_tuple::ForTupleInput,
     util::derive_helper,
 };
@@ -101,6 +105,24 @@ pub fn derive_write(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn for_tuple(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as ForTupleInput);
     match crate::for_tuple::for_tuple(input) {
+        Ok(output) => output.into(),
+        Err(e) => e.write_errors().into(),
+    }
+}
+
+/// Generates a bit mask for the given range. The output will be an integer
+/// literal.
+///
+/// # Example
+///
+/// ```
+/// # use skunk_macros::bitmask;
+/// let x = bit_range!(4..=8);
+/// ```
+#[proc_macro]
+pub fn bit_range(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(input as BitRangeInput);
+    match crate::bitmask::bit_range(input) {
         Ok(output) => output.into(),
         Err(e) => e.write_errors().into(),
     }

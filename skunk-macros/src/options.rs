@@ -1,6 +1,7 @@
 use darling::{
     FromDeriveInput,
     FromField,
+    FromMeta,
 };
 use proc_macro2::TokenStream;
 use proc_macro_error::abort_call_site;
@@ -10,28 +11,51 @@ use syn::Path;
 #[derive(FromDeriveInput)]
 #[darling(attributes(skunk), forward_attrs(allow, doc, cfg))]
 pub struct DeriveOptions {
-    //ident: Ident,
-    //attrs: Vec<Attribute>,
-    //endianness: Option<Path>,
-    pub bitfield: Option<Path>,
+    pub bitfield: Option<Bitfield>,
 }
 
 #[derive(FromField)]
 #[darling(attributes(skunk))]
 pub struct FieldOptions {
+    #[darling(flatten)]
+    pub endianness: Endianness,
+}
+
+#[derive(FromMeta)]
+pub struct Bitfield {
+    pub ty: Path,
+
+    #[darling(flatten)]
+    pub endianness: Endianness,
+}
+
+#[derive(FromField)]
+#[darling(attributes(skunk))]
+pub struct BitfieldFieldOptions {
+    pub bits: Option<usize>,
+    pub start: Option<usize>,
+    pub end: Option<usize>,
+}
+
+#[derive(FromMeta)]
+pub struct Endianness {
     pub endianness: Option<Path>,
+
     #[darling(default)]
     pub big: bool,
+
     #[darling(default)]
     pub little: bool,
+
     #[darling(default)]
     pub network: bool,
+
     #[darling(default)]
     pub native: bool,
 }
 
-impl FieldOptions {
-    pub fn endianness(&self) -> Option<TokenStream> {
+impl Endianness {
+    pub fn ty(&self) -> Option<TokenStream> {
         match (
             self.big,
             self.little,

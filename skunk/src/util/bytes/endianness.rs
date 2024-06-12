@@ -57,6 +57,7 @@ pub type NetworkEndian = BigEndian;
 /// Trait defining what length in bytes.
 pub trait Size {
     const BYTES: usize;
+    const BITS: usize;
 }
 
 /// Trait for types that can be encoded using a specified endianness.
@@ -80,6 +81,7 @@ macro_rules! impl_endianness {
         $(
             impl Size for $ty {
                 const BYTES: usize = $bytes;
+                const BITS: usize = $bytes * 8;
             }
 
             impl_endianness!(for<BigEndian> $ty: $bytes => from_be_bytes, to_be_bytes);

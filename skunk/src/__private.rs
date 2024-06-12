@@ -1,20 +1,5 @@
 //! Re-exports for use by macros.
 
-pub use std::{
-    convert::From,
-    option::Option::{
-        self,
-        None,
-        Some,
-    },
-    primitive::usize,
-    result::Result::{
-        self,
-        Err,
-        Ok,
-    },
-};
-
 pub mod rw {
     pub use crate::util::bytes::{
         endianness::{
@@ -23,6 +8,7 @@ pub mod rw {
             LittleEndian,
             NativeEndian,
             NetworkEndian,
+            Size,
         },
         rw::{
             End,
@@ -33,4 +19,7 @@ pub mod rw {
             WriteXe,
         },
     };
+    pub mod bits {
+        pub use crate::util::bytes::BitFieldExtract;
+    }
 }

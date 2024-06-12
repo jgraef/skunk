@@ -7,12 +7,12 @@ use syn::{
     Data,
     DataStruct,
     DeriveInput,
-    Path,
 };
 
 use crate::{
     error::Error,
     options::{
+        Bitfield,
         DeriveOptions,
         FieldOptions,
     },
@@ -24,9 +24,9 @@ use crate::{
 
 pub fn derive_write(item: DeriveInput, options: DeriveOptions) -> Result<TokenStream, Error> {
     let ident = &item.ident;
-    if let Some(bitfield_ty) = &options.bitfield {
+    if let Some(bitfield) = &options.bitfield {
         match &item.data {
-            Data::Struct(s) => derive_write_for_struct_bitfield(s, bitfield_ty, &item, &options),
+            Data::Struct(s) => derive_write_for_struct_bitfield(s, bitfield, &item, &options),
             _ => abort!(ident, "Bitfields can only be derived on structs."),
         }
     }
@@ -55,7 +55,7 @@ fn derive_write_for_struct(
         let field_options = FieldOptions::from_field(&field)?;
         let field_ty = &field.ty;
 
-        if let Some(endianness) = field_options.endianness() {
+        if let Some(endianness) = field_options.endianness.ty() {
             write_fields.push(quote! {
                 ::skunk::__private::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
             });
@@ -74,18 +74,18 @@ fn derive_write_for_struct(
     Ok(quote! {
         #[automatically_derived]
         impl<__W, #impl_generics> ::skunk::__private::rw::Write<__W> for #ident<#type_generics> #where_clause {
-            fn write(&self, mut writer: __W) -> ::skunk::__private::Result<(), ::skunk::__private::rw::Full> {
+            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::skunk::__private::rw::Full> {
                 #(#write_fields)*
-                ::skunk::__private::Ok(())
+                ::std::result::Result::Ok(())
             }
         }
     })
 }
 
 fn derive_write_for_struct_bitfield(
-    s: &DataStruct,
-    bitfield_ty: &Path,
-    item: &DeriveInput,
+    _s: &DataStruct,
+    _bitfield: &Bitfield,
+    _item: &DeriveInput,
     _options: &DeriveOptions,
 ) -> Result<TokenStream, Error> {
     todo!();

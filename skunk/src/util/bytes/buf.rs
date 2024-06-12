@@ -5,7 +5,6 @@ use std::{
         Flatten,
         FusedIterator,
     },
-    ops::DerefMut,
     sync::Arc,
 };
 

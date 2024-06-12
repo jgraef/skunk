@@ -8,13 +8,13 @@ use syn::{
     Data,
     DataStruct,
     DeriveInput,
-    Ident,
-    Path,
 };
 
 use crate::{
     error::Error,
     options::{
+        Bitfield,
+        BitfieldFieldOptions,
         DeriveOptions,
         FieldOptions,
     },
@@ -26,9 +26,9 @@ use crate::{
 
 pub fn derive_read(item: DeriveInput, options: DeriveOptions) -> Result<TokenStream, Error> {
     let ident = &item.ident;
-    if let Some(bitfield_ty) = &options.bitfield {
+    if let Some(bitfield) = &options.bitfield {
         match &item.data {
-            Data::Struct(s) => derive_read_for_struct_bitfield(s, bitfield_ty, &item, &options),
+            Data::Struct(s) => derive_read_for_struct_bitfield(s, bitfield, &item, &options),
             _ => abort!(ident, "Bitfields can only be derived on structs."),
         }
     }
@@ -49,42 +49,38 @@ fn derive_read_for_struct(
     let ident = &item.ident;
     let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
     let mut where_clause = make_where_clause(where_clause);
-
-    let mut read_fields = Vec::with_capacity(s.fields.len());
     let mut struct_init = Vec::with_capacity(s.fields.len());
 
     for (i, field) in s.fields.iter().enumerate() {
-        let (field_span, field_name) = field_name(i, field);
-        let var = Ident::new(&format!("field_{i}"), field_span);
+        let (_field_span, field_name) = field_name(i, field);
         let field_options = FieldOptions::from_field(&field)?;
         let field_ty = &field.ty;
 
-        if let Some(endianness) = field_options.endianness() {
-            read_fields.push(quote! {
-                let #var = ::skunk::__private::rw::ReadXe::<_, #endianness>::read(&mut reader)?;
-            });
+        let read_field = if let Some(endianness) = field_options.endianness.ty() {
             where_clause.predicates.push(parse_quote! { #field_ty: for<'r> ::skunk::__private::rw::ReadXe::<&'r mut __R, #endianness> });
+            quote! {
+                ::skunk::__private::rw::ReadXe::<_, #endianness>::read(&mut reader)?
+            }
         }
         else {
-            read_fields.push(quote! {
-                let #var = ::skunk::__private::rw::Read::<_>::read(&mut reader)?;
-            });
             where_clause.predicates.push(
                 parse_quote! { #field_ty: for<'r> ::skunk::__private::rw::Read::<&'r mut __R> },
             );
-        }
+            quote! {
+                ::skunk::__private::rw::Read::<_>::read(&mut reader)?
+            }
+        };
 
         struct_init.push(quote! {
-            #field_name: #var,
+            #field_name: #read_field,
         });
     }
 
     Ok(quote! {
         #[automatically_derived]
         impl<__R, #impl_generics> ::skunk::__private::rw::Read<__R> for #ident<#type_generics> #where_clause {
-            fn read(mut reader: __R) -> ::skunk::__private::Result<Self, ::skunk::__private::rw::End> {
-                #(#read_fields)*
-                ::skunk::__private::Ok(Self {
+            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::__private::rw::End> {
+                ::std::result::Result::Ok(Self {
                     #(#struct_init)*
                 })
             }
@@ -94,30 +90,99 @@ fn derive_read_for_struct(
 
 fn derive_read_for_struct_bitfield(
     s: &DataStruct,
-    bitfield_ty: &Path,
+    bitfield: &Bitfield,
     item: &DeriveInput,
-    options: &DeriveOptions,
+    _options: &DeriveOptions,
 ) -> Result<TokenStream, Error> {
     let ident = &item.ident;
     let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
     let mut where_clause = make_where_clause(where_clause);
+    let bitfield_ty = &bitfield.ty;
+    let mut struct_init = vec![];
+    let mut bit_index = 0;
 
-    where_clause.predicates.push(parse_quote! {
-        #bitfield_ty: ::skunk::__private::rw::Read<__R>
-    });
-    where_clause.predicates.push(parse_quote! {
-        ::skunk::__private::usize: ::skunk::__private::From<#bitfield_ty>
-    });
+    let read_value = if let Some(endianness) = bitfield.endianness.ty() {
+        where_clause.predicates.push(parse_quote! {
+            #bitfield_ty: for<'r> ::skunk::__private::rw::ReadXe::<&'r mut __R, #endianness>
+        });
+        quote! {
+            ::skunk::__private::rw::ReadXe::<_, #endianness>::read(&mut reader)?
+        }
+    }
+    else {
+        where_clause.predicates.push(parse_quote! {
+            #bitfield_ty: for<'r> ::skunk::__private::rw::Read::<&'r mut __R>
+        });
+        quote! {
+            ::skunk::__private::rw::Read::<_>::read(&mut reader)?
+        }
+    };
 
-    //let mut struct_init = vec![];
+    for (i, field) in s.fields.iter().enumerate() {
+        let (field_span, field_name) = field_name(i, field);
+        let field_options = BitfieldFieldOptions::from_field(&field)?;
+        let field_ty = &field.ty;
+
+        let (start, bits) = match field_options {
+            BitfieldFieldOptions {
+                bits: Some(_),
+                end: Some(_),
+                ..
+            } => {
+                abort!(field_span, "Only one of `bits` and `end` can be specified")
+            }
+
+            BitfieldFieldOptions {
+                bits: None,
+                end: None,
+                start,
+                ..
+            } => (start.unwrap_or(bit_index), 1),
+
+            BitfieldFieldOptions {
+                bits: Some(bits),
+                start,
+                end: None,
+                ..
+            } => (start.unwrap_or(bit_index), bits),
+
+            BitfieldFieldOptions {
+                bits: None,
+                start,
+                end: Some(end),
+                ..
+            } => {
+                let start = start.unwrap_or(bit_index);
+                (
+                    start,
+                    end.checked_sub(start)
+                        .unwrap_or_else(|| abort!(field_span, "Bit field can't have end <= start")),
+                )
+            }
+        };
+
+        if bits == 0 {
+            abort!(field_span, "Bit field can't be 0 bits");
+        }
+
+        where_clause.predicates.push(parse_quote! {
+            #bitfield_ty: ::skunk::__private::bits::BitFieldExtract<#field_ty>
+        });
+
+        struct_init.push(quote!{
+            #field_name: ::skunk::__private::bits::BitFieldExtract::extract::<#field_ty>::(#start, #bits),
+        });
+
+        bit_index = start + bits;
+    }
 
     Ok(quote! {
         #[automatically_derived]
         impl<__R, #impl_generics> ::skunk::__private::rw::Read<__R> for #ident<#type_generics> #where_clause {
-            fn read(mut reader: __R) -> ::skunk::__private::Result<Self, ::skunk::__private::rw::End> {
-
-                ::skunk::__private::Ok(Self {
-                    //#(#struct_init)*
+            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::__private::rw::End> {
+                let _value: #bitfield_ty = #read_value;
+                ::std::result::Result::Ok(Self {
+                    #(#struct_init)*
                 })
             }
         }
