@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{
-    buf::SingleChunk,
+    buf::chunks::SingleChunk,
     Buf,
     Range,
     RangeOutOfBounds,
@@ -259,7 +259,11 @@ impl<'b> Buf for Bytes<'b> {
                 })
             }
             Inner::Shared { buf, start, end } => {
-                if let Some((start, end)) = range.indices_checked_in(*start, *end)? {
+                let (start, end) = range.indices_checked_in(*start, *end)?;
+                if start == end {
+                    Ok(Self::default())
+                }
+                else {
                     Ok(Self {
                         inner: Inner::Shared {
                             buf: buf.clone(),
@@ -267,9 +271,6 @@ impl<'b> Buf for Bytes<'b> {
                             end,
                         },
                     })
-                }
-                else {
-                    Ok(Self::default())
                 }
             }
         }

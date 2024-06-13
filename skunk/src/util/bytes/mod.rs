@@ -1,7 +1,7 @@
-mod array_buf;
-mod buf;
+pub mod buf;
 mod bytes;
 mod copy;
+mod dyn_impl;
 pub(crate) mod endianness;
 pub mod hexdump;
 mod range;
@@ -16,12 +16,9 @@ use std::ops::{
 };
 
 pub use self::{
-    array_buf::ArrayBuf,
     buf::{
         Buf,
         BufMut,
-        SingleChunk,
-        SingleChunkMut,
     },
     bytes::{
         Bytes,

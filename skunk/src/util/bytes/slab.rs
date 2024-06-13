@@ -10,6 +10,10 @@ use std::{
 
 use super::{
     buf::{
+        chunks::{
+            SingleChunk,
+            SingleChunkMut,
+        },
         write_helper,
         WriteError,
     },
@@ -17,8 +21,6 @@ use super::{
     BufMut,
     Range,
     RangeOutOfBounds,
-    SingleChunk,
-    SingleChunkMut,
 };
 use crate::util::ptr_len;
 
@@ -216,13 +218,24 @@ impl BytesMut {
     /// Turns this mutable buffer in a read-only sharable buffer.
     #[inline]
     pub fn freeze(self) -> Bytes {
-        Bytes { inner: self.inner }
+        if self.inner.len == 0 {
+            // if the `BytesMut` has length 0, we'll hand out a static buffer instead.
+            Bytes::default()
+        }
+        else {
+            Bytes { inner: self.inner }
+        }
     }
 
     /// The size of the underlying buffer, i.e. how much this buffer can grow.
     #[inline]
     pub fn buf_size(&self) -> usize {
         self.inner.buf.len()
+    }
+
+    #[inline]
+    fn ref_count(&self) -> RefCount {
+        self.inner.ref_count()
     }
 }
 
@@ -351,6 +364,11 @@ impl Bytes {
             Err(self)
         }
     }
+
+    #[inline]
+    fn ref_count(&self) -> RefCount {
+        self.inner.ref_count()
+    }
 }
 
 impl Buf for Bytes {
@@ -363,10 +381,16 @@ impl Buf for Bytes {
         Self: 'a;
 
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-        if let Some((start, end)) = range
+        let (start, end) = range
             .into()
-            .indices_checked_in(self.inner.offset, self.inner.offset + self.inner.len)?
-        {
+            .indices_checked_in(self.inner.offset, self.inner.offset + self.inner.len)?;
+
+        if start == end {
+            Ok(Self {
+                inner: BytesInner::default(),
+            })
+        }
+        else {
             Ok(Self {
                 inner: BytesInner {
                     buf: self.inner.buf.clone(),
@@ -375,27 +399,18 @@ impl Buf for Bytes {
                 },
             })
         }
-        else {
-            Ok(Self {
-                inner: BytesInner::default(),
-            })
-        }
     }
 
     fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        if let Some((start, end)) = range
+        let (start, end) = range
             .into()
-            .indices_checked_in(self.inner.offset, self.inner.offset + self.inner.len)?
-        {
-            Ok(SingleChunk::new(&self.bytes()[start..end]))
-        }
-        else {
-            Ok(SingleChunk::new(b""))
-        }
+            .indices_checked_in(self.inner.offset, self.inner.offset + self.inner.len)?;
+        Ok(SingleChunk::new(&self.bytes()[start..end]))
     }
 
+    #[inline]
     fn len(&self) -> usize {
-        todo!()
+        self.inner.len
     }
 }
 
@@ -455,6 +470,11 @@ impl BytesInner {
                 })
         }
     }
+
+    #[inline]
+    fn ref_count(&self) -> RefCount {
+        unsafe { self.buf.0.ref_count() }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -476,7 +496,7 @@ struct Buffer {
     ///
     /// This may be `null` if the buffer is zero-sized. This means that no
     /// buffer was allocated for it, and thus must not be deallocated.
-    ref_count: *const RefCount,
+    ref_count: *const AtomicRefCount,
 }
 
 impl Buffer {
@@ -502,6 +522,16 @@ impl Buffer {
         let _ref_count = Box::from_raw(self.ref_count as *mut AtomicUsize);
         let _buf = Box::from_raw(self.buf as *mut [UnsafeCell<MaybeUninit<u8>>]);
     }
+
+    #[inline]
+    unsafe fn ref_count(&self) -> RefCount {
+        if self.ref_count.is_null() {
+            RefCount::Static
+        }
+        else {
+            unsafe { RefCount::from_atomic(&*self.ref_count) }
+        }
+    }
 }
 
 struct BufferOwned(Buffer);
@@ -513,7 +543,7 @@ impl BufferOwned {
         }
         else {
             // allocate ref_count
-            let ref_count = Box::into_raw(Box::new(RefCount::new()));
+            let ref_count = Box::into_raw(Box::new(AtomicRefCount::new()));
 
             // allocate buffer
             let buf = Box::<[u8]>::new_uninit_slice(size);
@@ -583,7 +613,7 @@ impl BufferRef {
     /// buffer, and that the range is valid.
     #[inline]
     unsafe fn bytes<'a>(&'a self, range: impl Into<Range>) -> &'a [MaybeUninit<u8>] {
-        let ptr = self.0.buf.get_unchecked(range.into().index());
+        let ptr = self.0.buf.get_unchecked(range.into().as_slice_index());
         std::slice::from_raw_parts(UnsafeCell::raw_get(ptr.as_ptr()), ptr_len(ptr))
     }
 
@@ -594,7 +624,7 @@ impl BufferRef {
     /// slice.
     #[inline]
     unsafe fn bytes_mut<'a>(&'a self, range: impl Into<Range>) -> &'a mut [MaybeUninit<u8>] {
-        let ptr = self.0.buf.get_unchecked(range.into().index());
+        let ptr = self.0.buf.get_unchecked(range.into().as_slice_index());
         std::slice::from_raw_parts_mut(UnsafeCell::raw_get(ptr.as_ptr()), ptr_len(ptr))
     }
 
@@ -662,9 +692,9 @@ impl Drop for BufferRef {
 /// [`BufferOwned`]. This is encoded as the least significant bit.
 ///
 /// [`Buffers`] can have any number of references through [`BufferRef`].
-struct RefCount(AtomicUsize);
+struct AtomicRefCount(AtomicUsize);
 
-impl RefCount {
+impl AtomicRefCount {
     #[inline]
     fn new() -> Self {
         Self(AtomicUsize::new(3))
@@ -716,9 +746,45 @@ impl RefCount {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum RefCount {
+    Static,
+    SlabManaged { ref_count: usize },
+    Orphaned { ref_count: usize },
+}
+
+impl RefCount {
+    fn from_atomic(value: &AtomicRefCount) -> Self {
+        let value = value.0.load(Ordering::Relaxed);
+        let ref_count = value >> 1;
+        if value & 1 != 0 {
+            Self::SlabManaged { ref_count }
+        }
+        else {
+            Self::Orphaned { ref_count }
+        }
+    }
+
+    #[inline]
+    pub fn ref_count(&self) -> Option<usize> {
+        match self {
+            Self::Static => None,
+            Self::SlabManaged { ref_count } | Self::Orphaned { ref_count } => Some(*ref_count),
+        }
+    }
+
+    #[inline]
+    pub fn is_orphaned(&self) -> bool {
+        matches!(self, Self::Orphaned { .. })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Slab;
+    use super::{
+        RefCount,
+        Slab,
+    };
     use crate::util::bytes::{
         buf::WriteError,
         Buf,
@@ -822,5 +888,75 @@ mod tests {
 
         let bytes2 = bytes.clone();
         assert_eq!(bytes2.chunks(..).unwrap().next().unwrap(), b"abcd");
+    }
+
+    #[test]
+    fn it_increments_ref_count_on_clone() {
+        let mut slab = Slab::new(128, 32);
+        let mut bytes_mut = slab.get();
+        // if we don't write something into the buffer, we'll get a static (dangling,
+        // zero-sized) buffer.
+        bytes_mut.write(.., b"foobar", ..).unwrap();
+        let bytes = bytes_mut.freeze();
+
+        assert_eq!(bytes.ref_count().ref_count().unwrap(), 1);
+        let bytes2 = bytes.clone();
+        assert_eq!(bytes.ref_count().ref_count().unwrap(), 2);
+        assert_eq!(bytes2.ref_count().ref_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn it_decrements_ref_count_on_drop() {
+        let mut slab = Slab::new(128, 32);
+        let mut bytes_mut = slab.get();
+        // if we don't write something into the buffer, we'll get a static (dangling,
+        // zero-sized) buffer.
+        bytes_mut.write(.., b"foobar", ..).unwrap();
+        let bytes = bytes_mut.freeze();
+        let bytes2 = bytes.clone();
+
+        assert_eq!(bytes.ref_count().ref_count().unwrap(), 2);
+        assert_eq!(bytes2.ref_count().ref_count().unwrap(), 2);
+        drop(bytes2);
+        assert_eq!(bytes.ref_count().ref_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn it_orphanes_buffers() {
+        let mut slab = Slab::new(128, 32);
+        let bytes_mut = slab.get();
+
+        assert!(!bytes_mut.ref_count().is_orphaned());
+        drop(slab);
+        assert!(bytes_mut.ref_count().is_orphaned());
+    }
+
+    #[test]
+    fn empty_bytes_are_not_ref_counted() {
+        let mut slab = Slab::new(128, 32);
+        let bytes_mut = slab.get();
+        let bytes = bytes_mut.freeze();
+
+        assert!(matches!(bytes.ref_count(), RefCount::Static));
+    }
+
+    #[test]
+    fn it_reuses_buffers() {
+        let mut slab = Slab::new(128, 32);
+        assert_eq!(slab.num_in_use(), 0);
+        assert_eq!(slab.num_available(), 0);
+
+        let bytes_mut = slab.get();
+        let buf_ptr = bytes_mut.inner.buf.0.buf;
+        assert_eq!(slab.num_in_use(), 1);
+        assert_eq!(slab.num_available(), 0);
+
+        drop(bytes_mut);
+        let bytes_mut = slab.get();
+        let buf2_ptr = bytes_mut.inner.buf.0.buf;
+        assert_eq!(slab.num_in_use(), 1);
+        assert_eq!(slab.num_available(), 0);
+
+        assert_eq!(buf_ptr, buf2_ptr);
     }
 }

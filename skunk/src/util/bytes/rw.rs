@@ -1,7 +1,4 @@
-use std::{
-    marker::PhantomData,
-    ops::Bound,
-};
+use std::marker::PhantomData;
 
 use skunk_macros::for_tuple;
 pub use skunk_macros::{
@@ -11,9 +8,9 @@ pub use skunk_macros::{
 
 use super::{
     buf::{
+        chunks::NonEmptyIter,
         Buf,
         BufMut,
-        NonEmptyIter,
         WriteError,
     },
     copy::{
@@ -330,10 +327,7 @@ impl<B> Cursor<B> {
 impl<B: Buf> Cursor<B> {
     #[inline]
     fn get_range(&self, n: usize) -> Range {
-        Range {
-            start: Bound::Included(self.offset),
-            end: Bound::Excluded(self.offset + n),
-        }
+        Range::default().with_start(self.offset).with_length(n)
     }
 }
 
@@ -374,10 +368,7 @@ pub struct View<B: Buf>(pub B);
 
 impl<'b, B: Buf<View<'b> = V> + 'b, V: Buf> Read<&'b mut Cursor<B>> for View<V> {
     fn read(reader: &'b mut Cursor<B>) -> Result<Self, End> {
-        let range = Range {
-            start: Bound::Included(reader.offset),
-            end: Bound::Unbounded,
-        };
+        let range = Range::default().with_start(reader.offset);
         let view = reader
             .buf
             .view(range)

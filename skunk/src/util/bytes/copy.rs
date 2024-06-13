@@ -5,7 +5,7 @@ use super::{
     RangeOutOfBounds,
 };
 use crate::util::{
-    bytes::buf::NonEmptyIter,
+    bytes::buf::chunks::NonEmptyIter,
     Peekable,
 };
 
@@ -168,7 +168,7 @@ pub struct CopyChunksResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::bytes::buf::{
+    use crate::util::bytes::buf::chunks::{
         SingleChunk,
         SingleChunkMut,
     };

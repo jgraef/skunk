@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     fmt::Debug,
     ops::{
         Bound,
@@ -7,19 +6,27 @@ use std::{
     },
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Range {
-    pub start: Bound<usize>,
-    pub end: Bound<usize>,
+    pub start: Option<usize>,
+    pub end: Option<usize>,
 }
 
 impl Range {
     #[inline]
-    pub fn from_range_bounds(range: impl RangeBounds<usize>) -> Self {
-        Self {
-            start: range.start_bound().cloned(),
-            end: range.end_bound().cloned(),
-        }
+    fn from_range_bounds(range: impl RangeBounds<usize>) -> Self {
+        let start = match range.start_bound() {
+            Bound::Included(start) => Some(*start),
+            Bound::Excluded(start) => Some(*start + 1),
+            Bound::Unbounded => None,
+        };
+        let end = match range.end_bound() {
+            Bound::Included(end) => Some(*end + 1),
+            Bound::Excluded(end) => Some(*end),
+            Bound::Unbounded => None,
+        };
+
+        Self { start, end }
     }
 }
 
@@ -53,8 +60,8 @@ impl From<usize> for Range {
     #[inline]
     fn from(value: usize) -> Self {
         Self {
-            start: Bound::Included(value),
-            end: Bound::Included(value),
+            start: Some(value),
+            end: Some(value + 1),
         }
     }
 }
@@ -66,14 +73,51 @@ impl<'a> From<&'a Range> for Range {
     }
 }
 
-impl Range {
+impl From<(usize, usize)> for Range {
     #[inline]
-    pub fn index(&self) -> (Bound<usize>, Bound<usize>) {
-        (self.start, self.end)
+    fn from((start, end): (usize, usize)) -> Self {
+        Self {
+            start: Some(start),
+            end: Some(end),
+        }
+    }
+}
+
+impl Range {
+    pub fn with_start(mut self, start: usize) -> Self {
+        self.start = Some(start);
+        self
+    }
+
+    pub fn with_end(mut self, end: usize) -> Self {
+        self.end = Some(end);
+        self
+    }
+
+    /// # Panic
+    ///
+    /// Panics if `self.start.is_none()`.
+    pub fn with_length(mut self, length: usize) -> Self {
+        self.end = Some(self.start.expect("Range::with_length called without start") + length);
+        self
+    }
+
+    #[inline]
+    pub fn as_slice_index(&self) -> (Bound<usize>, Bound<usize>) {
+        (
+            match self.start {
+                None => Bound::Unbounded,
+                Some(start) => Bound::Included(start),
+            },
+            match self.end {
+                None => Bound::Unbounded,
+                Some(end) => Bound::Excluded(end),
+            },
+        )
     }
 
     pub fn slice_get<'a>(&self, slice: &'a [u8]) -> Result<&'a [u8], RangeOutOfBounds> {
-        slice.get(self.index()).ok_or_else(|| {
+        slice.get(self.as_slice_index()).ok_or_else(|| {
             RangeOutOfBounds {
                 required: *self,
                 bounds: (0, slice.len()),
@@ -83,7 +127,7 @@ impl Range {
 
     pub fn slice_get_mut<'a>(&self, slice: &'a mut [u8]) -> Result<&'a mut [u8], RangeOutOfBounds> {
         let buf_length = slice.len();
-        slice.get_mut(self.index()).ok_or_else(|| {
+        slice.get_mut(self.as_slice_index()).ok_or_else(|| {
             RangeOutOfBounds {
                 required: *self,
                 bounds: (0, buf_length),
@@ -91,25 +135,12 @@ impl Range {
         })
     }
 
-    pub fn start(&self) -> Option<usize> {
-        match self.start {
-            Bound::Included(bound) => Some(bound),
-            Bound::Excluded(bound) => Some(bound + 1),
-            Bound::Unbounded => None,
-        }
-    }
-
-    pub fn end(&self) -> Option<usize> {
-        match self.end {
-            Bound::Included(bound) => Some(bound + 1),
-            Bound::Excluded(bound) => Some(bound),
-            Bound::Unbounded => None,
-        }
-    }
-
     pub fn indices_unchecked_in(&self, start: usize, end: usize) -> (usize, usize) {
-        let index_start = self.start().unwrap_or_default() + start;
-        let index_end = self.end().map_or(end, |i| i + start);
+        let index_start = self.start.unwrap_or_default() + start;
+        let mut index_end = self.end.map_or(end, |i| i + start);
+        if index_end < index_start {
+            index_end = index_start;
+        }
         (index_start, index_end)
     }
 
@@ -117,18 +148,44 @@ impl Range {
         &self,
         start: usize,
         end: usize,
-    ) -> Result<Option<(usize, usize)>, RangeOutOfBounds> {
-        let (start, end) = self.indices_unchecked_in(start, end);
-        match start.cmp(&end) {
-            Ordering::Equal => Ok(None),
-            Ordering::Less => Ok(Some((start, end))),
-            Ordering::Greater => {
-                Err(RangeOutOfBounds {
-                    required: *self,
-                    bounds: (start, end),
-                })
+    ) -> Result<(usize, usize), RangeOutOfBounds> {
+        let err = || {
+            Err(RangeOutOfBounds {
+                required: *self,
+                bounds: (start, end),
+            })
+        };
+
+        let index_start = if let Some(range_start) = self.start {
+            let index_start = range_start + start;
+            if index_start > end {
+                return err();
             }
+            index_start
         }
+        else {
+            start
+        };
+
+        let index_end = if let Some(range_end) = self.end {
+            let index_end = range_end + start;
+            if index_end > end {
+                return err();
+            }
+
+            // for now we will return RangeOutOfBounds, even though it should be
+            // InvalidRange or something
+            if index_end < index_start {
+                return err();
+            }
+
+            index_end
+        }
+        else {
+            end
+        };
+
+        Ok((index_start, index_end))
     }
 
     #[inline]
@@ -139,11 +196,11 @@ impl Range {
 
     pub fn contains(&self, other: impl Into<Range>) -> bool {
         let other = other.into();
-        match (self.start(), other.start()) {
+        match (self.start, other.start) {
             (Some(left), Some(right)) if left > right => return false,
             _ => {}
         }
-        match (self.end(), other.end()) {
+        match (self.end, other.end) {
             (Some(left), Some(right)) if left < right => false,
             _ => true,
         }
@@ -155,11 +212,11 @@ impl Range {
     }
 
     pub fn contains_index(&self, index: usize) -> bool {
-        match self.start() {
+        match self.start {
             Some(start) if start > index => return false,
             _ => {}
         }
-        match self.end() {
+        match self.end {
             Some(end) if end < index => false,
             _ => true,
         }
@@ -168,16 +225,12 @@ impl Range {
 
 impl Debug for Range {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.start {
-            Bound::Included(start) => write!(f, "{start}")?,
-            Bound::Excluded(start) => write!(f, "{}", start + 1)?,
-            Bound::Unbounded => {}
+        if let Some(start) = self.start {
+            write!(f, "{start}")?;
         }
         write!(f, "..")?;
-        match self.end {
-            Bound::Included(end) => write!(f, "{end}")?,
-            Bound::Excluded(end) => write!(f, "={end}")?,
-            Bound::Unbounded => {}
+        if let Some(end) = self.end {
+            write!(f, "{end}")?;
         }
         Ok(())
     }
@@ -198,10 +251,10 @@ mod tests {
     fn unbounded_range() {
         let r = Range::from(..);
 
-        assert_eq!(r.start(), None);
-        assert_eq!(r.end(), None);
+        assert_eq!(r.start, None);
+        assert_eq!(r.end, None);
         assert_eq!(r.indices_unchecked_in(12, 34), (12, 34));
-        assert_eq!(r.indices_checked_in(12, 34).unwrap(), Some((12, 34)));
+        assert_eq!(r.indices_checked_in(12, 34).unwrap(), (12, 34));
         assert_eq!(r.len_in(12, 34), 34 - 12);
     }
 
@@ -209,10 +262,10 @@ mod tests {
     fn range_with_upper_bound() {
         let r = Range::from(..4);
 
-        assert_eq!(r.start(), None);
-        assert_eq!(r.end(), Some(4));
+        assert_eq!(r.start, None);
+        assert_eq!(r.end, Some(4));
         assert_eq!(r.indices_unchecked_in(12, 34), (12, 16));
-        assert_eq!(r.indices_checked_in(12, 34).unwrap(), Some((12, 16)));
+        assert_eq!(r.indices_checked_in(12, 34).unwrap(), (12, 16));
         assert_eq!(r.len_in(12, 34), 4);
     }
 }
