@@ -757,13 +757,25 @@ mod tests {
     }
 
     #[test]
-    fn write_with_overwrite_and_fill() {
+    fn write_over_buf_end() {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
 
         bytes_mut.write(0..4, b"abcd", ..).unwrap();
         bytes_mut.write(2..6, b"efgh", ..).unwrap();
+
+        assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
+    }
+
+    #[test]
+    fn write_extend_with_unbounded_destination_slice() {
+        let mut slab = Slab::new(128, 32);
+
+        let mut bytes_mut = slab.get();
+
+        bytes_mut.write(0..4, b"abcd", ..).unwrap();
+        bytes_mut.write(2.., b"efgh", ..).unwrap();
 
         assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
     }

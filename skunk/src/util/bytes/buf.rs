@@ -658,3 +658,39 @@ impl From<usize> for SizeLimit {
         Self::Exact(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    mod vec {
+        use crate::util::bytes::buf::{
+            Buf,
+            BufMut,
+        };
+
+        #[test]
+        fn write_with_fill() {
+            let mut bytes_mut = Vec::<u8>::new();
+            bytes_mut.write(4..8, b"abcd", ..).unwrap();
+            assert_eq!(
+                bytes_mut.chunks(..).unwrap().next().unwrap(),
+                b"\x00\x00\x00\x00abcd"
+            );
+        }
+
+        #[test]
+        fn write_over_buf_end() {
+            let mut bytes_mut = Vec::<u8>::new();
+            bytes_mut.write(0..4, b"abcd", ..).unwrap();
+            bytes_mut.write(2..6, b"efgh", ..).unwrap();
+            assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
+        }
+
+        #[test]
+        fn write_extend_with_unbounded_destination_slice() {
+            let mut bytes_mut = Vec::<u8>::new();
+            bytes_mut.write(0..4, b"abcd", ..).unwrap();
+            bytes_mut.write(2.., b"efgh", ..).unwrap();
+            assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
+        }
+    }
+}

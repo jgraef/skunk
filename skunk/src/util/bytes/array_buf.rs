@@ -245,3 +245,51 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
         N.into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ArrayBuf;
+    use crate::util::bytes::{
+        buf::WriteError,
+        Buf,
+        BufMut,
+    };
+
+    #[test]
+    fn write_with_fill() {
+        let mut bytes_mut = ArrayBuf::<128>::new();
+        bytes_mut.write(4..8, b"abcd", ..).unwrap();
+        assert_eq!(
+            bytes_mut.chunks(..).unwrap().next().unwrap(),
+            b"\x00\x00\x00\x00abcd"
+        );
+    }
+
+    #[test]
+    fn write_over_buf_end() {
+        let mut bytes_mut = ArrayBuf::<128>::new();
+        bytes_mut.write(0..4, b"abcd", ..).unwrap();
+        bytes_mut.write(2..6, b"efgh", ..).unwrap();
+        assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
+    }
+
+    #[test]
+    fn write_extend_with_unbounded_destination_slice() {
+        let mut bytes_mut = ArrayBuf::<128>::new();
+        bytes_mut.write(0..4, b"abcd", ..).unwrap();
+        bytes_mut.write(2.., b"efgh", ..).unwrap();
+        assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
+    }
+
+    #[test]
+    fn cant_write_more_than_buf_size() {
+        let mut bytes_mut = ArrayBuf::<4>::new();
+        assert_eq!(
+            bytes_mut.write(0..8, b"abcdefgh", 0..8).unwrap_err(),
+            WriteError::Full {
+                required: (0..8).into(),
+                buf_length: 4
+            }
+        );
+    }
+}
