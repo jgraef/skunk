@@ -2,12 +2,13 @@ mod cursor;
 pub mod read;
 pub mod write;
 
-pub use byst_macros::{
-    Read,
-    Write,
+pub use self::{
+    cursor::Cursor,
+    read::{
+        read,
+        Read,
+    },
 };
-
-pub use self::cursor::Cursor;
 use super::{
     buf::{
         chunks::NonEmptyIter,
@@ -32,6 +33,7 @@ impl End {
         }
     }
 
+    #[allow(dead_code)]
     fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
         // todo: we could do some checks here, if it's really an error that can be
         // interpreted as end of buffer.
@@ -128,5 +130,98 @@ mod todo {
             let (iter, peeked) = self.inner.into_parts();
             (iter.0, peeked)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::marker::PhantomData;
+
+    use super::{
+        read,
+        Cursor,
+        Read,
+    };
+
+    #[test]
+    #[allow(dead_code)]
+    fn derive_read_for_struct_of_basic_types() {
+        #[derive(Read)]
+        struct Foo {
+            x1: u8,
+            x2: i8,
+
+            #[byst(big)]
+            x3: u16,
+            #[byst(little)]
+            x4: u16,
+            #[byst(big)]
+            x5: i16,
+            #[byst(little)]
+            x6: i16,
+
+            #[byst(big)]
+            x7: u32,
+            #[byst(little)]
+            x8: u32,
+            #[byst(big)]
+            x9: i32,
+            #[byst(little)]
+            x10: i32,
+
+            #[byst(big)]
+            x11: u64,
+            #[byst(little)]
+            x12: u64,
+            #[byst(big)]
+            x13: i64,
+            #[byst(little)]
+            x14: i64,
+
+            #[byst(big)]
+            x15: u128,
+            #[byst(little)]
+            x16: u128,
+            #[byst(big)]
+            x17: i128,
+            #[byst(little)]
+            x18: i128,
+
+            x19: (),
+            x20: PhantomData<()>,
+            x21: [u8; 4],
+        }
+
+        let mut cursor = Cursor::new(b"");
+        let _ = read!(cursor => Foo);
+    }
+
+    #[test]
+    #[allow(dead_code)]
+    fn derive_read_for_nested_struct() {
+        #[derive(Read)]
+        struct Bar(u8);
+        #[derive(Read)]
+        struct Foo(Bar);
+
+        let mut cursor = Cursor::new(b"");
+        let _ = read!(cursor => Foo);
+    }
+
+    #[test]
+    fn derive_read_uses_specified_endianness() {
+        #[derive(Read)]
+        struct Foo {
+            #[byst(big)]
+            x: u16,
+            #[byst(little)]
+            y: u16,
+        }
+
+        let mut cursor = Cursor::new(b"\x12\x34\x12\x34");
+        let foo: Foo = read!(cursor).unwrap();
+
+        assert_eq!(foo.x, 0x1234);
+        assert_eq!(foo.y, 0x3412);
     }
 }

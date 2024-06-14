@@ -7,8 +7,8 @@
 
 use super::io::{
     read::{
+        Read,
         ReadIntoBuf,
-        ReadXe,
     },
     write::{
         WriteFromBuf,
@@ -62,7 +62,7 @@ impl sealed::Sealed for NativeEndian {}
 /// Network byte order.
 ///
 /// This is always big endian.
-pub type NetworkEndian = BigEndian;
+pub use self::BigEndian as NetworkEndian;
 
 /// Trait defining what length in bytes.
 pub trait Size {
@@ -123,10 +123,10 @@ macro_rules! impl_endianness {
             }
         }
 
-        impl<R: ReadIntoBuf> ReadXe<R, $endianness> for $ty
+        impl<R: ReadIntoBuf> Read<R, $endianness> for $ty
         {
             #[inline]
-            fn read(mut reader: R) -> Result<Self, End> {
+            fn read(mut reader: R, _parameters: $endianness) -> Result<Self, End> {
                 let mut buf = [0u8; $bytes];
                 reader.read_into_buf(&mut buf)?;
                 Ok(<$ty>::$from_bytes(buf))

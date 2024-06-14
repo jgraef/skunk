@@ -38,12 +38,12 @@ pub struct EthernetFrame<Payload> {
     pub frame_check_sequence: u32,
 }
 
-impl<R, Payload> Read<R> for EthernetFrame<Payload>
+impl<R, Payload> Read<R, ()> for EthernetFrame<Payload>
 where
     R: ReadIntoBuf,
-    Payload: for<'r> Read<&'r mut R>,
+    Payload: for<'r> Read<&'r mut R, ()>,
 {
-    fn read(mut reader: R) -> Result<Self, End> {
+    fn read(mut reader: R, _params: ()) -> Result<Self, End> {
         let destination = read!(reader)?;
         let source = read!(reader)?;
 
@@ -57,7 +57,7 @@ where
 
         let payload = read!(reader)?;
 
-        let frame_check_sequence = read!(reader as NetworkEndian)?;
+        let frame_check_sequence = read!(reader; NetworkEndian)?;
 
         Ok(Self {
             destination,
@@ -86,17 +86,17 @@ pub struct EtherType(#[byst(network)] pub u16);
 
 impl EtherType {
     /// Internet protocol version 4
-    const IPV4: Self = Self(0x0800);
+    pub const IPV4: Self = Self(0x0800);
 
     /// Address resolution protocol
-    const ARP: Self = Self(0x0806);
+    pub const ARP: Self = Self(0x0806);
 
     /// Wake-on-LAN
-    const WAKE_ON_LAN: Self = Self(0x0842);
+    pub const WAKE_ON_LAN: Self = Self(0x0842);
 
     /// VLAN-tagged frame (IEEE 802.1Q)
-    const VLAN_TAGGED: Self = Self(0x8100);
+    pub const VLAN_TAGGED: Self = Self(0x8100);
 
     /// Internet protocol version 6
-    const IPV6: Self = Self(0x86dd);
+    pub const IPV6: Self = Self(0x86dd);
 }

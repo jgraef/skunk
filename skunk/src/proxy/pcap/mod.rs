@@ -1,5 +1,5 @@
 pub mod ap;
-pub mod arp;
+//pub mod arp;
 pub mod dhcp;
 pub mod ethernet;
 pub mod interface;
@@ -23,7 +23,7 @@ pub enum Error {
     Send(#[from] self::packet::SendError),
     Receive(#[from] self::packet::ReceiveError),
     Dhcp(#[from] self::dhcp::Error),
-    Arp(#[from] self::arp::Error),
+    //Arp(#[from] self::arp::Error),
 }
 
 impl From<nix::Error> for Error {

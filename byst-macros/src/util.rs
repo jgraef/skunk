@@ -1,4 +1,3 @@
-use darling::FromDeriveInput;
 use proc_macro2::{
     Span,
     TokenStream,
@@ -9,7 +8,6 @@ use proc_macro_error::{
 };
 use quote::{
     quote,
-    quote_spanned,
     ToTokens,
 };
 use syn::{
@@ -27,46 +25,53 @@ use syn::{
     Index,
     Lifetime,
     LifetimeParam,
+    Member,
     TypeParam,
     WhereClause,
 };
 
-use crate::{
-    error::Error,
-    options::DeriveOptions,
-};
+use crate::error::Error;
 
 pub fn derive_helper(
     input: proc_macro::TokenStream,
-    deriver: impl FnOnce(DeriveInput, DeriveOptions) -> Result<TokenStream, Error>,
+    deriver: impl FnOnce(DeriveInput) -> Result<TokenStream, Error>,
 ) -> proc_macro::TokenStream {
     let item = parse_macro_input!(input as DeriveInput);
 
-    let options = match DeriveOptions::from_derive_input(&item) {
-        Ok(options) => options,
-        Err(e) => {
-            return Error::from(e).write_errors().into();
-        }
-    };
-
-    match deriver(item, options) {
+    match deriver(item) {
         Ok(output) => output.into(),
         Err(e) => e.write_errors().into(),
     }
 }
 
-pub fn field_name(index: usize, field: &Field) -> (Span, TokenStream) {
-    field.ident.as_ref().map_or_else(
-        || {
+#[derive(Clone)]
+pub struct FieldName {
+    pub span: Span,
+    pub member: Member,
+    pub var: Ident,
+}
+
+impl FieldName {
+    pub fn from_field(index: usize, field: &Field) -> Self {
+        if let Some(ident) = &field.ident {
+            Self {
+                span: ident.span(),
+                member: Member::Named(ident.clone()),
+                var: ident.clone(),
+            }
+        }
+        else {
             let span = field.ty.span();
-            let index = Index {
-                index: index as u32,
+            Self {
                 span,
-            };
-            (span, quote_spanned! { field.ty.span() => #index })
-        },
-        |ident| (ident.span(), quote! { #ident }),
-    )
+                member: Member::Unnamed(Index {
+                    index: index as u32,
+                    span,
+                }),
+                var: Ident::new(&format!("_{index}"), span),
+            }
+        }
+    }
 }
 
 pub fn make_where_clause(where_clause: Option<&WhereClause>) -> WhereClause {

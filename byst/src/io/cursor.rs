@@ -1,8 +1,5 @@
 use super::{
-    read::{
-        Read,
-        ReadIntoBuf,
-    },
+    read::ReadIntoBuf,
     write::WriteFromBuf,
     End,
     Full,
@@ -85,7 +82,7 @@ impl<B: BufMut> WriteFromBuf for Cursor<B> {
 )]
 pub struct View<B: Buf>(pub B);
 
-impl<'b, B: Buf<View<'b> = V> + 'b, V: Buf> Read<&'b mut Cursor<B>> for View<V> {
+/*impl<'b, B: Buf<View<'b> = V> + 'b, V: Buf> Read<&'b mut Cursor<B>> for View<V> {
     fn read(reader: &'b mut Cursor<B>) -> Result<Self, End> {
         let range = Range::default().with_start(reader.offset);
         let view = reader
@@ -95,7 +92,7 @@ impl<'b, B: Buf<View<'b> = V> + 'b, V: Buf> Read<&'b mut Cursor<B>> for View<V> 
         reader.offset += view.len();
         Ok(View(view))
     }
-}
+}*/
 
 impl<B: Buf> Skip for Cursor<B> {
     fn skip(&mut self, n: usize) -> Result<(), End> {

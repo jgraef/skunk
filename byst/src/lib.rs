@@ -18,7 +18,6 @@ pub mod endianness;
 pub mod hexdump;
 pub mod io;
 mod range;
-pub mod rw;
 pub mod slab;
 pub mod util;
 
@@ -43,6 +42,9 @@ pub use self::{
         RangeOutOfBounds,
     },
 };
+
+// hack to get the proc-macro working from this crate
+extern crate self as byst;
 
 pub trait BitFieldExtract<O> {
     fn extract(&self, start: usize, bits: usize) -> O;

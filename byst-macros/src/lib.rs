@@ -26,7 +26,7 @@ use crate::{
 /// the fields in the order they appear in the declaration.
 ///
 /// ```ignore
-/// # use skunk_macros::Read;
+/// # use byst_macros::Read;
 /// # type NetworkEndian = ();
 /// # type Bar = ();
 ///
@@ -80,7 +80,7 @@ pub fn derive_write(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// # Example
 ///
 /// ```
-/// # use skunk_macros::for_tuple;
+/// # use byst_macros::for_tuple;
 /// # trait Foo { fn foo(&self); }
 /// macro_rules! impl_tuple {
 ///     ($($index:tt => $name:ident : $ty:ident),*) => {
@@ -117,7 +117,7 @@ pub fn for_tuple(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// # Example
 ///
 /// ```
-/// # use skunk_macros::bit_range;
+/// # use byst_macros::bit_range;
 /// let x = bit_range!(4..=8);
 /// ```
 #[proc_macro]

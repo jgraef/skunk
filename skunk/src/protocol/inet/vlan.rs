@@ -2,9 +2,9 @@ use byst::{
     endianness::NetworkEndian,
     io::{
         read::{
+            read,
             Read,
             ReadIntoBuf,
-            ReadXe,
         },
         write::{
             Write,
@@ -26,9 +26,9 @@ pub struct VlanTag {
     pub vlan_identifier: VlanIdentifier,
 }
 
-impl<R: ReadIntoBuf> Read<R> for VlanTag {
-    fn read(reader: R) -> Result<Self, End> {
-        let value: u16 = ReadXe::<_, NetworkEndian>::read(reader)?;
+impl<R: ReadIntoBuf> Read<R, ()> for VlanTag {
+    fn read(mut reader: R, _params: ()) -> Result<Self, End> {
+        let value: u16 = read!(reader; NetworkEndian)?;
         let priority_code_point = PriorityCodePoint((value >> 13) as u8);
         let drop_eligible = value & 0x1000 != 0;
         let vlan_identifier = VlanIdentifier(value & 0xfff);

@@ -1,4 +1,7 @@
-use darling::FromField;
+use darling::{
+    FromDeriveInput,
+    FromField,
+};
 use proc_macro2::TokenStream;
 use proc_macro_error::abort;
 use quote::quote;
@@ -13,37 +16,26 @@ use crate::{
     error::Error,
     options::{
         Bitfield,
-        DeriveOptions,
         FieldOptions,
+        StructDeriveOptions,
     },
     util::{
-        field_name,
+        FieldName,
         SplitGenerics,
     },
 };
 
-pub fn derive_write(item: DeriveInput, options: DeriveOptions) -> Result<TokenStream, Error> {
+pub fn derive_write(item: DeriveInput) -> Result<TokenStream, Error> {
     let ident = &item.ident;
-    if let Some(bitfield) = &options.bitfield {
-        match &item.data {
-            Data::Struct(s) => derive_write_for_struct_bitfield(s, bitfield, &item, &options),
-            _ => abort!(ident, "Bitfields can only be derived on structs."),
-        }
-    }
-    else {
-        match &item.data {
-            Data::Struct(s) => derive_write_for_struct(&s, &item, &options),
-            Data::Enum(_) => todo!(),
-            Data::Union(_) => abort!(ident, "Write can't be derive on unions."),
-        }
+    match &item.data {
+        Data::Struct(s) => derive_write_for_struct(&s, &item),
+        Data::Enum(_) => todo!(),
+        Data::Union(_) => abort!(ident, "Write can't be derive on unions."),
     }
 }
 
-fn derive_write_for_struct(
-    s: &DataStruct,
-    item: &DeriveInput,
-    _options: &DeriveOptions,
-) -> Result<TokenStream, Error> {
+fn derive_write_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStream, Error> {
+    let _options = StructDeriveOptions::from_derive_input(&item)?;
     let ident = &item.ident;
     let SplitGenerics {
         mut impl_generics,
@@ -53,7 +45,11 @@ fn derive_write_for_struct(
     let mut write_fields = Vec::with_capacity(s.fields.len());
 
     for (i, field) in s.fields.iter().enumerate() {
-        let (_, field_name) = field_name(i, field);
+        let FieldName {
+            span: _,
+            member: field_name,
+            var: _,
+        } = FieldName::from_field(i, field);
         let field_options = FieldOptions::from_field(&field)?;
         let field_ty = &field.ty;
 
@@ -92,7 +88,6 @@ fn derive_write_for_struct_bitfield(
     _s: &DataStruct,
     _bitfield: &Bitfield,
     _item: &DeriveInput,
-    _options: &DeriveOptions,
 ) -> Result<TokenStream, Error> {
     todo!();
 }

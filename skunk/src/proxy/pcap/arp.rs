@@ -6,7 +6,10 @@
 
 use std::{
     collections::HashMap,
-    fmt::Display,
+    fmt::{
+        Debug,
+        Display,
+    },
     io::Write,
     net::{
         IpAddr,
@@ -22,11 +25,9 @@ use byst::io::{
     },
     Cursor,
 };
-pub use etherparse::{
-    ArpHardwareId as HardwareType,
-    EtherType as ProtocolType,
-};
 use futures::Future;
+
+pub type ProtocolType = crate::protocol::inet::ethernet::EtherType;
 
 use super::{
     packet::WritePacket,
@@ -55,101 +56,17 @@ pub enum EncodeError {
     Io(#[from] std::io::Error),
 }
 
+/// Length of ARP packet without addresses.
 const FIXED_SIZE: usize = 8;
-
-mod test {
-    use super::{
-        HardwareType,
-        Operation,
-        ProtocolType,
-        Read,
-    };
-
-    #[derive(Clone, Debug, Read)]
-    pub struct ArpPacketSlice<'a> {
-        pub hardware_type: HardwareType,
-        pub protocol_type: ProtocolType,
-        pub hardware_address_length: u8,
-        pub protocol_address_length: u8,
-        pub operation: Operation,
-        pub sender_hardware_address: &'a [u8],
-        pub sender_protocol_address: &'a [u8],
-        pub target_hardware_address: &'a [u8],
-        pub target_protocol_address: &'a [u8],
-    }
-}
 
 fn test_read() {
     let mut cursor = Cursor::new(b"");
-    //let arp = read!(cursor => ArpPacketSlice);
+    let arp = read!(cursor => ArpPacket<MacAddress, Ipv4Addr>).unwrap();
 
     todo!();
 }
 
-pub use test::ArpPacketSlice;
-
-impl<'a> ArpPacketSlice<'a> {
-    pub fn from_bytes(_bytes: &'a [u8]) -> Result<Self, DecodeError> {
-        /*let mut reader = Cursor::new(bytes);
-
-        let hardware_type = HardwareType(reader.read_u16::<NetworkEndian>()?);
-        let protocol_type = ProtocolType(reader.read_u16::<NetworkEndian>()?);
-        let hardware_address_length = reader.read_u8()?;
-        let protocol_address_length = reader.read_u8()?;
-        let operation = Operation::try_from(reader.read_u16::<NetworkEndian>()?)?;
-        let sender_hardware_address = reader.read_slice(hardware_address_length)?;
-        let sender_protocol_address = reader.read_slice(protocol_address_length)?;
-        let target_hardware_address = reader.read_slice(hardware_address_length)?;
-        let target_protocol_address = reader.read_slice(protocol_address_length)?;
-
-        Ok(Self {
-            hardware_type,
-            protocol_type,
-            hardware_address_length,
-            protocol_address_length,
-            operation,
-            sender_hardware_address,
-            sender_protocol_address,
-            target_hardware_address,
-            target_protocol_address,
-        })*/
-        todo!();
-    }
-
-    pub fn len(&self) -> usize {
-        FIXED_SIZE
-            + usize::from(self.hardware_address_length) * 2
-            + usize::from(self.protocol_address_length) * 2
-    }
-
-    pub fn write(&self, _writer: impl Write) -> Result<(), EncodeError> {
-        /*writer.write_u16::<NetworkEndian>(self.hardware_type.0)?;
-        writer.write_u16::<NetworkEndian>(self.protocol_type.0)?;
-        writer.write_u8(self.hardware_address_length)?;
-        writer.write_u8(self.protocol_address_length)?;
-        writer.write_u16::<NetworkEndian>(self.operation.into())?;
-        writer.write_all(self.sender_hardware_address)?;
-        writer.write_all(self.sender_protocol_address)?;
-        writer.write_all(self.target_hardware_address)?;
-        writer.write_all(self.target_protocol_address)?;
-        Ok(())*/
-        todo!();
-    }
-}
-
-impl<'a> WritePacket for ArpPacketSlice<'a> {
-    fn write_packet(&self, writer: impl Write) -> Result<(), super::packet::EncodeError> {
-        self.write(writer).map_err(|e| {
-            // right now we can still do this because arp::EncodeError is always an
-            // std::io::Error.
-            match e {
-                EncodeError::Io(e) => e.into(),
-            }
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Read)]
 pub struct ArpPacket<H, P> {
     pub hardware_type: HardwareType,
     pub protocol_type: ProtocolType,
@@ -452,11 +369,20 @@ macro_rules! impl_ip_address {
 impl_ip_address!(Ipv4Addr, 4);
 impl_ip_address!(Ipv6Addr, 16);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Operation {
-    Request,
-    Reply,
+mod test2 {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Read)]
+    #[byst(discriminant(ty = "u16", big))]
+    pub enum Operation {
+        #[byst(discriminant = 1)]
+        Request,
+        #[byst(discriminant = 2)]
+        Reply,
+    }
 }
+
+pub use self::test2::Operation;
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid operation: {value}")]
@@ -593,4 +519,291 @@ where
     }
 
     Ok(())
+}
+
+/// Represents an ARP protocol hardware identifier.
+///
+/// You can access the underlying `u16` value by using `.0` and any `u16`
+/// can be converted to an [`HardwareType`]:
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Read, derive_more::From, derive_more::Into)]
+pub struct HardwareType(#[byst(network)] pub u16);
+
+impl HardwareType {
+    // Numbers sourced from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/linux/if_arp.h?id=e33c4963bf536900f917fb65a687724d5539bc21
+
+    /// from KA9Q: NET/ROM pseudo
+    pub const NETROM: Self = Self(0);
+
+    /// Ethernet 10Mbps
+    pub const ETHER: Self = Self(1);
+
+    /// Experimental Ethernet
+    pub const EETHER: Self = Self(2);
+
+    /// AX.25 Level 2
+    pub const AX25: Self = Self(3);
+
+    /// PROnet token ring
+    pub const PRONET: Self = Self(4);
+
+    /// Chaosnet
+    pub const CHAOS: Self = Self(5);
+
+    /// IEEE 802.2 Ethernet/TR/TB
+    pub const IEEE802: Self = Self(6);
+
+    /// ARCnet
+    pub const ARCNET: Self = Self(7);
+
+    /// APPLEtalk
+    pub const APPLETLK: Self = Self(8);
+
+    /// Frame Relay DLCI
+    pub const DLCI: Self = Self(15);
+
+    /// ATM
+    pub const ATM: Self = Self(19);
+
+    /// Metricom STRIP (new IANA id)
+    pub const METRICOM: Self = Self(23);
+
+    /// IEEE 1394 IPv4 - RFC 2734
+    pub const IEEE1394: Self = Self(24);
+
+    /// EUI-64
+    pub const EUI64: Self = Self(27);
+
+    /// InfiniBand
+    pub const INFINIBAND: Self = Self(32);
+
+    /// SLIP
+    pub const SLIP: Self = Self(256);
+
+    /// CSLIP
+    pub const CSLIP: Self = Self(257);
+
+    /// SLIP6
+    pub const SLIP6: Self = Self(258);
+
+    /// CSLIP6
+    pub const CSLIP6: Self = Self(259);
+
+    /// Notional KISS type
+    pub const RSRVD: Self = Self(260);
+
+    /// ADAPT
+    pub const ADAPT: Self = Self(264);
+
+    /// ROSE
+    pub const ROSE: Self = Self(270);
+
+    /// CCITT X.25
+    pub const X25: Self = Self(271);
+
+    /// Boards with X.25 in firmware
+    pub const HWX25: Self = Self(272);
+
+    /// Controller Area Network
+    pub const CAN: Self = Self(280);
+
+    /// PPP
+    pub const PPP: Self = Self(512);
+
+    /// Cisco HDLC
+    pub const CISCO_HDLC: Self = Self(513);
+
+    /// LAPB
+    pub const LAPB: Self = Self(516);
+
+    /// Digital's DDCMP protocol
+    pub const DDCMP: Self = Self(517);
+
+    /// Raw HDLC
+    pub const RAWHDLC: Self = Self(518);
+
+    /// Raw IP
+    pub const RAWIP: Self = Self(519);
+
+    /// IPIP tunnel
+    pub const TUNNEL: Self = Self(768);
+
+    /// IP6IP6 tunnel
+    pub const TUNNEL6: Self = Self(769);
+
+    /// Frame Relay Access Device
+    pub const FRAD: Self = Self(770);
+
+    /// SKIP vif
+    pub const SKIP: Self = Self(771);
+
+    /// Loopback device
+    pub const LOOPBACK: Self = Self(772);
+
+    /// Localtalk device
+    pub const LOCALTLK: Self = Self(773);
+
+    /// Fiber Distributed Data Interface
+    pub const FDDI: Self = Self(774);
+
+    /// AP1000 BIF
+    pub const BIF: Self = Self(775);
+
+    /// sit0 device - IPv6-in-IPv4
+    pub const SIT: Self = Self(776);
+
+    /// IP over DDP tunneller
+    pub const IPDDP: Self = Self(777);
+
+    /// GRE over IP
+    pub const IPGRE: Self = Self(778);
+
+    /// PIMSM register interface
+    pub const PIMREG: Self = Self(779);
+
+    /// High Performance Parallel Interface
+    pub const HIPPI: Self = Self(780);
+
+    /// Nexus 64Mbps Ash
+    pub const ASH: Self = Self(781);
+
+    /// Acorn Econet
+    pub const ECONET: Self = Self(782);
+
+    /// Linux-IrDA
+    pub const IRDA: Self = Self(783);
+
+    /// Point to point fibrechannel
+    pub const FCPP: Self = Self(784);
+
+    /// Fibrechannel arbitrated loop
+    pub const FCAL: Self = Self(785);
+
+    /// Fibrechannel public loop
+    pub const FCPL: Self = Self(786);
+
+    /// Fibrechannel fabric
+    pub const FCFABRIC: Self = Self(787);
+
+    /// Magic type ident for TR
+    pub const IEEE802_TR: Self = Self(800);
+
+    /// IEEE 802.11
+    pub const IEEE80211: Self = Self(801);
+
+    /// IEEE 802.11 + Prism2 header
+    pub const IEEE80211_PRISM: Self = Self(802);
+
+    /// IEEE 802.11 + radiotap header
+    pub const IEEE80211_RADIOTAP: Self = Self(803);
+
+    /// IEEE 802.15.4
+    pub const IEEE802154: Self = Self(804);
+
+    /// IEEE 802.15.4 network monitor
+    pub const IEEE802154_MONITOR: Self = Self(805);
+
+    /// PhoNet media type
+    pub const PHONET: Self = Self(820);
+
+    /// PhoNet pipe header
+    pub const PHONET_PIPE: Self = Self(821);
+
+    /// CAIF media type
+    pub const CAIF: Self = Self(822);
+
+    /// GRE over IPv6
+    pub const IP6GRE: Self = Self(823);
+
+    /// Netlink header
+    pub const NETLINK: Self = Self(824);
+
+    /// IPv6 over LoWPAN
+    pub const IPV6LOWPAN: Self = Self(825);
+
+    /// Vsock monitor header
+    pub const VSOCKMON: Self = Self(826);
+
+    pub const VOID: Self = Self(0xFFFF);
+    pub const NONE: Self = Self(0xFFFE);
+
+    pub fn name(&self) -> Option<&'static str> {
+        Some(match *self {
+            Self::NETROM => "from KA9Q: NET/ROM pseudo",
+            Self::ETHER => "Ethernet 10Mbps",
+            Self::EETHER => "Experimental Ethernet",
+            Self::AX25 => "AX.25 Level 2",
+            Self::PRONET => "PROnet token ring",
+            Self::CHAOS => "Chaosnet",
+            Self::IEEE802 => "IEEE 802.2 Ethernet/TR/TB",
+            Self::ARCNET => "ARCnet",
+            Self::APPLETLK => "APPLEtalk",
+            Self::DLCI => "Frame Relay DLCI",
+            Self::ATM => "ATM",
+            Self::METRICOM => "Metricom STRIP (new IANA id)",
+            Self::IEEE1394 => "IEEE 1394 IPv4 - RFC 2734",
+            Self::EUI64 => "EUI-64",
+            Self::INFINIBAND => "InfiniBand",
+            Self::SLIP => "SLIP",
+            Self::CSLIP => "CSLIP",
+            Self::SLIP6 => "SLIP6",
+            Self::CSLIP6 => "CSLIP6",
+            Self::RSRVD => "Notional KISS type",
+            Self::ADAPT => "ADAPT",
+            Self::ROSE => "ROSE",
+            Self::X25 => "CCITT X.25",
+            Self::HWX25 => "Boards with X.25 in firmware",
+            Self::CAN => "Controller Area Network",
+            Self::PPP => "PPP",
+            Self::CISCO_HDLC => "Cisco HDLC",
+            Self::LAPB => "LAPB",
+            Self::DDCMP => "Digital's DDCMP protocol",
+            Self::RAWHDLC => "Raw HDLC",
+            Self::RAWIP => "Raw IP",
+            Self::TUNNEL => "IPIP tunnel",
+            Self::TUNNEL6 => "IP6IP6 tunnel",
+            Self::FRAD => "Frame Relay Access Device",
+            Self::SKIP => "SKIP vif",
+            Self::LOOPBACK => "Loopback device",
+            Self::LOCALTLK => "Localtalk device",
+            Self::FDDI => "Fiber Distributed Data Interface",
+            Self::BIF => "AP1000 BIF",
+            Self::SIT => "sit0 device - IPv6-in-IPv4",
+            Self::IPDDP => "IP over DDP tunneller",
+            Self::IPGRE => "GRE over IP",
+            Self::PIMREG => "PIMSM register interface",
+            Self::HIPPI => "High Performance Parallel Interface",
+            Self::ASH => "Nexus 64Mbps Ash",
+            Self::ECONET => "Acorn Econet",
+            Self::IRDA => "Linux-IrDA",
+            Self::FCPP => "Point to point fibrechannel",
+            Self::FCAL => "Fibrechannel arbitrated loop",
+            Self::FCPL => "Fibrechannel public loop",
+            Self::FCFABRIC => "Fibrechannel fabric",
+            Self::IEEE802_TR => "Magic type ident for TR",
+            Self::IEEE80211 => "IEEE 802.11",
+            Self::IEEE80211_PRISM => "IEEE 802.11 + Prism2 header",
+            Self::IEEE80211_RADIOTAP => "IEEE 802.11 + radiotap header",
+            Self::IEEE802154 => "IEEE 802.15.4",
+            Self::IEEE802154_MONITOR => "IEEE 802.15.4 network monitor",
+            Self::PHONET => "PhoNet media type",
+            Self::PHONET_PIPE => "PhoNet pipe header",
+            Self::CAIF => "CAIF media type",
+            Self::IP6GRE => "GRE over IPv6",
+            Self::NETLINK => "Netlink header",
+            Self::IPV6LOWPAN => "IPv6 over LoWPAN",
+            Self::VSOCKMON => "Vsock monitor header",
+            _ => return None,
+        })
+    }
+}
+
+impl Debug for HardwareType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = self.name() {
+            write!(f, "{} ({name})", self.0)
+        }
+        else {
+            write!(f, "{}", self.0)
+        }
+    }
 }

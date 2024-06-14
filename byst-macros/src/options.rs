@@ -2,23 +2,221 @@ use darling::{
     FromDeriveInput,
     FromField,
     FromMeta,
+    FromVariant,
 };
-use proc_macro2::TokenStream;
-use proc_macro_error::abort_call_site;
-use quote::quote;
-use syn::Path;
+use proc_macro2::Span;
+use proc_macro_error::{
+    abort,
+    abort_call_site,
+    emit_call_site_error,
+};
+use syn::{
+    parse_quote,
+    parse_quote_spanned,
+    Expr,
+    Ident,
+    Lit,
+    Pat,
+    Path,
+    Type,
+    WhereClause,
+};
 
 #[derive(FromDeriveInput)]
 #[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
-pub struct DeriveOptions {
+pub struct StructDeriveOptions {
     pub bitfield: Option<Bitfield>,
+    pub params: Option<ParamDeriveOptions>,
+}
+
+impl StructDeriveOptions {
+    pub fn params(&self) -> (Ident, Type) {
+        let (ident, ty) = if let Some(params) = &self.params {
+            (params.name.clone(), Some(params.ty.clone()))
+        }
+        else {
+            (None, None)
+        };
+        (
+            ident.unwrap_or_else(|| parse_quote! { __params }),
+            ty.unwrap_or_else(|| parse_quote! { () }),
+        )
+    }
+}
+
+#[derive(FromMeta)]
+pub struct ParamDeriveOptions {
+    name: Option<Ident>,
+    ty: Type,
+}
+
+#[derive(FromDeriveInput)]
+#[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
+pub struct EnumDeriveOptions {
+    pub discriminant: Option<DiscriminantDeriveOptions>,
+    pub params: Option<ParamDeriveOptions>,
+    pub match_expr: Option<Expr>,
+}
+
+impl EnumDeriveOptions {
+    pub fn params(&self) -> (Ident, Type) {
+        let (ident, ty) = if let Some(params) = &self.params {
+            (params.name.clone(), Some(params.ty.clone()))
+        }
+        else {
+            if self.discriminant.is_none() {
+                emit_call_site_error!("You either need to specify `discriminant` or `params`. Otherwise the enum has no way to determine its discriminant.");
+            }
+            (None, None)
+        };
+        (
+            ident.unwrap_or_else(|| parse_quote! { __params }),
+            ty.unwrap_or_else(|| parse_quote! { () }),
+        )
+    }
+
+    pub fn discriminant_expr(&self, where_clause: &mut WhereClause) -> Expr {
+        if let Some(expr) = &self.match_expr {
+            expr.clone()
+        }
+        else if let Some(discriminant) = &self.discriminant {
+            let discriminant_ty = &discriminant.ty;
+            let (params_ty, params_expr) = discriminant.params();
+
+            where_clause.predicates.push(
+                parse_quote! { #discriminant_ty: for<'__r> ::byst::io::read::Read::<&'__r mut __R, #params_ty> },
+            );
+
+            parse_quote! {
+                <#discriminant_ty as ::byst::io::read::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?
+            }
+        }
+        else {
+            abort_call_site!("Either a discriminant type, or a match expression must be specified");
+        }
+    }
+}
+
+#[derive(FromMeta)]
+pub struct DiscriminantDeriveOptions {
+    ty: Type,
+    #[darling(flatten)]
+    pub endianness: Endianness,
+    pub params: Option<ParamsFieldOptions>,
+}
+
+impl DiscriminantDeriveOptions {
+    pub fn params(&self) -> (Type, Expr) {
+        params(&self.endianness, self.params.as_ref())
+    }
 }
 
 #[derive(FromField)]
 #[darling(attributes(byst))]
 pub struct FieldOptions {
+    pub ident: Option<Ident>,
+    pub ty: Type,
+
+    pub skip: Option<SkipFieldOptions>,
+
     #[darling(flatten)]
     pub endianness: Endianness,
+
+    pub params: Option<ParamsFieldOptions>,
+}
+
+impl FieldOptions {
+    pub fn span(&self) -> Span {
+        if let Some(ident) = &self.ident {
+            ident.span()
+        }
+        else {
+            Span::call_site()
+        }
+    }
+
+    pub fn skip(&self) -> Option<Expr> {
+        self.skip.as_ref().map(|skip| {
+            skip.with
+                .as_ref()
+                .map(|with| {
+                    syn::parse_str(with).unwrap_or_else(|e| {
+                        abort!(self.span(), "Invalid expression for skip(with): {}", e)
+                    })
+                })
+                .unwrap_or_else(
+                    || parse_quote_spanned! { self.span() => ::std::default::Default::default() },
+                )
+        })
+    }
+
+    pub fn params(&self) -> (Type, Expr) {
+        params(&self.endianness, self.params.as_ref())
+    }
+}
+
+fn params(endianness: &Endianness, params: Option<&ParamsFieldOptions>) -> (Type, Expr) {
+    match (endianness.ty(), params) {
+        (None, None) => (parse_quote! { () }, parse_quote! { () }),
+        (Some(endianness), None) => (endianness.clone(), parse_quote! { #endianness }),
+        (None, Some(params)) => {
+            (
+                params.ty.clone(),
+                params
+                    .with
+                    .clone()
+                    .unwrap_or_else(|| parse_quote! { ::std::default::Default::default() }),
+            )
+        }
+        _ => abort_call_site!("endianness can not be specified, when also specifying params."),
+    }
+}
+
+#[derive(FromVariant)]
+#[darling(attributes(byst))]
+pub struct VariantOptions {
+    ident: Ident,
+    discriminant: Option<Expr>,
+    #[darling(rename = "discriminant")]
+    pat: Option<Lit>,
+}
+
+impl VariantOptions {
+    pub fn span(&self) -> Span {
+        self.ident.span()
+    }
+
+    pub fn pat(&self) -> Pat {
+        match (&self.discriminant, &self.pat) {
+            (None, None) => {
+                abort!(
+                    self.span(),
+                    "The variant `{}` either needs a discriminant, or a pattern specified.",
+                    self.ident
+                )
+            }
+            (Some(_), Some(_)) => {
+                abort!(
+                    self.span(), "Only either a discriminant, or a pattern must be specified for variant `{}`, not both.", self.ident
+                )
+            }
+            (Some(dis), None) => parse_quote! { #dis },
+            (None, Some(lit)) => {
+                parse_quote! { #lit }
+            }
+        }
+    }
+}
+
+#[derive(FromMeta)]
+pub struct SkipFieldOptions {
+    pub with: Option<String>,
+}
+
+#[derive(FromMeta)]
+pub struct ParamsFieldOptions {
+    pub ty: Type,
+    pub with: Option<Expr>,
 }
 
 #[derive(FromMeta)]
@@ -39,8 +237,6 @@ pub struct BitfieldFieldOptions {
 
 #[derive(FromMeta)]
 pub struct Endianness {
-    pub endianness: Option<Path>,
-
     #[darling(default)]
     pub big: bool,
 
@@ -55,20 +251,13 @@ pub struct Endianness {
 }
 
 impl Endianness {
-    pub fn ty(&self) -> Option<TokenStream> {
-        match (
-            self.big,
-            self.little,
-            self.network,
-            self.native,
-            &self.endianness,
-        ) {
-            (false, false, false, false, None) => None,
-            (true, false, false, false, None) => Some(quote! { ::byst::endianness::BigEndian }),
-            (false, true, false, false, None) => Some(quote! { ::byst::endianness::LittleEndian }),
-            (false, false, true, false, None) => Some(quote! { ::byst::endianness::NetworkEndian }),
-            (false, false, false, true, None) => Some(quote! { ::byst::endianness::NativeEndian }),
-            (false, false, false, false, Some(path)) => Some(quote! { #path }),
+    pub fn ty(&self) -> Option<Type> {
+        match (self.big, self.little, self.network, self.native) {
+            (false, false, false, false) => None,
+            (true, false, false, false) => Some(parse_quote! { ::byst::endianness::BigEndian }),
+            (false, true, false, false) => Some(parse_quote! { ::byst::endianness::LittleEndian }),
+            (false, false, true, false) => Some(parse_quote! { ::byst::endianness::NetworkEndian }),
+            (false, false, false, true) => Some(parse_quote! { ::byst::endianness::NativeEndian }),
             _ => {
                 abort_call_site!(
                     "Only one of `big`, `little`, `network`, `native`, or `endianness = PATH` may be specified."

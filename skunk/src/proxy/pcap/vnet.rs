@@ -4,21 +4,15 @@ use std::{
     ops::RangeInclusive,
 };
 
-use etherparse::{
-    EtherType,
-    Ethernet2Header,
-    TransportSlice,
-};
+use etherparse::TransportSlice;
 use ip_network::Ipv4Network;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    arp,
     dhcp,
     interface::Socket,
     packet::{
-        EthernetFrame,
         LinkPacket,
         NetworkPacket,
         PacketListener,
@@ -175,6 +169,7 @@ impl<'a> dhcp::Sender for DhcpSender<'a> {
     }
 }
 
+/*
 #[derive(Debug)]
 struct ArpSender<'a> {
     sender: &'a mut PacketSender,
@@ -202,6 +197,7 @@ impl<'a> arp::Sender for ArpSender<'a> {
         Ok(())
     }
 }
+ */
 
 fn is_receiver_for_ipv4(
     destination: Ipv4Addr,
