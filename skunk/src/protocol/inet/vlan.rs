@@ -1,4 +1,4 @@
-use skunk_bytes::{
+use byst::{
     endianness::NetworkEndian,
     rw::{
         End,

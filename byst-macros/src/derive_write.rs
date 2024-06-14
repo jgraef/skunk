@@ -59,17 +59,17 @@ fn derive_write_for_struct(
 
         if let Some(endianness) = field_options.endianness.ty() {
             write_fields.push(quote! {
-                ::skunk_bytes::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
+                ::byst::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
             });
-            where_clause.predicates.push(parse_quote! { #field_ty: for<'w> ::skunk_bytes::rw::WriteXe::<&'w mut __W, #endianness> });
+            where_clause.predicates.push(parse_quote! { #field_ty: for<'w> ::byst::rw::WriteXe::<&'w mut __W, #endianness> });
         }
         else {
             write_fields.push(quote! {
-                ::skunk_bytes::rw::Write::<_>::write(&self.#field_name, &mut writer)?;
+                ::byst::rw::Write::<_>::write(&self.#field_name, &mut writer)?;
             });
             where_clause
                 .predicates
-                .push(parse_quote! { #field_ty: for<'w> ::skunk_bytes::rw::Write::<&'w mut __W> });
+                .push(parse_quote! { #field_ty: for<'w> ::byst::rw::Write::<&'w mut __W> });
         }
     }
 
@@ -77,8 +77,8 @@ fn derive_write_for_struct(
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::skunk_bytes::rw::Write<__W> for #ident #type_generics #where_clause {
-            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::skunk_bytes::rw::Full> {
+        impl #impl_generics ::byst::rw::Write<__W> for #ident #type_generics #where_clause {
+            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::byst::rw::Full> {
                 #(#write_fields)*
                 ::std::result::Result::Ok(())
             }

@@ -1,3 +1,5 @@
+//! Macros for the `byst` crate.
+
 #![allow(dead_code, rustdoc::broken_intra_doc_links)]
 mod bitmask;
 mod derive_read;

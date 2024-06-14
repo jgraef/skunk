@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use skunk_macros::for_tuple;
-pub use skunk_macros::{
+use byst_macros::for_tuple;
+pub use byst_macros::{
     Read,
     Write,
 };
@@ -241,6 +241,7 @@ impl<W: WriteFromBuf> Write<W> for i8 {
 }
 
 // implement `Read` and `Write` for tuples.
+// todo: also implement `ReadXe` and `WriteXe`.
 macro_rules! impl_tuple {
     ($($index:tt => $name:ident: $ty:ident),*) => {
         impl<R, $($ty),*> Read<R> for ($($ty,)*)
@@ -280,12 +281,12 @@ for_tuple!(impl_tuple! for 1..=8);
 macro_rules! read {
     ($reader:ident => $ty:ty as $endianness:ty) => {
         {
-            <$ty as ::skunk_bytes::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
+            <$ty as ::byst::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
         }
     };
     ($reader:ident => $ty:ty) => {
         {
-            <$ty as ::skunk_bytes::rw::Read::<_>>::read(&mut $reader)
+            <$ty as ::byst::rw::Read::<_>>::read(&mut $reader)
         }
     };
     ($reader:ident as $endianness:ty) => {

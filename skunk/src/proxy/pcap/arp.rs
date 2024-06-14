@@ -19,7 +19,7 @@ pub use etherparse::{
     EtherType as ProtocolType,
 };
 use futures::Future;
-use skunk_bytes::rw::Read;
+use byst::rw::{Cursor, Read, read};
 
 use super::{
     packet::WritePacket,
@@ -50,18 +50,31 @@ pub enum EncodeError {
 
 const FIXED_SIZE: usize = 8;
 
-#[derive(Clone, Debug, Read)]
-pub struct ArpPacketSlice<'a> {
-    hardware_type: HardwareType,
-    protocol_type: ProtocolType,
-    hardware_address_length: u8,
-    protocol_address_length: u8,
-    operation: Operation,
-    sender_hardware_address: &'a [u8],
-    sender_protocol_address: &'a [u8],
-    target_hardware_address: &'a [u8],
-    target_protocol_address: &'a [u8],
+mod test {
+    use super::{HardwareType, ProtocolType, Operation, Read};
+
+    #[derive(Clone, Debug, Read)]
+    pub struct ArpPacketSlice<'a> {
+        pub hardware_type: HardwareType,
+        pub protocol_type: ProtocolType,
+        pub hardware_address_length: u8,
+        pub protocol_address_length: u8,
+        pub operation: Operation,
+        pub sender_hardware_address: &'a [u8],
+        pub sender_protocol_address: &'a [u8],
+        pub target_hardware_address: &'a [u8],
+        pub target_protocol_address: &'a [u8],
+    }
 }
+
+fn test_read() {
+    let mut cursor = Cursor::new(b"");
+    //let arp = read!(cursor => ArpPacketSlice);
+
+    todo!();
+}
+
+pub use test::ArpPacketSlice;
 
 impl<'a> ArpPacketSlice<'a> {
     pub fn from_bytes(_bytes: &'a [u8]) -> Result<Self, DecodeError> {

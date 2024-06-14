@@ -1,5 +1,7 @@
 use std::iter::FusedIterator;
 
+pub use byst_macros::for_tuple;
+
 #[inline]
 pub(crate) fn ptr_len<T>(ptr: *const [T]) -> usize {
     let ptr: *const [()] = ptr as _;

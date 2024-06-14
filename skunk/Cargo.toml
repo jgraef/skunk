@@ -42,14 +42,9 @@ graph-vis = []
 # TODO: split into protocols
 pcap = ["dep:etherparse", "dep:dhcproto", "dep:nix"]
 
-
-[dependencies.skunk-macros]
+[dependencies.byst]
 #version = "0.1.0"
-path = "../skunk-macros"
-
-[dependencies.skunk-bytes]
-#version = "0.1.0"
-path = "../skunk-bytes"
+path = "../byst"
 
 [dependencies]
 bytes = "1.6.0"

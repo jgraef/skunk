@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+  "byst",
+  "byst-macros",
   "skunk",
-  "skunk-bytes",
   "skunk-cli",
-  "skunk-macros",
 ]
 
 [patch.crates-io]

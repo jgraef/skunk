@@ -1,11 +1,11 @@
 [package]
-name = "skunk-bytes"
+name = "byst"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies.skunk-macros]
+[dependencies.byst-macros]
 #version = "0.1.0"
-path = "../skunk-macros"
+path = "../byst-macros"
 
 [dependencies]
 thiserror = "1.0.60"

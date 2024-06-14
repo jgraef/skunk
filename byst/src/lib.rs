@@ -1,3 +1,7 @@
+//! bytes, bytter, `byst`!
+//!
+//! Read and write bytes on steriods!
+
 // required by `crate::buf::partially_initialized`.
 #![feature(maybe_uninit_slice, maybe_uninit_write_slice, maybe_uninit_fill)]
 // required by `crate::util::bytes::endianness::{Encode, Decode}`.
