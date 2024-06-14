@@ -6,9 +6,9 @@ use std::fmt::{
 
 use super::{
     buf::Buf,
-    rw::{
+    io::{
+        read::ReadIntoBuf,
         Cursor,
-        ReadIntoBuf,
         Remaining,
     },
 };

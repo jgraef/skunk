@@ -1,14 +1,18 @@
 use byst::{
     endianness::NetworkEndian,
-    rw::{
+    io::{
+        read::{
+            Read,
+            ReadIntoBuf,
+            ReadXe,
+        },
+        write::{
+            Write,
+            WriteFromBuf,
+            WriteXe,
+        },
         End,
         Full,
-        Read,
-        ReadIntoBuf,
-        ReadXe,
-        Write,
-        WriteFromBuf,
-        WriteXe,
     },
 };
 

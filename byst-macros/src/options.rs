@@ -9,13 +9,13 @@ use quote::quote;
 use syn::Path;
 
 #[derive(FromDeriveInput)]
-#[darling(attributes(skunk), forward_attrs(allow, doc, cfg))]
+#[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
 pub struct DeriveOptions {
     pub bitfield: Option<Bitfield>,
 }
 
 #[derive(FromField)]
-#[darling(attributes(skunk))]
+#[darling(attributes(byst))]
 pub struct FieldOptions {
     #[darling(flatten)]
     pub endianness: Endianness,
@@ -30,7 +30,7 @@ pub struct Bitfield {
 }
 
 #[derive(FromField)]
-#[darling(attributes(skunk))]
+#[darling(attributes(byst))]
 pub struct BitfieldFieldOptions {
     pub bits: Option<usize>,
     pub start: Option<usize>,
@@ -64,18 +64,10 @@ impl Endianness {
             &self.endianness,
         ) {
             (false, false, false, false, None) => None,
-            (true, false, false, false, None) => {
-                Some(quote! { ::byst::endianness::BigEndian })
-            }
-            (false, true, false, false, None) => {
-                Some(quote! { ::byst::endianness::LittleEndian })
-            }
-            (false, false, true, false, None) => {
-                Some(quote! { ::byst::endianness::NetworkEndian })
-            }
-            (false, false, false, true, None) => {
-                Some(quote! { ::byst::endianness::NativeEndian })
-            }
+            (true, false, false, false, None) => Some(quote! { ::byst::endianness::BigEndian }),
+            (false, true, false, false, None) => Some(quote! { ::byst::endianness::LittleEndian }),
+            (false, false, true, false, None) => Some(quote! { ::byst::endianness::NetworkEndian }),
+            (false, false, false, true, None) => Some(quote! { ::byst::endianness::NativeEndian }),
             (false, false, false, false, Some(path)) => Some(quote! { #path }),
             _ => {
                 abort_call_site!(

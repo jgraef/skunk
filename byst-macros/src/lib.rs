@@ -49,13 +49,13 @@ use crate::{
 ///
 /// [1]: skunk::util::bytes::rw::Read
 #[proc_macro_error]
-#[proc_macro_derive(Read, attributes(skunk))]
+#[proc_macro_derive(Read, attributes(byst))]
 pub fn derive_read(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     derive_helper(input, crate::derive_read::derive_read)
 }
 
 #[proc_macro_error]
-#[proc_macro_derive(Write, attributes(skunk))]
+#[proc_macro_derive(Write, attributes(byst))]
 pub fn derive_write(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     derive_helper(input, crate::derive_write::derive_write)
 }

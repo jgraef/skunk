@@ -14,12 +14,18 @@ use std::{
     },
 };
 
+use byst::io::{
+    read::{
+        read,
+        Read,
+    },
+    Cursor,
+};
 pub use etherparse::{
     ArpHardwareId as HardwareType,
     EtherType as ProtocolType,
 };
 use futures::Future;
-use byst::rw::{Cursor, Read, read};
 
 use super::{
     packet::WritePacket,
@@ -51,7 +57,12 @@ pub enum EncodeError {
 const FIXED_SIZE: usize = 8;
 
 mod test {
-    use super::{HardwareType, ProtocolType, Operation, Read};
+    use super::{
+        HardwareType,
+        Operation,
+        ProtocolType,
+        Read,
+    };
 
     #[derive(Clone, Debug, Read)]
     pub struct ArpPacketSlice<'a> {

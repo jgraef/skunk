@@ -5,13 +5,17 @@
 //! - Remove `Size`, `Encode` and `Decode` traits as they require unstable
 //!   features, and we don't really need them.
 
-use super::rw::{
+use super::io::{
+    read::{
+        ReadIntoBuf,
+        ReadXe,
+    },
+    write::{
+        WriteFromBuf,
+        WriteXe,
+    },
     End,
     Full,
-    ReadIntoBuf,
-    ReadXe,
-    WriteFromBuf,
-    WriteXe,
 };
 
 /// Note: Although the [`endianness`][`self`] module is not public, we seal this

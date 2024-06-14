@@ -16,6 +16,7 @@ pub mod copy;
 mod dyn_impl;
 pub mod endianness;
 pub mod hexdump;
+pub mod io;
 mod range;
 pub mod rw;
 pub mod slab;

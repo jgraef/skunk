@@ -1,11 +1,13 @@
 use byst::{
     endianness::NetworkEndian,
-    read,
-    rw::{
+    io::{
+        read::{
+            Read,
+            ReadIntoBuf,
+        },
         End,
-        Read,
-        ReadIntoBuf,
     },
+    read,
 };
 use smallvec::SmallVec;
 
@@ -80,7 +82,7 @@ where
 ///
 /// [1]: https://en.wikipedia.org/wiki/EtherType
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Read)]
-pub struct EtherType(#[skunk(network)] pub u16);
+pub struct EtherType(#[byst(network)] pub u16);
 
 impl EtherType {
     /// Internet protocol version 4

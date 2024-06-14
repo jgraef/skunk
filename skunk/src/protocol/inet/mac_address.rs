@@ -3,9 +3,9 @@ use std::fmt::{
     Display,
 };
 
-use byst::rw::{
-    Read,
-    Write,
+use byst::io::{
+    read::Read,
+    write::Write,
 };
 
 /// A MAC address[1]

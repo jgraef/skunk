@@ -16,8 +16,8 @@ use std::{
     },
 };
 
-use parking_lot::Mutex;
 pub use byst::util::for_tuple;
+use parking_lot::Mutex;
 pub use tokio_util::sync::CancellationToken;
 
 /// [`Oncelock`](std::sync::OnceLock::get_or_try_init) is not stabilized yet, so
