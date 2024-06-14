@@ -1,8 +1,9 @@
-/// ARP protocol implementation.
-///
-/// # References
-/// - [An Ethernet Address Resolution Protocol](https://datatracker.ietf.org/doc/html/rfc826)
-/// - [Address Resolution Protocol (ARP) Parameters](https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml)
+//! ARP protocol implementation.
+//!
+//! # References
+//! - [An Ethernet Address Resolution Protocol](https://datatracker.ietf.org/doc/html/rfc826)
+//! - [Address Resolution Protocol (ARP) Parameters](https://www.iana.org/assignments/arp-parameters/arp-parameters.xhtml)
+
 use std::{
     collections::HashMap,
     fmt::Display,

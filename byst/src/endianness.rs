@@ -18,9 +18,6 @@ use super::io::{
     Full,
 };
 
-/// Note: Although the [`endianness`][`self`] module is not public, we seal this
-/// into yet another module, in case we want to make the [`endianness`](self)
-/// module public in future. Just to be safe :)
 mod sealed {
     pub trait Sealed {}
 }
@@ -28,30 +25,39 @@ mod sealed {
 /// Trait for types that represent endianesses.
 ///
 /// This trait is sealed and can't be implemented for custom types. It is only
-/// implemented for [`BigEndian`] and [`LittleEndian`] (and their type aliases).
+/// implemented for [`BigEndian`], [`LittleEndian`] and [`NativeEndian`] (and
+/// the type alias [`NetworkEndian`]).
 pub trait Endianness: sealed::Sealed {}
 
 /// Big endian byte order
-pub enum BigEndian {}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BigEndian;
 impl Endianness for BigEndian {}
 impl sealed::Sealed for BigEndian {}
 
 /// Little endian byte order
-pub enum LittleEndian {}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LittleEndian;
 impl Endianness for LittleEndian {}
 impl sealed::Sealed for LittleEndian {}
 
 /// System native byte order.
 ///
-/// On the system that generated these docs, this is little endian.
-#[cfg(target_endian = "little")]
-pub type NativeEndian = LittleEndian;
-
-/// System native byte order.
+/// # Notes
 ///
-/// On the system that generated these docs, this is big endian.
-#[cfg(target_endian = "big")]
-pub type NativeEndian = BigEndian;
+/// > Why is this not a type alias to either [`BigEndian`] or [`LittleEndian`]?
+///
+/// Some implementations might depend on knowing at compile time whether
+/// something is native endian, but also not generate different code depending
+/// on system endianness. This is the case for reading slices like `&[u32]` from
+/// a byte buffer, which is only possible in native endian. With a type alias
+/// such a read implementation would either be for [`BigEndian`] or
+/// [`LittleEndian`], and thus code that compiles fine on a [`LittleEndian`]
+/// system, might not compile no a [`BigEndian`] system.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeEndian;
+impl Endianness for NativeEndian {}
+impl sealed::Sealed for NativeEndian {}
 
 /// Network byte order.
 ///
@@ -90,6 +96,16 @@ macro_rules! impl_endianness {
 
             impl_endianness!(for<BigEndian> $ty: $bytes => from_be_bytes, to_be_bytes);
             impl_endianness!(for<LittleEndian> $ty: $bytes => from_le_bytes, to_le_bytes);
+
+            #[cfg(target_endian = "little")]
+            const _: () = {
+                impl_endianness!(for<NativeEndian> $ty: $bytes => from_le_bytes, to_le_bytes);
+            };
+
+            #[cfg(target_endian = "big")]
+            const _: () = {
+                impl_endianness!(for<NativeEndian> $ty: $bytes => from_be_bytes, to_be_bytes);
+            };
         )*
     };
     (for<$endianness:ty> $ty:ty: $bytes:expr => $from_bytes:ident, $to_bytes:ident) => {
