@@ -65,16 +65,16 @@ impl Endianness {
         ) {
             (false, false, false, false, None) => None,
             (true, false, false, false, None) => {
-                Some(quote! { ::skunk::util::bytes::endianness::BigEndian })
+                Some(quote! { ::skunk_bytes::endianness::BigEndian })
             }
             (false, true, false, false, None) => {
-                Some(quote! { ::skunk::util::bytes::endianness::LittleEndian })
+                Some(quote! { ::skunk_bytes::endianness::LittleEndian })
             }
             (false, false, true, false, None) => {
-                Some(quote! { ::skunk::util::bytes::endianness::NetworkEndian })
+                Some(quote! { ::skunk_bytes::endianness::NetworkEndian })
             }
             (false, false, false, true, None) => {
-                Some(quote! { ::skunk::util::bytes::endianness::NativeEndian })
+                Some(quote! { ::skunk_bytes::endianness::NativeEndian })
             }
             (false, false, false, false, Some(path)) => Some(quote! { #path }),
             _ => {

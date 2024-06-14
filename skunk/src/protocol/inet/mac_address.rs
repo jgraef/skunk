@@ -3,7 +3,7 @@ use std::fmt::{
     Display,
 };
 
-use crate::util::bytes::rw::{
+use skunk_bytes::rw::{
     Read,
     Write,
 };

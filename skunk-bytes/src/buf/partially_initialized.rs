@@ -1,3 +1,8 @@
+//! # Note
+//!
+//! This is intentionally not public. If used with a type `B`, which doesn't
+//! uphold some invariants, this is unsafe.
+
 use std::{
     fmt::Debug,
     mem::MaybeUninit,
@@ -7,7 +12,7 @@ use std::{
     },
 };
 
-use crate::util::bytes::{
+use crate::{
     buf::{
         write_helper,
         Buf,
@@ -23,8 +28,7 @@ use crate::util::bytes::{
     },
 };
 
-/// A buffer backed by an array. The array is initially empty, but can grow
-/// until it reaches its capacity `N`.
+/// A contiguous chunk of memory that is partially initialized.
 #[derive(Copy, Clone)]
 pub struct PartiallyInitialized<B> {
     // invariant: `buf[..initialized]` is initialized.

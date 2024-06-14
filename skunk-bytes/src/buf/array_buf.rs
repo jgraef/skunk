@@ -8,7 +8,7 @@ use std::{
 };
 
 use super::partially_initialized::PartiallyInitialized;
-use crate::util::bytes::{
+use crate::{
     buf::{
         Buf,
         BufMut,
@@ -211,7 +211,7 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
 #[cfg(test)]
 mod tests {
     use super::ArrayBuf;
-    use crate::util::bytes::{
+    use crate::{
         buf::WriteError,
         Buf,
         BufMut,

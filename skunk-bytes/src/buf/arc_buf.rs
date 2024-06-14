@@ -4,7 +4,7 @@ use super::{
     chunks::SingleChunk,
     Buf,
 };
-use crate::util::bytes::{
+use crate::{
     dyn_impl::BytesImpl,
     Range,
     RangeOutOfBounds,
@@ -30,7 +30,7 @@ impl<B> Clone for ArcBuf<B> {
 
 impl<B: AsRef<[u8]>> ArcBuf<B> {
     /// `start <= end` and `start..end` must be in bounds.
-    fn new(buf: Arc<B>, start: usize, end: usize) -> Self {
+    pub fn new(buf: Arc<B>, start: usize, end: usize) -> Self {
         let bytes = (*buf).as_ref();
         assert!(start <= end);
         assert!(end <= bytes.len());

@@ -479,7 +479,7 @@ impl From<usize> for SizeLimit {
 #[cfg(test)]
 mod tests {
     mod vec {
-        use crate::util::bytes::buf::{
+        use crate::buf::{
             Buf,
             BufMut,
         };

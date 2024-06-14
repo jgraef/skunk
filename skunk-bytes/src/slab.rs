@@ -234,7 +234,7 @@ impl BytesMut {
     }
 
     #[inline]
-    fn ref_count(&self) -> RefCount {
+    pub fn ref_count(&self) -> RefCount {
         self.inner.ref_count()
     }
 }
@@ -366,8 +366,21 @@ impl Bytes {
     }
 
     #[inline]
-    fn ref_count(&self) -> RefCount {
+    pub fn ref_count(&self) -> RefCount {
         self.inner.ref_count()
+    }
+
+    /// If `subset` is a slice contained in the [`Bytes`], this returns a view
+    /// for that slice.
+    ///
+    /// This is useful if you're using some function that only returns a
+    /// sub-slice `&[u8]` from a [`Bytes`], but you want to have that sub-slice
+    /// as a view.
+    #[inline]
+    pub fn view_from_slice(&self, subset: &[u8]) -> Option<Self> {
+        Some(Self {
+            inner: self.inner.view_from_slice(subset)?,
+        })
     }
 }
 
@@ -701,16 +714,6 @@ impl AtomicRefCount {
     }
 
     #[inline]
-    fn ref_count(&self) -> usize {
-        self.0.load(Ordering::Relaxed) >> 1
-    }
-
-    #[inline]
-    fn is_ophaned(&self) -> bool {
-        self.0.load(Ordering::Relaxed) & 1 == 0
-    }
-
-    #[inline]
     fn increment(&self) {
         self.0.fetch_add(2, Ordering::Relaxed);
     }
@@ -785,7 +788,7 @@ mod tests {
         RefCount,
         Slab,
     };
-    use crate::util::bytes::{
+    use crate::{
         buf::WriteError,
         Buf,
         BufMut,

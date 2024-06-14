@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-
+#![allow(dead_code, rustdoc::broken_intra_doc_links)]
 mod bitmask;
 mod derive_read;
 mod derive_write;

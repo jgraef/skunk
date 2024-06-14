@@ -67,7 +67,7 @@ impl<'a> Inner<'a> {
 /// # TODO
 ///
 /// Some of the conversions (e.g. from `Box<[u8]>` or `Vec<u8>`) allocate. We
-/// could create create an enum for them, put that into [`Inner::Shared`] and
+/// could create create an enum for them, put that into `Inner::Shared` and
 /// also store a pointer for faster access (after pinning it).
 #[derive(Clone)]
 pub struct Bytes<'a> {

@@ -1,0 +1,12 @@
+[package]
+name = "skunk-bytes"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.skunk-macros]
+#version = "0.1.0"
+path = "../skunk-macros"
+
+[dependencies]
+thiserror = "1.0.60"
+derive_more = "0.99.17"

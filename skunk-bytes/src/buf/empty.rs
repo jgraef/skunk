@@ -1,5 +1,5 @@
 use super::Buf;
-use crate::util::bytes::{
+use crate::{
     dyn_impl::BytesImpl,
     Range,
     RangeOutOfBounds,

@@ -1,12 +1,21 @@
+// required by `crate::buf::partially_initialized`.
+#![feature(maybe_uninit_slice, maybe_uninit_write_slice, maybe_uninit_fill)]
+// required by `crate::util::bytes::endianness::{Encode, Decode}`.
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+// required by `crate::buf::slab`
+#![feature(new_uninit, slice_ptr_get)]
+
 pub mod buf;
 mod bytes;
-mod copy;
+pub mod copy;
 mod dyn_impl;
-pub(crate) mod endianness;
+pub mod endianness;
 pub mod hexdump;
 mod range;
-pub(crate) mod rw;
+pub mod rw;
 pub mod slab;
+pub mod util;
 
 use std::ops::{
     BitAnd,
@@ -24,31 +33,9 @@ pub use self::{
         Bytes,
         Sbytes,
     },
-    copy::{
-        copy,
-        copy_chunks,
-    },
-    endianness::{
-        BigEndian,
-        Endianness,
-        LittleEndian,
-        NativeEndian,
-        NetworkEndian,
-    },
     range::{
         Range,
         RangeOutOfBounds,
-    },
-    rw::{
-        Cursor,
-        End,
-        Full,
-        Read,
-        ReadIntoBuf,
-        ReadXe,
-        Write,
-        WriteFromBuf,
-        WriteXe,
     },
 };
 

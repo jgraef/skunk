@@ -47,6 +47,10 @@ pcap = ["dep:etherparse", "dep:dhcproto", "dep:nix"]
 #version = "0.1.0"
 path = "../skunk-macros"
 
+[dependencies.skunk-bytes]
+#version = "0.1.0"
+path = "../skunk-bytes"
+
 [dependencies]
 bytes = "1.6.0"
 derive_more = "0.99.17"

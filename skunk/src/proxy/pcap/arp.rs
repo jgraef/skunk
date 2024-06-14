@@ -19,17 +19,11 @@ pub use etherparse::{
     EtherType as ProtocolType,
 };
 use futures::Future;
+use skunk_bytes::rw::Read;
 
 use super::{
     packet::WritePacket,
     MacAddress,
-};
-use crate::util::{
-    bytes::NetworkEndian,
-    zc::{
-        self,
-        Reader as _,
-    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -56,7 +50,7 @@ pub enum EncodeError {
 
 const FIXED_SIZE: usize = 8;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Read)]
 pub struct ArpPacketSlice<'a> {
     hardware_type: HardwareType,
     protocol_type: ProtocolType,
@@ -70,8 +64,8 @@ pub struct ArpPacketSlice<'a> {
 }
 
 impl<'a> ArpPacketSlice<'a> {
-    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
-        let mut reader = zc::Cursor::new(bytes);
+    pub fn from_bytes(_bytes: &'a [u8]) -> Result<Self, DecodeError> {
+        /*let mut reader = Cursor::new(bytes);
 
         let hardware_type = HardwareType(reader.read_u16::<NetworkEndian>()?);
         let protocol_type = ProtocolType(reader.read_u16::<NetworkEndian>()?);
@@ -93,7 +87,8 @@ impl<'a> ArpPacketSlice<'a> {
             sender_protocol_address,
             target_hardware_address,
             target_protocol_address,
-        })
+        })*/
+        todo!();
     }
 
     pub fn len(&self) -> usize {

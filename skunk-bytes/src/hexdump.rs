@@ -8,9 +8,9 @@ use super::{
     buf::Buf,
     rw::{
         Cursor,
+        ReadIntoBuf,
         Remaining,
     },
-    ReadIntoBuf,
 };
 
 pub struct Hexdump<B> {

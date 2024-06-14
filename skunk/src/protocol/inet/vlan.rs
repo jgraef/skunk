@@ -1,15 +1,15 @@
-use crate::util::bytes::{
+use skunk_bytes::{
+    endianness::NetworkEndian,
     rw::{
         End,
         Full,
         Read,
+        ReadIntoBuf,
         ReadXe,
         Write,
+        WriteFromBuf,
         WriteXe,
     },
-    NetworkEndian,
-    ReadIntoBuf,
-    WriteFromBuf,
 };
 
 /// Vlan tagged ethernet frames[1]

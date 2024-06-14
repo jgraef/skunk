@@ -139,7 +139,7 @@ impl_endianness! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::bytes::hexdump::Hexdump;
+    use crate::hexdump::Hexdump;
 
     macro_rules! make_tests {
         {

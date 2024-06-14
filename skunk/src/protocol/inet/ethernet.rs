@@ -1,17 +1,17 @@
+use skunk_bytes::{
+    endianness::NetworkEndian,
+    read,
+    rw::{
+        End,
+        Read,
+        ReadIntoBuf,
+    },
+};
 use smallvec::SmallVec;
 
 use super::{
     mac_address::MacAddress,
     vlan::VlanTag,
-};
-use crate::util::bytes::{
-    rw::{
-        read,
-        End,
-        Read,
-        ReadIntoBuf,
-    },
-    NetworkEndian,
 };
 
 /// Max payload size for ethernet frames.

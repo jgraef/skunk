@@ -18,7 +18,7 @@ use crate::{
     },
     util::{
         field_name,
-        make_where_clause,
+        SplitGenerics,
     },
 };
 
@@ -45,9 +45,11 @@ fn derive_write_for_struct(
     _options: &DeriveOptions,
 ) -> Result<TokenStream, Error> {
     let ident = &item.ident;
-    let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
-    let mut where_clause = make_where_clause(where_clause);
-
+    let SplitGenerics {
+        mut impl_generics,
+        type_generics,
+        mut where_clause,
+    } = SplitGenerics::from_generics(&item.generics);
     let mut write_fields = Vec::with_capacity(s.fields.len());
 
     for (i, field) in s.fields.iter().enumerate() {
@@ -57,24 +59,26 @@ fn derive_write_for_struct(
 
         if let Some(endianness) = field_options.endianness.ty() {
             write_fields.push(quote! {
-                ::skunk::util::bytes::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
+                ::skunk_bytes::rw::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
             });
-            where_clause.predicates.push(parse_quote! { #field_ty: for<'w> ::skunk::util::bytes::rw::WriteXe::<&'w mut __W, #endianness> });
+            where_clause.predicates.push(parse_quote! { #field_ty: for<'w> ::skunk_bytes::rw::WriteXe::<&'w mut __W, #endianness> });
         }
         else {
             write_fields.push(quote! {
-                ::skunk::util::bytes::rw::Write::<_>::write(&self.#field_name, &mut writer)?;
+                ::skunk_bytes::rw::Write::<_>::write(&self.#field_name, &mut writer)?;
             });
-            where_clause.predicates.push(
-                parse_quote! { #field_ty: for<'w> ::skunk::util::bytes::rw::Write::<&'w mut __W> },
-            );
+            where_clause
+                .predicates
+                .push(parse_quote! { #field_ty: for<'w> ::skunk_bytes::rw::Write::<&'w mut __W> });
         }
     }
 
+    impl_generics.type_params.push(parse_quote! { __W });
+
     Ok(quote! {
         #[automatically_derived]
-        impl<__W, #impl_generics> ::skunk::util::bytes::rw::Write<__W> for #ident<#type_generics> #where_clause {
-            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::skunk::util::bytes::rw::Full> {
+        impl #impl_generics ::skunk_bytes::rw::Write<__W> for #ident #type_generics #where_clause {
+            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::skunk_bytes::rw::Full> {
                 #(#write_fields)*
                 ::std::result::Result::Ok(())
             }

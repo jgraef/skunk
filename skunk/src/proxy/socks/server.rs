@@ -62,8 +62,10 @@ use crate::{
 /// # Buffering
 ///
 /// The underlying [`TcpStream`] is buffered (using a [`BufStream`]), so it's
-/// necessary to call [`AsyncWrite::flush`] to make sure the written data is
+/// necessary to call [`flush`] to make sure the written data is
 /// actually sent.
+///
+/// [`flush`]: tokio::io::AsyncWriteExt::flush
 pub struct Incoming {
     inner: Connected<BufStream<TcpStream>, MaybeAuth>,
     destination_address: TcpAddress,

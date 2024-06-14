@@ -4,9 +4,9 @@ use super::{
     Range,
     RangeOutOfBounds,
 };
-use crate::util::{
-    bytes::buf::chunks::NonEmptyIter,
-    Peekable,
+use crate::{
+    buf::chunks::NonEmptyIter,
+    util::Peekable,
 };
 
 /// Error while copying from a [`Buf`] to a [`BufMut`].
@@ -35,8 +35,7 @@ pub enum CopyError {
 /// # Todo
 ///
 /// Either modify this or create a similar function that will grow the
-/// destination buffer as necessary (see
-/// [`write_helper`](super::buf::write_helper))
+/// destination buffer as necessary (see `write_helper`).
 pub fn copy(
     mut destination: impl BufMut,
     destination_range: impl Into<Range>,
@@ -93,7 +92,7 @@ pub fn copy(
     Ok(())
 }
 
-/// Copies 'amount' bytes from `source_chunks` to `destination_chunks` with the
+/// Copies `amount`` bytes from `source_chunks` to `destination_chunks` with the
 /// respective starting offsets.
 ///
 /// The chunk iterators must be wrapped with [`Peekable`].
@@ -168,7 +167,7 @@ pub struct CopyChunksResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::bytes::buf::chunks::{
+    use crate::buf::chunks::{
         SingleChunk,
         SingleChunkMut,
     };

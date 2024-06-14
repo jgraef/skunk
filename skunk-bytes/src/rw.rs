@@ -280,12 +280,12 @@ for_tuple!(impl_tuple! for 1..=8);
 macro_rules! read {
     ($reader:ident => $ty:ty as $endianness:ty) => {
         {
-            <$ty as ::skunk::util::bytes::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
+            <$ty as ::skunk_bytes::rw::ReadXe::<_, $endianness>>::read(&mut $reader)
         }
     };
     ($reader:ident => $ty:ty) => {
         {
-            <$ty as ::skunk::util::bytes::rw::Read::<_>>::read(&mut $reader)
+            <$ty as ::skunk_bytes::rw::Read::<_>>::read(&mut $reader)
         }
     };
     ($reader:ident as $endianness:ty) => {
@@ -297,10 +297,7 @@ macro_rules! read {
 }
 pub use read;
 
-/// A [`Reader`] and [`Writer`] that reads and writes from and to a [`Buf`].
-///
-/// This reader/writer has an inherent endianness of [`NativeEndian`]. You can
-/// use [`WithXe`] to change the endianness.
+/// A reader and writer that reads and writes from and to a [`Buf`].
 #[derive(Clone, Debug)]
 pub struct Cursor<B> {
     buf: B,
@@ -431,22 +428,27 @@ impl<B> From<B> for Cursor<B> {
     }
 }
 
-// todo: implement this. or do we even need this? don't forget to make this pub.
-struct ChunksReader<'a, I: Iterator<Item = &'a [u8]>> {
-    inner: Peekable<NonEmptyIter<I>>,
-}
+#[allow(dead_code)]
+mod todo {
+    use super::*;
+    // todo: implement this. or do we even need this? don't forget to make this pub.
 
-impl<'a, I: Iterator<Item = &'a [u8]>> ChunksReader<'a, I> {
-    #[inline]
-    pub fn new(inner: I) -> Self {
-        Self {
-            inner: Peekable::new(NonEmptyIter(inner)),
-        }
+    pub struct ChunksReader<'a, I: Iterator<Item = &'a [u8]>> {
+        inner: Peekable<NonEmptyIter<I>>,
     }
 
-    #[inline]
-    pub fn into_parts(self) -> (I, Option<&'a [u8]>) {
-        let (iter, peeked) = self.inner.into_parts();
-        (iter.0, peeked)
+    impl<'a, I: Iterator<Item = &'a [u8]>> ChunksReader<'a, I> {
+        #[inline]
+        pub fn new(inner: I) -> Self {
+            Self {
+                inner: Peekable::new(NonEmptyIter(inner)),
+            }
+        }
+
+        #[inline]
+        pub fn into_parts(self) -> (I, Option<&'a [u8]>) {
+            let (iter, peeked) = self.inner.into_parts();
+            (iter.0, peeked)
+        }
     }
 }

@@ -20,7 +20,7 @@ use crate::{
     },
     util::{
         field_name,
-        make_where_clause,
+        SplitGenerics,
     },
 };
 
@@ -47,8 +47,11 @@ fn derive_read_for_struct(
     _options: &DeriveOptions,
 ) -> Result<TokenStream, Error> {
     let ident = &item.ident;
-    let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
-    let mut where_clause = make_where_clause(where_clause);
+    let SplitGenerics {
+        mut impl_generics,
+        type_generics,
+        mut where_clause,
+    } = SplitGenerics::from_generics(&item.generics);
     let mut struct_init = Vec::with_capacity(s.fields.len());
 
     for (i, field) in s.fields.iter().enumerate() {
@@ -57,17 +60,17 @@ fn derive_read_for_struct(
         let field_ty = &field.ty;
 
         let read_field = if let Some(endianness) = field_options.endianness.ty() {
-            where_clause.predicates.push(parse_quote! { #field_ty: for<'r> ::skunk::util::bytes::rw::ReadXe::<&'r mut __R, #endianness> });
+            where_clause.predicates.push(parse_quote! { #field_ty: for<'__r> ::skunk_bytes::rw::ReadXe::<&'__r mut __R, #endianness> });
             quote! {
-                ::skunk::util::bytes::rw::ReadXe::<_, #endianness>::read(&mut reader)?
+                ::skunk_bytes::rw::ReadXe::<_, #endianness>::read(&mut reader)?
             }
         }
         else {
             where_clause.predicates.push(
-                parse_quote! { #field_ty: for<'r> ::skunk::util::bytes::rw::Read::<&'r mut __R> },
+                parse_quote! { #field_ty: for<'__r> ::skunk_bytes::rw::Read::<&'__r mut __R> },
             );
             quote! {
-                ::skunk::util::bytes::rw::Read::<_>::read(&mut reader)?
+                ::skunk_bytes::rw::Read::<_>::read(&mut reader)?
             }
         };
 
@@ -76,10 +79,12 @@ fn derive_read_for_struct(
         });
     }
 
+    impl_generics.type_params.push(parse_quote! { __R });
+
     Ok(quote! {
         #[automatically_derived]
-        impl<__R, #impl_generics> ::skunk::util::bytes::rw::Read<__R> for #ident<#type_generics> #where_clause {
-            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::util::bytes::rw::End> {
+        impl #impl_generics ::skunk_bytes::rw::Read<__R> for #ident #type_generics #where_clause {
+            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk_bytes::rw::End> {
                 ::std::result::Result::Ok(Self {
                     #(#struct_init)*
                 })
@@ -95,26 +100,29 @@ fn derive_read_for_struct_bitfield(
     _options: &DeriveOptions,
 ) -> Result<TokenStream, Error> {
     let ident = &item.ident;
-    let (impl_generics, type_generics, where_clause) = item.generics.split_for_impl();
-    let mut where_clause = make_where_clause(where_clause);
+    let SplitGenerics {
+        impl_generics,
+        type_generics,
+        mut where_clause,
+    } = SplitGenerics::from_generics(&item.generics);
     let bitfield_ty = &bitfield.ty;
     let mut struct_init = vec![];
     let mut bit_index = 0;
 
     let read_value = if let Some(endianness) = bitfield.endianness.ty() {
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: for<'r> ::skunk::util::bytes::rw::ReadXe::<&'r mut __R, #endianness>
+            #bitfield_ty: for<'r> ::skunk_bytes::rw::ReadXe::<&'r mut __R, #endianness>
         });
         quote! {
-            ::skunk::util::bytes::rw::ReadXe::<_, #endianness>::read(&mut reader)?
+            ::skunk_bytes::rw::ReadXe::<_, #endianness>::read(&mut reader)?
         }
     }
     else {
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: for<'r> ::skunk::util::bytes::rw::Read::<&'r mut __R>
+            #bitfield_ty: for<'r> ::skunk_bytes::rw::Read::<&'r mut __R>
         });
         quote! {
-            ::skunk::util::bytes::rw::Read::<_>::read(&mut reader)?
+            ::skunk_bytes::rw::Read::<_>::read(&mut reader)?
         }
     };
 
@@ -166,11 +174,11 @@ fn derive_read_for_struct_bitfield(
         }
 
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: ::skunk::util::bytes::BitFieldExtract<#field_ty>
+            #bitfield_ty: ::skunk_bytes::BitFieldExtract<#field_ty>
         });
 
-        struct_init.push(quote!{
-            #field_name: ::skunk::util::bytes::BitFieldExtract::extract::<#field_ty>::(#start, #bits),
+        struct_init.push(quote! {
+            #field_name: ::skunk_bytes::BitFieldExtract::extract::<#field_ty>::(#start, #bits),
         });
 
         bit_index = start + bits;
@@ -178,8 +186,8 @@ fn derive_read_for_struct_bitfield(
 
     Ok(quote! {
         #[automatically_derived]
-        impl<__R, #impl_generics> ::skunk::util::bytes::rw::Read<__R> for #ident<#type_generics> #where_clause {
-            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk::util::bytes::rw::End> {
+        impl<__R, #impl_generics> ::skunk_bytes::rw::Read<__R> for #ident<#type_generics> #where_clause {
+            fn read(mut reader: __R) -> ::std::result::Result<Self, ::skunk_bytes::rw::End> {
                 let _value: #bitfield_ty = #read_value;
                 ::std::result::Result::Ok(Self {
                     #(#struct_init)*
