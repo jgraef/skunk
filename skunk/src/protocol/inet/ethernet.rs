@@ -1,11 +1,9 @@
 use byst::{
     endianness::NetworkEndian,
-    io::{
-        read::{
-            Read,
-            ReadIntoBuf,
-        },
+    io::read::{
         End,
+        Read,
+        ReadIntoBuf,
     },
     read,
 };

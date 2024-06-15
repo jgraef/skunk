@@ -12,15 +12,14 @@ use std::{
     },
 };
 
+use super::Full;
 use crate::{
     buf::{
-        write_helper,
         Buf,
         BufMut,
         SingleChunk,
         SingleChunkMut,
         SizeLimit,
-        WriteError,
     },
     range::{
         Range,
@@ -198,45 +197,52 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
         ))
     }
 
-    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
-        let range = range.into();
-        let new_len = range.len_in(0, self.len());
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
         let n = self.buf.as_ref().len();
-        if new_len <= n {
-            self.resize(new_len, 0);
+        if size <= n {
             Ok(())
         }
         else {
-            Err(RangeOutOfBounds {
-                required: range,
-                bounds: (0, n),
+            Err(Full {
+                required: size,
+                buf_length: n,
             })
         }
     }
 
-    fn write(
-        &mut self,
-        destination_range: impl Into<Range>,
-        source: impl Buf,
-        source_range: impl Into<Range>,
-    ) -> Result<(), WriteError> {
-        let len = self.buf.as_ref().len();
-        write_helper(
-            self,
-            destination_range,
-            &source,
-            source_range,
-            |_this, n| (n <= len).then_some(()).ok_or(len),
-            |_, _| (),
-            |this, n| this.resize(n, 0),
-            |this, chunk| {
-                MaybeUninit::copy_from_slice(
-                    &mut this.buf.as_mut()[this.initialized..][..chunk.len()],
-                    chunk,
-                );
-                this.initialized += chunk.len();
-            },
-        )
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+        let n = self.buf.as_ref().len();
+        if new_len <= n {
+            // after this the struct invariant still holds
+            if new_len > self.initialized {
+                MaybeUninit::fill(&mut self.buf.as_mut()[self.initialized..new_len], value);
+            }
+            self.initialized = new_len;
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: new_len,
+                buf_length: n,
+            })
+        }
+    }
+
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        let n = self.buf.as_ref().len();
+        let new_len = self.initialized + with.len();
+        if new_len <= n {
+            // after this the struct invariant still holds
+            MaybeUninit::copy_from_slice(&mut self.buf.as_mut()[self.initialized..new_len], with);
+            self.initialized = new_len;
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: new_len,
+                buf_length: n,
+            })
+        }
     }
 
     #[inline]

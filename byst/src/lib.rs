@@ -12,7 +12,6 @@
 
 pub mod buf;
 mod bytes;
-pub mod copy;
 mod dyn_impl;
 pub mod endianness;
 pub mod hexdump;

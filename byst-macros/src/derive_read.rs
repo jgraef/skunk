@@ -59,7 +59,7 @@ fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStr
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
-            fn read(mut __reader: __R, #params_name: #params_ty) -> ::std::result::Result<Self, ::byst::io::End> {
+            fn read(mut __reader: __R, #params_name: #params_ty) -> ::std::result::Result<Self, ::byst::io::read::End> {
                 #read_fields
                 ::std::result::Result::Ok(Self #struct_init)
             }
@@ -100,7 +100,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
-            fn read(mut __reader: __R, #params_name: #params_ty) -> ::std::result::Result<Self, ::byst::io::End> {
+            fn read(mut __reader: __R, #params_name: #params_ty) -> ::std::result::Result<Self, ::byst::io::read::End> {
                 let __discriminant = #discriminant_expr;
                 ::std::result::Result::Ok(
                     match __discriminant {
@@ -143,7 +143,7 @@ fn make_struct_init(
             );
 
             read_fields.push(quote!{
-                let #field_var = ::byst::io::read::Read::<_, #params_ty>::read(&mut __reader, #params_expr)?;
+                let #field_var = <#field_ty as ::byst::io::read::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?;
             });
         }
 

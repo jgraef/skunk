@@ -76,7 +76,7 @@ fn derive_write_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenSt
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::byst::io::write::Write<__W> for #ident #type_generics #where_clause {
-            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::byst::io::Full> {
+            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::byst::io::write::Full> {
                 #(#write_fields)*
                 ::std::result::Result::Ok(())
             }

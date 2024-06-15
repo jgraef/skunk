@@ -1,6 +1,7 @@
 mod arc_buf;
 mod array_buf;
 pub mod chunks;
+pub mod copy;
 mod empty;
 mod partially_initialized;
 
@@ -21,15 +22,9 @@ pub use self::{
     array_buf::ArrayBuf,
     empty::Empty,
 };
-use super::{
-    copy::{
-        copy,
-        CopyError,
-    },
-    range::{
-        Range,
-        RangeOutOfBounds,
-    },
+use super::range::{
+    Range,
+    RangeOutOfBounds,
 };
 
 /// Read access to a buffer of bytes.
@@ -187,66 +182,20 @@ pub trait BufMut: Buf {
         Ok(BufIterMut::new(self.chunks_mut(range)?))
     }
 
-    /// Grows the buffer such that it can hold the given range.
-    ///
-    /// # Default implementation
-    ///
-    /// The default implementation will check if the buffer can already hold the
-    /// range, and fail if it can't.
-    #[inline]
-    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
-        let range = range.into();
-        range
-            .contained_by(0..self.len())
-            .then_some(())
-            .ok_or_else(|| {
-                RangeOutOfBounds {
-                    required: range,
-                    bounds: (0, self.len()),
-                }
-            })
-    }
+    fn reserve(&mut self, size: usize) -> Result<(), Full>;
 
-    /// Writes the given buffer `source` into this one at `offset`, growing it
-    /// as necessary
-    ///
-    /// # Default implementation
-    ///
-    /// The default implementation will first call [`Self::grow_for`] to make
-    /// space and then copy to it. You should override it, if there is a a way
-    /// to write the data without first allocating and initializing the space
-    /// for it.
-    #[inline]
-    fn write(
-        &mut self,
-        destination_range: impl Into<Range>,
-        source: impl Buf,
-        source_range: impl Into<Range>,
-    ) -> Result<(), WriteError> {
-        let source_range = source_range.into();
-        self.grow_for(source_range).map_err(|e| {
-            WriteError::Full {
-                required: e.required,
-                buf_length: e.bounds.1,
-            }
-        })?;
-        copy(self, destination_range, source, source_range)?;
-        Ok(())
-    }
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full>;
 
-    #[inline]
-    fn size_limit(&self) -> SizeLimit {
-        SizeLimit::Unknown
-    }
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
+
+    fn size_limit(&self) -> SizeLimit;
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub enum WriteError {
-    #[error("buffer is full: range ({required:?}) can't fit into buffer with length {buf_length}")]
-    Full { required: Range, buf_length: usize },
-
-    #[error("{0}")]
-    Copy(#[from] CopyError),
+#[error("buffer is full: range ({required:?}) can't fit into buffer with length {buf_length}")]
+pub struct Full {
+    pub required: usize,
+    pub buf_length: usize,
 }
 
 impl<'b, B: BufMut + ?Sized> BufMut for &'b mut B {
@@ -265,6 +214,23 @@ impl<'b, B: BufMut + ?Sized> BufMut for &'b mut B {
         range: impl Into<Range>,
     ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
         <B as BufMut>::chunks_mut(*self, range)
+    }
+
+    #[inline]
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        <B as BufMut>::reserve(*self, size)
+    }
+
+    #[inline]
+    #[allow(unused_variables)]
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+        <B as BufMut>::grow(*self, new_len, value)
+    }
+
+    #[inline]
+    #[allow(unused_variables)]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        <B as BufMut>::extend(*self, with)
     }
 
     #[inline]
@@ -296,6 +262,42 @@ macro_rules! impl_buf_mut_for_slice_like {
                     range: impl Into<Range>,
                 ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
                     Ok(SingleChunkMut::new(range.into().slice_get_mut(self)?))
+                }
+
+                #[inline]
+                fn reserve(&mut self, size: usize) -> Result<(), Full> {
+                    if size > self.len() {
+                        Err(Full {
+                            required: size,
+                            buf_length: self.len(),
+                        })
+                    }
+                    else {
+                        Ok(())
+                    }
+                }
+
+                #[inline]
+                #[allow(unused_variables)]
+                fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+                    if new_len > self.len() {
+                        Err(Full {
+                            required: new_len,
+                            buf_length: self.len(),
+                        })
+                    }
+                    else {
+                        Ok(())
+                    }
+                }
+
+                #[inline]
+                #[allow(unused_variables)]
+                fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+                    Err(Full {
+                        required: with.len(),
+                        buf_length: self.len(),
+                    })
                 }
 
                 #[inline]
@@ -332,133 +334,31 @@ impl BufMut for Vec<u8> {
     }
 
     #[inline]
-    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
-        self.resize(range.into().len_in(0, self.len()), 0);
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        if size > self.len() {
+            self.reserve_exact(size - self.len());
+        }
         Ok(())
     }
 
-    fn write(
-        &mut self,
-        destination_range: impl Into<Range>,
-        source: impl Buf,
-        source_range: impl Into<Range>,
-    ) -> Result<(), WriteError> {
-        write_helper(
-            self,
-            destination_range,
-            &source,
-            source_range,
-            |_, _| Ok(()),
-            |this, n| this.reserve_exact(n),
-            |this, n| this.resize(n, 0),
-            |this, chunk| this.extend(chunk.iter().copied()),
-        )
+    #[inline]
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+        if new_len > self.len() {
+            self.resize(new_len, value);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        Extend::extend(self, with);
+        Ok(())
     }
 
     #[inline]
     fn size_limit(&self) -> SizeLimit {
         SizeLimit::Unlimited
     }
-}
-
-pub(super) fn write_helper<D: BufMut, S: Buf>(
-    mut destination: &mut D,
-    destination_range: impl Into<Range>,
-    source: &S,
-    source_range: impl Into<Range>,
-    check_space: impl FnOnce(&D, usize) -> Result<(), usize>,
-    reserve: impl FnOnce(&mut D, usize),
-    fill_to: impl FnOnce(&mut D, usize),
-    mut extend: impl FnMut(&mut D, &[u8]),
-) -> Result<(), WriteError> {
-    let source_range = source_range.into();
-    let (source_start, source_end) = source_range.indices_unchecked_in(0, source.len());
-    let source_range_length = source_end.saturating_sub(source_start);
-
-    let destination_length = destination.len();
-    let destination_range = destination_range.into();
-    let destination_start = destination_range.start.unwrap_or_default();
-    let (destination_end, destination_range_length) =
-        if let Some(destination_end) = destination_range.end {
-            let destination_range_length = destination_end.saturating_sub(destination_start);
-            if destination_range_length != source_range_length {
-                return Err(WriteError::Copy(CopyError::LengthMismatch {
-                    destination_range,
-                    destination_length,
-                    source_range,
-                    source_length: source.len(),
-                }));
-            }
-            (destination_end, destination_range_length)
-        }
-        else {
-            // if no upper bound for destination, we will write as much as needed to consume
-            // the source range
-            (destination_start + source_range_length, source_range_length)
-        };
-
-    if let Err(buf_length) = check_space(&destination, destination_end) {
-        return Err(WriteError::Full {
-            required: destination_range,
-            buf_length,
-        });
-    }
-
-    let mut part_written = 0;
-
-    if destination_start < destination_length {
-        // a portion is written by writing into the existing buffer
-        part_written = source_start + destination.len() - destination_start;
-
-        // todo: do this with [`copy_chunks`](super::copy_chunks), so we can use
-        // [`BufMut::write`] to actually implement copy
-        copy(
-            &mut destination,
-            destination_start..,
-            &source,
-            source_start..part_written,
-        )
-        .map_err(|e| {
-            match e {
-                CopyError::DestinationRangeOutOfBounds(e) => {
-                    CopyError::DestinationRangeOutOfBounds(RangeOutOfBounds {
-                        required: destination_range,
-                        bounds: e.bounds,
-                    })
-                }
-                CopyError::SourceRangeOutOfBounds(e) => {
-                    CopyError::SourceRangeOutOfBounds(RangeOutOfBounds {
-                        required: source_range,
-                        bounds: e.bounds,
-                    })
-                }
-                CopyError::LengthMismatch { .. } => {
-                    // we already checked that
-                    unreachable!()
-                }
-            }
-        })?;
-    }
-
-    if destination_end > destination_length {
-        // reserve space
-        reserve(&mut destination, destination_end - destination_length);
-    }
-
-    if destination_start > destination_length {
-        // the destination has to be filled with some zeros.
-        fill_to(&mut destination, destination_range_length);
-    }
-
-    if destination_end > destination_length {
-        // write rest to destination
-
-        for chunk in source.chunks(part_written..source_end).unwrap() {
-            extend(&mut destination, chunk);
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -480,14 +380,14 @@ impl From<usize> for SizeLimit {
 mod tests {
     mod vec {
         use crate::buf::{
+            copy::copy,
             Buf,
-            BufMut,
         };
 
         #[test]
-        fn write_with_fill() {
+        fn copy_with_fill() {
             let mut bytes_mut = Vec::<u8>::new();
-            bytes_mut.write(4..8, b"abcd", ..).unwrap();
+            copy(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
             assert_eq!(
                 bytes_mut.chunks(..).unwrap().next().unwrap(),
                 b"\x00\x00\x00\x00abcd"
@@ -495,18 +395,18 @@ mod tests {
         }
 
         #[test]
-        fn write_over_buf_end() {
+        fn copy_over_buf_end() {
             let mut bytes_mut = Vec::<u8>::new();
-            bytes_mut.write(0..4, b"abcd", ..).unwrap();
-            bytes_mut.write(2..6, b"efgh", ..).unwrap();
+            copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+            copy(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
             assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
         }
 
         #[test]
-        fn write_extend_with_unbounded_destination_slice() {
+        fn copy_extend_with_unbounded_destination_slice() {
             let mut bytes_mut = Vec::<u8>::new();
-            bytes_mut.write(0..4, b"abcd", ..).unwrap();
-            bytes_mut.write(2.., b"efgh", ..).unwrap();
+            copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+            copy(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
             assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
         }
     }

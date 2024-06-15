@@ -3,8 +3,23 @@ use std::marker::PhantomData;
 use byst_macros::for_tuple;
 pub use byst_macros::Write;
 
-use super::Full;
-use crate::buf::Buf;
+use crate::buf::{
+    copy::CopyError,
+    Buf,
+};
+
+#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
+#[error("Writer is full")]
+pub struct Full;
+
+impl Full {
+    pub fn from_copy_error(e: CopyError) -> Self {
+        match e {
+            CopyError::Full(_) => Full,
+            _ => panic!("Unexpected error while writing: {e}"),
+        }
+    }
+}
 
 /// Something that can be written without specifying endianness.
 pub trait Write<W> {

@@ -38,10 +38,6 @@ use crate::{
 ///     #[skunk(little)]
 ///     x: u32,
 ///
-///     // You can also specify the specific type for the endianness.
-///     #[skunk(endianness = "NetworkEndian")]
-///     y: i64,
-///
 ///     // Can contain other stucts that can be read.
 ///     bar: Bar,
 /// }

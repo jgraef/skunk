@@ -3,20 +3,20 @@ use byst::{
     io::{
         read::{
             read,
+            End,
             Read,
             ReadIntoBuf,
         },
         write::{
+            Full,
             Write,
             WriteFromBuf,
             WriteXe,
         },
-        End,
-        Full,
     },
 };
 
-/// Vlan tagged ethernet frames[1]
+/// Vlan tag for ethernet frames[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/IEEE_802.1Q
 #[derive(Clone, Copy, Debug)]

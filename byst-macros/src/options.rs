@@ -137,16 +137,13 @@ impl FieldOptions {
 
     pub fn skip(&self) -> Option<Expr> {
         self.skip.as_ref().map(|skip| {
-            skip.with
-                .as_ref()
-                .map(|with| {
-                    syn::parse_str(with).unwrap_or_else(|e| {
-                        abort!(self.span(), "Invalid expression for skip(with): {}", e)
-                    })
-                })
-                .unwrap_or_else(
-                    || parse_quote_spanned! { self.span() => ::std::default::Default::default() },
-                )
+            if let Some(with) = &skip.with {
+                with.clone()
+            }
+            else {
+                let ty = &self.ty;
+                parse_quote_spanned! { self.span() => <#ty as ::std::default::Default>::default() }
+            }
         })
     }
 
@@ -210,7 +207,7 @@ impl VariantOptions {
 
 #[derive(FromMeta)]
 pub struct SkipFieldOptions {
-    pub with: Option<String>,
+    pub with: Option<Expr>,
 }
 
 #[derive(FromMeta)]

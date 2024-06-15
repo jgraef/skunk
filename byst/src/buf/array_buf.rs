@@ -7,7 +7,10 @@ use std::{
     },
 };
 
-use super::partially_initialized::PartiallyInitialized;
+use super::{
+    partially_initialized::PartiallyInitialized,
+    Full,
+};
 use crate::{
     buf::{
         Buf,
@@ -15,7 +18,6 @@ use crate::{
         SingleChunk,
         SingleChunkMut,
         SizeLimit,
-        WriteError,
     },
     range::{
         Range,
@@ -188,18 +190,18 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
     }
 
     #[inline]
-    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
-        self.inner.grow_for(range)
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        self.inner.reserve(size)
     }
 
     #[inline]
-    fn write(
-        &mut self,
-        destination_range: impl Into<Range>,
-        source: impl Buf,
-        source_range: impl Into<Range>,
-    ) -> Result<(), WriteError> {
-        self.inner.write(destination_range, source, source_range)
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+        self.inner.grow(new_len, value)
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        self.inner.extend(with)
     }
 
     #[inline]
@@ -212,15 +214,20 @@ impl<const N: usize> BufMut for ArrayBuf<N> {
 mod tests {
     use super::ArrayBuf;
     use crate::{
-        buf::WriteError,
+        buf::{
+            copy::{
+                copy,
+                CopyError,
+            },
+            Full,
+        },
         Buf,
-        BufMut,
     };
 
     #[test]
     fn write_with_fill() {
         let mut bytes_mut = ArrayBuf::<128>::new();
-        bytes_mut.write(4..8, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
         assert_eq!(
             bytes_mut.chunks(..).unwrap().next().unwrap(),
             b"\x00\x00\x00\x00abcd"
@@ -230,16 +237,16 @@ mod tests {
     #[test]
     fn write_over_buf_end() {
         let mut bytes_mut = ArrayBuf::<128>::new();
-        bytes_mut.write(0..4, b"abcd", ..).unwrap();
-        bytes_mut.write(2..6, b"efgh", ..).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
         assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
     }
 
     #[test]
     fn write_extend_with_unbounded_destination_slice() {
         let mut bytes_mut = ArrayBuf::<128>::new();
-        bytes_mut.write(0..4, b"abcd", ..).unwrap();
-        bytes_mut.write(2.., b"efgh", ..).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
         assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
     }
 
@@ -247,11 +254,11 @@ mod tests {
     fn cant_write_more_than_buf_size() {
         let mut bytes_mut = ArrayBuf::<4>::new();
         assert_eq!(
-            bytes_mut.write(0..8, b"abcdefgh", 0..8).unwrap_err(),
-            WriteError::Full {
-                required: (0..8).into(),
+            copy(&mut bytes_mut, 0..8, b"abcdefgh", 0..8).unwrap_err(),
+            CopyError::Full(Full {
+                required: 8,
                 buf_length: 4
-            }
+            })
         );
     }
 }

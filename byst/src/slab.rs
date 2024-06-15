@@ -9,20 +9,22 @@ use std::{
 };
 
 use super::{
-    buf::{
-        chunks::{
-            SingleChunk,
-            SingleChunkMut,
-        },
-        write_helper,
-        WriteError,
+    buf::chunks::{
+        SingleChunk,
+        SingleChunkMut,
     },
     Buf,
     BufMut,
     Range,
     RangeOutOfBounds,
 };
-use crate::util::ptr_len;
+use crate::{
+    buf::{
+        Full,
+        SizeLimit,
+    },
+    util::ptr_len,
+};
 
 /// Efficient allocation of equally-sized buffers.
 pub struct Slab {
@@ -290,50 +292,56 @@ impl BufMut for BytesMut {
         ))
     }
 
-    fn grow_for(&mut self, range: impl Into<Range>) -> Result<(), RangeOutOfBounds> {
-        let range = range.into();
-        let new_len = range.len_in(0, self.inner.len);
-        if new_len <= self.buf_size() {
-            self.resize(new_len, 0);
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        if size <= self.buf_size() {
             Ok(())
         }
         else {
-            Err(RangeOutOfBounds {
-                required: range,
-                bounds: (0, self.buf_size()),
+            Err(Full {
+                required: size,
+                buf_length: self.buf_size(),
             })
         }
     }
 
-    #[inline]
-    fn write(
-        &mut self,
-        destination_range: impl Into<Range>,
-        source: impl Buf,
-        source_range: impl Into<Range>,
-    ) -> Result<(), WriteError> {
-        let buf_size = self.buf_size();
-        write_helper(
-            self,
-            destination_range,
-            &source,
-            source_range,
-            |_this, n| (n <= buf_size).then_some(()).ok_or(buf_size),
-            |_, _| (),
-            |this, n| this.resize(n, 0),
-            |this, chunk| {
-                unsafe {
-                    MaybeUninit::copy_from_slice(
-                        &mut this
-                            .inner
-                            .buf
-                            .bytes_mut(this.inner.len..(this.inner.len + chunk.len())),
-                        chunk,
-                    );
-                }
-                this.inner.len += chunk.len();
-            },
-        )
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+        if new_len <= self.buf_size() {
+            self.resize(new_len, value);
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: new_len,
+                buf_length: self.buf_size(),
+            })
+        }
+    }
+
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        let new_len = self.inner.len + with.len();
+        if new_len <= self.buf_size() {
+            unsafe {
+                MaybeUninit::copy_from_slice(
+                    &mut self
+                        .inner
+                        .buf
+                        .bytes_mut(self.inner.len..(self.inner.len + with.len())),
+                    with,
+                );
+            }
+            self.inner.len += with.len();
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: new_len,
+                buf_length: self.buf_size(),
+            })
+        }
+    }
+
+    fn size_limit(&self) -> SizeLimit {
+        SizeLimit::Exact(self.buf_size())
     }
 }
 
@@ -789,9 +797,14 @@ mod tests {
         Slab,
     };
     use crate::{
-        buf::WriteError,
+        buf::{
+            copy::{
+                copy,
+                CopyError,
+            },
+            Full,
+        },
         Buf,
-        BufMut,
         RangeOutOfBounds,
     };
 
@@ -800,7 +813,7 @@ mod tests {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        bytes_mut.write(0..4, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
         assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abcd");
     }
 
@@ -809,7 +822,7 @@ mod tests {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        bytes_mut.write(0..4, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
         assert_eq!(bytes_mut.chunks(0..2).unwrap().next().unwrap(), b"ab");
     }
 
@@ -818,7 +831,7 @@ mod tests {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        bytes_mut.write(4..8, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
         assert_eq!(
             bytes_mut.chunks(..).unwrap().next().unwrap(),
             b"\x00\x00\x00\x00abcd"
@@ -831,8 +844,8 @@ mod tests {
 
         let mut bytes_mut = slab.get();
 
-        bytes_mut.write(0..4, b"abcd", ..).unwrap();
-        bytes_mut.write(2..6, b"efgh", ..).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
 
         assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
     }
@@ -843,8 +856,8 @@ mod tests {
 
         let mut bytes_mut = slab.get();
 
-        bytes_mut.write(0..4, b"abcd", ..).unwrap();
-        bytes_mut.write(2.., b"efgh", ..).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+        copy(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
 
         assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
     }
@@ -854,7 +867,7 @@ mod tests {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        bytes_mut.write(0..4, b"abcd", 0..4).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", 0..4).unwrap();
 
         assert_eq!(
             bytes_mut.chunks(0..8).unwrap_err(),
@@ -871,11 +884,11 @@ mod tests {
 
         let mut bytes_mut = slab.get();
         assert_eq!(
-            bytes_mut.write(0..8, b"abcdefgh", 0..8).unwrap_err(),
-            WriteError::Full {
-                required: (0..8).into(),
+            copy(&mut bytes_mut, 0..8, b"abcdefgh", 0..8).unwrap_err(),
+            CopyError::Full(Full {
+                required: 8,
                 buf_length: 4
-            }
+            })
         );
     }
 
@@ -884,7 +897,7 @@ mod tests {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        bytes_mut.write(0..4, b"abcd", 0..4).unwrap();
+        copy(&mut bytes_mut, 0..4, b"abcd", 0..4).unwrap();
 
         let bytes = bytes_mut.freeze();
         assert_eq!(bytes.chunks(..).unwrap().next().unwrap(), b"abcd");
@@ -899,7 +912,7 @@ mod tests {
         let mut bytes_mut = slab.get();
         // if we don't write something into the buffer, we'll get a static (dangling,
         // zero-sized) buffer.
-        bytes_mut.write(.., b"foobar", ..).unwrap();
+        copy(&mut bytes_mut, .., b"foobar", ..).unwrap();
         let bytes = bytes_mut.freeze();
 
         assert_eq!(bytes.ref_count().ref_count().unwrap(), 1);
@@ -914,7 +927,7 @@ mod tests {
         let mut bytes_mut = slab.get();
         // if we don't write something into the buffer, we'll get a static (dangling,
         // zero-sized) buffer.
-        bytes_mut.write(.., b"foobar", ..).unwrap();
+        copy(&mut bytes_mut, .., b"foobar", ..).unwrap();
         let bytes = bytes_mut.freeze();
         let bytes2 = bytes.clone();
 

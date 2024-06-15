@@ -2,6 +2,8 @@ mod cursor;
 pub mod read;
 pub mod write;
 
+use read::End;
+
 pub use self::{
     cursor::Cursor,
     read::{
@@ -9,72 +11,8 @@ pub use self::{
         Read,
     },
 };
-use super::{
-    buf::{
-        chunks::NonEmptyIter,
-        WriteError,
-    },
-    copy::CopyError,
-    range::RangeOutOfBounds,
-};
+use super::buf::chunks::NonEmptyIter;
 use crate::util::Peekable;
-
-#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
-#[error("End of reader")]
-pub struct End;
-
-impl End {
-    fn from_copy_error(e: CopyError) -> Self {
-        match e {
-            CopyError::SourceRangeOutOfBounds(_) => Self,
-            _ => {
-                panic!("Unexpected error while copying: {e}");
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
-        // todo: we could do some checks here, if it's really an error that can be
-        // interpreted as end of buffer.
-        Self
-    }
-}
-
-impl From<End> for std::io::ErrorKind {
-    fn from(_: End) -> Self {
-        std::io::ErrorKind::UnexpectedEof
-    }
-}
-
-impl From<End> for std::io::Error {
-    fn from(_: End) -> Self {
-        std::io::ErrorKind::UnexpectedEof.into()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
-#[error("Writer is full")]
-pub struct Full;
-
-impl Full {
-    fn from_write_error(e: WriteError) -> Self {
-        match e {
-            WriteError::Full { .. } => Full,
-            _ => panic!("Unexpected error while writing: {e}"),
-        }
-    }
-}
-
-/// A reader that knows how many bytes are remaining.
-pub trait Remaining {
-    fn remaining(&self) -> usize;
-
-    #[inline]
-    fn is_at_end(&self) -> bool {
-        self.remaining() == 0
-    }
-}
 
 /// A reader that also has knowledge about the position in the underlying
 /// buffer.
@@ -100,6 +38,16 @@ pub trait Position {
     #[inline]
     fn reset_position(&mut self) {
         self.set_position(0);
+    }
+}
+
+/// A reader that knows how many bytes are remaining.
+pub trait Remaining {
+    fn remaining(&self) -> usize;
+
+    #[inline]
+    fn is_at_end(&self) -> bool {
+        self.remaining() == 0
     }
 }
 
@@ -142,6 +90,15 @@ mod tests {
         Cursor,
         Read,
     };
+
+    macro_rules! assert_read {
+        ($ty:ty) => {
+            {
+                let mut cursor = Cursor::new(b"");
+                let _ = read!(cursor => $ty);
+            }
+        };
+    }
 
     #[test]
     #[allow(dead_code)]
@@ -191,9 +148,7 @@ mod tests {
             x20: PhantomData<()>,
             x21: [u8; 4],
         }
-
-        let mut cursor = Cursor::new(b"");
-        let _ = read!(cursor => Foo);
+        assert_read!(Foo);
     }
 
     #[test]
@@ -203,9 +158,7 @@ mod tests {
         struct Bar(u8);
         #[derive(Read)]
         struct Foo(Bar);
-
-        let mut cursor = Cursor::new(b"");
-        let _ = read!(cursor => Foo);
+        assert_read!(Foo);
     }
 
     #[test]
@@ -223,5 +176,15 @@ mod tests {
 
         assert_eq!(foo.x, 0x1234);
         assert_eq!(foo.y, 0x3412);
+    }
+
+    #[test]
+    fn derive_read_for_simple_enum() {
+        //#[derive(Read)]
+        //#[byst(discriminant(ty = "u32", big))]
+        //enum Foo {
+        //    One = 1,
+        //    Two = 2,
+        //}
     }
 }

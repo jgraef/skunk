@@ -9,8 +9,46 @@ use std::{
 use byst_macros::for_tuple;
 pub use byst_macros::Read;
 
-use super::End;
-use crate::buf::BufMut;
+use crate::{
+    buf::{
+        copy::CopyError,
+        BufMut,
+    },
+    RangeOutOfBounds,
+};
+
+#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
+#[error("End of reader")]
+pub struct End;
+
+impl End {
+    pub fn from_copy_error(e: CopyError) -> Self {
+        match e {
+            CopyError::SourceRangeOutOfBounds(_) => Self,
+            _ => {
+                panic!("Unexpected error while copying: {e}");
+            }
+        }
+    }
+
+    pub fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
+        // todo: we could do some checks here, if it's really an error that can be
+        // interpreted as end of buffer.
+        Self
+    }
+}
+
+impl From<End> for std::io::ErrorKind {
+    fn from(_: End) -> Self {
+        std::io::ErrorKind::UnexpectedEof
+    }
+}
+
+impl From<End> for std::io::Error {
+    fn from(_: End) -> Self {
+        std::io::ErrorKind::UnexpectedEof.into()
+    }
+}
 
 /// Something that can be read from a reader `R`, given the parameters `P`.
 pub trait Read<R, P>: Sized {

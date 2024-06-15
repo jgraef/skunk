@@ -1,18 +1,23 @@
 use super::{
-    read::ReadIntoBuf,
-    write::WriteFromBuf,
-    End,
-    Full,
+    read::{
+        End,
+        Read,
+        ReadIntoBuf,
+    },
+    write::{
+        Full,
+        WriteFromBuf,
+    },
     Position,
     Remaining,
     Skip,
 };
 use crate::{
     buf::{
+        copy::copy,
         Buf,
         BufMut,
     },
-    copy::copy,
     range::Range,
 };
 
@@ -61,9 +66,8 @@ impl<B: BufMut> WriteFromBuf for Cursor<B> {
     fn write_from_buf<S: Buf>(&mut self, source: S) -> Result<(), Full> {
         let n = source.len();
         let range = self.get_range(n);
-        self.buf
-            .write(range, source, ..)
-            .map_err(Full::from_write_error)?;
+        let total_copied = copy(&mut self.buf, range, source, ..).map_err(Full::from_copy_error)?;
+        assert_eq!(total_copied, n);
         self.offset += n;
         Ok(())
     }
@@ -82,17 +86,22 @@ impl<B: BufMut> WriteFromBuf for Cursor<B> {
 )]
 pub struct View<B: Buf>(pub B);
 
-/*impl<'b, B: Buf<View<'b> = V> + 'b, V: Buf> Read<&'b mut Cursor<B>> for View<V> {
-    fn read(reader: &'b mut Cursor<B>) -> Result<Self, End> {
-        let range = Range::default().with_start(reader.offset);
+#[derive(Clone, Copy, Debug, derive_more::From, derive_more::Into)]
+pub struct Length(pub usize);
+
+impl<'b, B: Buf> Read<&'b mut Cursor<B>, Length> for View<B::View<'b>> {
+    fn read(reader: &'b mut Cursor<B>, parameters: Length) -> Result<Self, End> {
+        let range = Range::default()
+            .with_start(reader.offset)
+            .with_length(parameters.0);
         let view = reader
             .buf
             .view(range)
             .map_err(End::from_range_out_of_bounds)?;
-        reader.offset += view.len();
+        reader.offset += parameters.0;
         Ok(View(view))
     }
-}*/
+}
 
 impl<B: Buf> Skip for Cursor<B> {
     fn skip(&mut self, n: usize) -> Result<(), End> {

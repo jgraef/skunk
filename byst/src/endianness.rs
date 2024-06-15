@@ -7,15 +7,15 @@
 
 use super::io::{
     read::{
+        End,
         Read,
         ReadIntoBuf,
     },
     write::{
+        Full,
         WriteFromBuf,
         WriteXe,
     },
-    End,
-    Full,
 };
 
 mod sealed {
