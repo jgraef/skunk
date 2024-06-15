@@ -86,7 +86,10 @@ pub fn copy(
     let destination_grow_size =
         (destination_start > destination.len()).then_some(destination_start);
 
-    assert!(!destination_write_end.is_some() || !destination_grow_size.is_some(), "overwriting and growing");
+    assert!(
+        !destination_write_end.is_some() || !destination_grow_size.is_some(),
+        "overwriting and growing"
+    );
 
     // reserve space in destination
     // this will also fail early if there is not enough space in the destination
@@ -208,7 +211,10 @@ mod tests {
 
         match copy(&mut destination, .., &source, ..) {
             Ok(_) => panic!("copy didn't fail"),
-            Err(CopyError::Full(Full { required, buf_length })) => {
+            Err(CopyError::Full(Full {
+                required,
+                buf_length,
+            })) => {
                 assert_eq!(required, 16);
                 assert_eq!(buf_length, 4);
             }

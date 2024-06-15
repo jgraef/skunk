@@ -8,6 +8,11 @@ mod partially_initialized;
 use std::{
     borrow::Cow,
     fmt::Debug,
+    ops::{
+        Deref,
+        DerefMut,
+    },
+    rc::Rc,
     sync::Arc,
 };
 
@@ -84,17 +89,17 @@ macro_rules! impl_buf_with_deref {
 
                 #[inline]
                 fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-                    <B as Buf>::view(*self, range)
+                    <B as Buf>::view(self.deref(), range)
                 }
 
                 #[inline]
                 fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-                    <B as Buf>::chunks(*self, range)
+                    <B as Buf>::chunks(self.deref(), range)
                 }
 
                 #[inline]
                 fn len(&self) -> usize {
-                    <B as Buf>::len(*self)
+                    <B as Buf>::len(self.deref())
                 }
             }
         )*
@@ -104,6 +109,9 @@ macro_rules! impl_buf_with_deref {
 impl_buf_with_deref! {
     ('b, B: Buf + ?Sized), &'b B;
     ('b, B: Buf + ?Sized), &'b mut B;
+    (B: Buf + ?Sized), Box<B>;
+    (B: Buf + ?Sized), Arc<B>;
+    (B: Buf + ?Sized), Rc<B>;
 }
 
 macro_rules! impl_buf_for_slice_like {
@@ -198,45 +206,60 @@ pub struct Full {
     pub buf_length: usize,
 }
 
-impl<'b, B: BufMut + ?Sized> BufMut for &'b mut B {
-    type ViewMut<'a> = <B as BufMut>::ViewMut<'a> where Self: 'a;
+macro_rules! impl_buf_mut_with_deref {
+    {
+        $(
+            ($($generics:tt)*), $ty:ty;
+        )*
+    } => {
+        $(
+            impl<$($generics)*> BufMut for $ty {
+                type ViewMut<'a> = <B as BufMut>::ViewMut<'a> where Self: 'a;
 
-    type ChunksMut<'a> = <B as BufMut>::ChunksMut<'a> where Self: 'a;
+                type ChunksMut<'a> = <B as BufMut>::ChunksMut<'a> where Self: 'a;
 
-    #[inline]
-    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-        <B as BufMut>::view_mut(*self, range)
-    }
+                #[inline]
+                fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+                    <B as BufMut>::view_mut(self.deref_mut(), range)
+                }
 
-    #[inline]
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        <B as BufMut>::chunks_mut(*self, range)
-    }
+                #[inline]
+                fn chunks_mut(
+                    &mut self,
+                    range: impl Into<Range>,
+                ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
+                    <B as BufMut>::chunks_mut(self.deref_mut(), range)
+                }
 
-    #[inline]
-    fn reserve(&mut self, size: usize) -> Result<(), Full> {
-        <B as BufMut>::reserve(*self, size)
-    }
+                #[inline]
+                fn reserve(&mut self, size: usize) -> Result<(), Full> {
+                    <B as BufMut>::reserve(self.deref_mut(), size)
+                }
 
-    #[inline]
-    #[allow(unused_variables)]
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        <B as BufMut>::grow(*self, new_len, value)
-    }
+                #[inline]
+                #[allow(unused_variables)]
+                fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+                    <B as BufMut>::grow(self.deref_mut(), new_len, value)
+                }
 
-    #[inline]
-    #[allow(unused_variables)]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        <B as BufMut>::extend(*self, with)
-    }
+                #[inline]
+                #[allow(unused_variables)]
+                fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+                    <B as BufMut>::extend(self.deref_mut(), with)
+                }
 
-    #[inline]
-    fn size_limit(&self) -> SizeLimit {
-        <B as BufMut>::size_limit(*self)
-    }
+                #[inline]
+                fn size_limit(&self) -> SizeLimit {
+                    <B as BufMut>::size_limit(self.deref())
+                }
+            }
+        )*
+    };
+}
+
+impl_buf_mut_with_deref! {
+    ('b, B: BufMut + ?Sized), &'b mut B;
+    (B: BufMut + ?Sized), Box<B>;
 }
 
 macro_rules! impl_buf_mut_for_slice_like {
@@ -363,9 +386,14 @@ impl BufMut for Vec<u8> {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SizeLimit {
+    /// The [`BufMut`] can grow, but might get full.
     #[default]
     Unknown,
+
+    /// The [`BufMut`] can grow limitless.
     Unlimited,
+
+    /// The [`BufMut`] can grow to this exact length.
     Exact(usize),
 }
 
