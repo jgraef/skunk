@@ -1,4 +1,7 @@
-use std::iter::FusedIterator;
+use std::{
+    fmt::Debug,
+    iter::FusedIterator,
+};
 
 pub use byst_macros::for_tuple;
 
@@ -11,81 +14,286 @@ pub(crate) fn ptr_len<T>(ptr: *const [T]) -> usize {
 }
 
 pub struct Peekable<I: Iterator> {
-    inner: I,
-    peeked: Option<I::Item>,
-    exhausted: bool,
+    pub inner: I,
+    pub peeked: Option<I::Item>,
+    pub peeked_back: Option<I::Item>,
 }
 
 impl<I: Iterator> Peekable<I> {
+    #[inline]
     pub fn new(inner: I) -> Self {
         Self {
             inner,
             peeked: None,
-            exhausted: false,
+            peeked_back: None,
         }
     }
 
-    pub fn with_peeked(inner: I, peeked: I::Item) -> Self {
-        Self {
-            inner,
-            peeked: Some(peeked),
-            exhausted: false,
-        }
-    }
-
-    pub fn into_parts(self) -> (I, Option<I::Item>) {
-        (self.inner, self.peeked)
-    }
-
+    #[inline]
     pub fn peek(&mut self) -> Option<&I::Item> {
         self.peek_inner();
-        self.peeked.as_ref()
+        // if `self.peeked` is None, we're done iterating the inner iterator, but might
+        // have peeked from the other side. In that case that will be the next item.
+        self.peeked.as_ref().or_else(|| self.peeked_back.as_ref())
     }
 
+    #[inline]
     pub fn peek_mut(&mut self) -> Option<&mut I::Item> {
         self.peek_inner();
-        self.peeked.as_mut()
+        // if `self.peeked` is None, we're done iterating the inner iterator, but might
+        // have peeked from the other side. In that case that will be the next item.
+        self.peeked.as_mut().or_else(|| self.peeked_back.as_mut())
     }
 
+    #[inline]
     fn peek_inner(&mut self) {
         if self.peeked.is_none() {
             self.peeked = self.next_inner();
         }
     }
 
+    #[inline]
     fn next_inner(&mut self) -> Option<I::Item> {
-        if self.exhausted {
-            None
+        self.inner.next()
+    }
+}
+
+impl<I: DoubleEndedIterator> Peekable<I> {
+    #[inline]
+    pub fn peek_back(&mut self) -> Option<&I::Item> {
+        self.peek_back_inner();
+        // if `self.peeked` is None, we're done iterating the inner iterator, but might
+        // have peeked from the other side. In that case that will be the next item.
+        self.peeked_back.as_ref().or_else(|| self.peeked.as_ref())
+    }
+
+    #[inline]
+    pub fn peek_back_mut(&mut self) -> Option<&mut I::Item> {
+        self.peek_back_inner();
+        // if `self.peeked` is None, we're done iterating the inner iterator, but might
+        // have peeked from the other side. In that case that will be the next item.
+        self.peeked_back.as_mut().or_else(|| self.peeked.as_mut())
+    }
+
+    #[inline]
+    fn peek_back_inner(&mut self) {
+        if self.peeked_back.is_none() {
+            self.peeked_back = self.next_back_inner();
         }
-        else {
-            let next = self.inner.next();
-            if next.is_none() {
-                self.exhausted = true;
-            }
-            next
-        }
+    }
+
+    #[inline]
+    fn next_back_inner(&mut self) -> Option<I::Item> {
+        self.inner.next_back()
     }
 }
 
 impl<I: Iterator> Iterator for Peekable<I> {
     type Item = I::Item;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(peeked) = self.peeked.take() {
-            Some(peeked)
-        }
-        else {
-            self.next_inner()
-        }
+        self.peeked
+            .take()
+            .or_else(|| self.next_inner())
+            // if we don't have a peeked value and the inner iterator is done, we might still have a
+            // peeked value from the other side. We'll return that in this case.
+            .or_else(|| self.peeked_back.take())
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let (min, max) = self.inner.size_hint();
-        let peek_count = self.peeked.is_some().then_some(1).unwrap_or_default();
+        let peek_count = self.peeked.is_some().then_some(1).unwrap_or_default()
+            + self.peeked_back.is_some().then_some(1).unwrap_or_default();
         (min + peek_count, max.map(|max| max + peek_count))
+    }
+}
+
+impl<I: DoubleEndedIterator> DoubleEndedIterator for Peekable<I> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.peeked_back
+            .take()
+            .or_else(|| self.next_back_inner())
+            // if we don't have a peeked value and the inner iterator is done, we might still have a
+            // peeked value from the other side. We'll return that in this case.
+            .or_else(|| self.peeked.take())
     }
 }
 
 impl<I: Iterator + ExactSizeIterator> ExactSizeIterator for Peekable<I> {}
 
 impl<I: Iterator> FusedIterator for Peekable<I> {}
+
+impl<I: Iterator + Debug> Debug for Peekable<I>
+where
+    I::Item: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Peekable")
+            .field("inner", &self.inner)
+            .field("peeked", &self.peeked)
+            .field("peeked_back", &self.peeked_back)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
+pub struct Map<I, M> {
+    inner: I,
+    map: M,
+}
+
+impl<I, M> Map<I, M> {
+    #[inline]
+    pub fn new(inner: I, map: M) -> Self {
+        Self { inner, map }
+    }
+}
+
+impl<I: Iterator, M: MapFunc<I::Item>> Iterator for Map<I, M> {
+    type Item = M::Output;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.next()?;
+        Some(self.map.map(item))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<I: DoubleEndedIterator, M: MapFunc<I::Item>> DoubleEndedIterator for Map<I, M> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = self.inner.next_back()?;
+        Some(self.map.map(item))
+    }
+}
+
+impl<I: ExactSizeIterator, M: MapFunc<I::Item>> ExactSizeIterator for Map<I, M> {}
+
+impl<I: FusedIterator, M: MapFunc<I::Item>> FusedIterator for Map<I, M> {}
+
+pub trait MapFunc<T> {
+    type Output;
+
+    fn map(&mut self, input: T) -> Self::Output;
+}
+
+#[derive(Debug)]
+pub struct ExactSizeIter<I> {
+    inner: I,
+    exact_size: usize,
+}
+
+impl<I> ExactSizeIter<I> {
+    #[inline]
+    pub fn new(inner: I, exact_size: usize) -> Self {
+        Self { inner, exact_size }
+    }
+}
+
+impl<I: Iterator> Iterator for ExactSizeIter<I> {
+    type Item = I::Item;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.exact_size, Some(self.exact_size))
+    }
+}
+
+impl<I: DoubleEndedIterator> DoubleEndedIterator for ExactSizeIter<I> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back()
+    }
+}
+
+impl<I: Iterator> ExactSizeIterator for ExactSizeIter<I> {}
+
+impl<I: FusedIterator> FusedIterator for ExactSizeIter<I> {}
+
+pub struct IsEndIter<I: Iterator> {
+    inner: Peekable<I>,
+    iterated_from_start: bool,
+    iterated_from_end: bool,
+}
+
+impl<I: Iterator> IsEndIter<I> {
+    #[inline]
+    pub fn new(inner: I) -> Self {
+        Self {
+            inner: Peekable::new(inner),
+            iterated_from_end: false,
+            iterated_from_start: false,
+        }
+    }
+}
+
+impl<I: Iterator> Iterator for IsEndIter<I> {
+    type Item = IsEnd<I::Item>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.next()?;
+        let is_start = !self.iterated_from_start;
+        let is_end = !self.iterated_from_end && self.inner.peek().is_none();
+        self.iterated_from_start = true;
+        Some(IsEnd {
+            is_start,
+            is_end,
+            item,
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<I: DoubleEndedIterator> DoubleEndedIterator for IsEndIter<I> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = self.inner.next_back()?;
+        let is_end = !self.iterated_from_end;
+        let is_start = !self.iterated_from_start && self.inner.peek_back().is_none();
+        self.iterated_from_end = true;
+        Some(IsEnd {
+            is_start,
+            is_end,
+            item,
+        })
+    }
+}
+
+impl<I: ExactSizeIterator> ExactSizeIterator for IsEndIter<I> {}
+
+impl<I: FusedIterator> FusedIterator for IsEndIter<I> {}
+
+impl<I: Iterator + Debug> Debug for IsEndIter<I>
+where
+    I::Item: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IsEndIter")
+            .field("inner", &self.inner)
+            .field("iterated_from_start", &self.iterated_from_start)
+            .field("iterated_from_end", &self.iterated_from_end)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
+pub struct IsEnd<T> {
+    pub is_start: bool,
+    pub is_end: bool,
+    pub item: T,
+}

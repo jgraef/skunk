@@ -11,8 +11,7 @@
 #![feature(new_uninit, slice_ptr_get)]
 
 pub mod buf;
-mod bytes;
-mod dyn_impl;
+pub mod bytes;
 pub mod endianness;
 pub mod hexdump;
 pub mod io;
@@ -34,7 +33,7 @@ pub use self::{
     },
     bytes::{
         Bytes,
-        Sbytes,
+        BytesMut,
     },
     range::{
         Range,

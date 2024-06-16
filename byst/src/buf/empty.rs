@@ -1,6 +1,10 @@
 use super::Buf;
 use crate::{
-    dyn_impl::BytesImpl,
+    bytes::r#impl::{
+        BytesImpl,
+        ChunksIterImpl,
+    },
+    Bytes,
     Range,
     RangeOutOfBounds,
 };
@@ -34,6 +38,11 @@ impl Buf for Empty {
     fn len(&self) -> usize {
         0
     }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        true
+    }
 }
 
 impl BytesImpl for Empty {
@@ -43,10 +52,7 @@ impl BytesImpl for Empty {
     }
 
     #[inline]
-    fn chunks(
-        &self,
-        _range: Range,
-    ) -> Result<Box<dyn Iterator<Item = &[u8]> + '_>, RangeOutOfBounds> {
+    fn chunks(&self, _range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
         Ok(Box::new(std::iter::empty()))
     }
 
@@ -58,5 +64,12 @@ impl BytesImpl for Empty {
     #[inline]
     fn clone(&self) -> Box<dyn BytesImpl> {
         Box::new(Self::default())
+    }
+}
+
+impl From<Empty> for Bytes {
+    #[inline]
+    fn from(value: Empty) -> Self {
+        Self::from_impl(Box::new(value))
     }
 }

@@ -1,7 +1,7 @@
 //! # Note
 //!
 //! This is intentionally not public. If used with a type `B`, which doesn't
-//! uphold some invariants, this is unsafe.
+//! uphold some invariants, can cause UB.
 
 use std::{
     fmt::Debug,

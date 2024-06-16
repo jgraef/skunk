@@ -16,6 +16,10 @@ categories = [
 name = "skunk"
 path = "src/main.rs"
 
+[dependencies.byst]
+#version = "0.1.0"
+path = "../byst"
+
 [dependencies]
 color-eyre = "0.6.3"
 dirs = "5.0.1"

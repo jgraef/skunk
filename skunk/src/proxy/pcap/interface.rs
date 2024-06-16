@@ -443,7 +443,7 @@ impl<'a, T> ExactSizeIterator for ConfigIter<'a, T> {}
 
 /// A "raw" socket. This can be used to send and receive ethernet frames.[1]
 ///
-/// This can be created with [`Interface::socket`]
+/// This can be created with [`Interface::socket`].
 ///
 /// [1]: https://www.man7.org/linux/man-pages/man7/packet.7.html
 #[derive(Debug)]

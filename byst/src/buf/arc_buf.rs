@@ -5,7 +5,10 @@ use super::{
     Buf,
 };
 use crate::{
-    dyn_impl::BytesImpl,
+    bytes::r#impl::{
+        BytesImpl,
+        ChunksIterImpl,
+    },
     Range,
     RangeOutOfBounds,
 };
@@ -85,10 +88,7 @@ impl<B: AsRef<[u8]> + 'static> BytesImpl for ArcBuf<B> {
         }))
     }
 
-    fn chunks(
-        &self,
-        range: Range,
-    ) -> Result<Box<dyn Iterator<Item = &[u8]> + '_>, RangeOutOfBounds> {
+    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
         let sub_range: Range = range.indices_checked_in(self.start, self.end)?.into();
         Ok(Box::new(SingleChunk::new(sub_range.slice_get(
             self.buf.as_deref().map(|x| x.as_ref()).unwrap_or_default(),

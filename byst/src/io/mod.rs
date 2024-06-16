@@ -2,7 +2,10 @@ mod cursor;
 pub mod read;
 pub mod write;
 
-use read::End;
+use read::{
+    End,
+    ReadIntoBuf,
+};
 
 pub use self::{
     cursor::Cursor,
@@ -12,7 +15,12 @@ pub use self::{
     },
 };
 use super::buf::chunks::NonEmptyIter;
-use crate::util::Peekable;
+use crate::{
+    buf::copy::copy_chunks,
+    util::Peekable,
+    Buf,
+    BufMut,
+};
 
 /// A reader that also has knowledge about the position in the underlying
 /// buffer.
@@ -56,27 +64,43 @@ pub trait Skip {
     fn skip(&mut self, n: usize) -> Result<(), End>;
 }
 
-#[allow(dead_code)]
-mod todo {
-    use super::*;
-    // todo: implement this. or do we even need this? don't forget to make this pub.
+pub struct ChunksReader<'a, B: Buf + 'a> {
+    inner: Peekable<NonEmptyIter<B::Chunks<'a>>>,
+    offset: usize,
+}
 
-    pub struct ChunksReader<'a, I: Iterator<Item = &'a [u8]>> {
-        inner: Peekable<NonEmptyIter<I>>,
-    }
-
-    impl<'a, I: Iterator<Item = &'a [u8]>> ChunksReader<'a, I> {
-        #[inline]
-        pub fn new(inner: I) -> Self {
-            Self {
-                inner: Peekable::new(NonEmptyIter(inner)),
-            }
+impl<'a, B: Buf + 'a> ChunksReader<'a, B> {
+    #[inline]
+    pub fn new(inner: B::Chunks<'a>) -> Self {
+        Self {
+            inner: Peekable::new(NonEmptyIter(inner)),
+            offset: 0,
         }
+    }
+}
 
-        #[inline]
-        pub fn into_parts(self) -> (I, Option<&'a [u8]>) {
-            let (iter, peeked) = self.inner.into_parts();
-            (iter.0, peeked)
+impl<'a, B: Buf + 'a> ReadIntoBuf for ChunksReader<'a, B> {
+    type Error = End;
+
+    fn read_into_buf<D: BufMut>(&mut self, mut buf: D) -> Result<(), Self::Error> {
+        let mut dest_chunks = Peekable::new(NonEmptyIter(
+            buf.chunks_mut(..).map_err(End::from_range_out_of_bounds)?,
+        ));
+        let mut dest_offset = 0;
+        let total_copied = copy_chunks(
+            &mut dest_chunks,
+            &mut dest_offset,
+            &mut self.inner,
+            &mut self.offset,
+            None,
+        )
+        .map_err(End::from_copy_error)?;
+        drop(dest_chunks);
+        if total_copied < buf.len() {
+            Err(End)
+        }
+        else {
+            Ok(())
         }
     }
 }
@@ -86,13 +110,20 @@ mod tests {
     use std::marker::PhantomData;
 
     use super::{
-        read,
+        read::{
+            read,
+            ReadIntoBuf,
+        },
+        ChunksReader,
         Cursor,
         Read,
     };
-    use crate::io::read::{
-        End,
-        InvalidDiscriminant,
+    use crate::{
+        io::read::{
+            End,
+            InvalidDiscriminant,
+        },
+        Buf,
     };
 
     macro_rules! assert_derive_read {
@@ -357,5 +388,24 @@ mod tests {
                 foo: Foo::Two(0xacab)
             }
         );
+    }
+
+    #[test]
+    fn test_chunks_reader() {
+        let buf = b"HelloWorld";
+        let mut reader = ChunksReader::<&[u8]>::new(Buf::chunks(buf, ..).unwrap());
+
+        let mut buf2 = [0u8; 5];
+
+        reader.read_into_buf(&mut buf2).unwrap();
+        assert_eq!(&buf2, b"Hello");
+
+        reader.read_into_buf(&mut buf2).unwrap();
+        assert_eq!(&buf2, b"World");
+
+        match reader.read_into_buf(&mut buf2) {
+            Err(End) => {}
+            _ => panic!("Expected end of reader"),
+        }
     }
 }

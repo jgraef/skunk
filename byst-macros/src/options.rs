@@ -11,9 +11,11 @@ use proc_macro_error::{
     emit_call_site_error,
 };
 use syn::{
+    parse::Parser,
     parse_quote,
     parse_quote_spanned,
     Expr,
+    ExprLit,
     Ident,
     Lit,
     Pat,
@@ -186,7 +188,7 @@ pub struct VariantOptions {
     ident: Ident,
     discriminant: Option<Expr>,
     #[darling(rename = "discriminant")]
-    pat: Option<Lit>,
+    pat: Option<DiscriminantPat>,
 }
 
 impl VariantOptions {
@@ -195,24 +197,39 @@ impl VariantOptions {
     }
 
     pub fn pat(&self) -> Pat {
-        match (&self.discriminant, &self.pat) {
-            (None, None) => {
-                abort!(
-                    self.span(),
-                    "The variant `{}` either needs a discriminant, or a pattern specified.",
-                    self.ident
-                )
-            }
-            (Some(_), Some(_)) => {
-                abort!(
-                    self.span(), "Only either a discriminant, or a pattern must be specified for variant `{}`, not both.", self.ident
-                )
-            }
-            (Some(dis), None) => parse_quote! { #dis },
-            (None, Some(lit)) => {
-                parse_quote! { #lit }
+        if let Some(pat) = &self.pat {
+            pat.0.clone()
+        }
+        else if let Some(discriminant) = &self.discriminant {
+            parse_quote_spanned! { self.span() => #discriminant }
+        }
+        else {
+            abort!(
+                self.span(),
+                "The variant `{}` either needs a discriminant, or a pattern specified.",
+                self.ident
+            )
+        }
+    }
+}
+
+pub struct DiscriminantPat(pub Pat);
+
+impl FromMeta for DiscriminantPat {
+    fn from_value(value: &Lit) -> Result<Self, darling::Error> {
+        match value {
+            Lit::Str(value) => Self::from_string(&value.value()),
+            _ => {
+                Ok(Self(Pat::Lit(ExprLit {
+                    attrs: vec![],
+                    lit: value.clone(),
+                })))
             }
         }
+    }
+
+    fn from_string(value: &str) -> Result<Self, darling::Error> {
+        Ok(Self(Parser::parse_str(Pat::parse_single, value)?))
     }
 }
 

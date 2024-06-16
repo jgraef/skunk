@@ -4,6 +4,7 @@ pub mod chunks;
 pub mod copy;
 mod empty;
 mod partially_initialized;
+pub mod rope;
 
 use std::{
     borrow::Cow,
@@ -33,6 +34,11 @@ use super::range::{
 };
 
 /// Read access to a buffer of bytes.
+///
+/// # TODO
+///
+/// - Some methods have the same name as methods in `[u8]`, which is annoying
+///   when trying to use them in a `&[u8]`.
 pub trait Buf {
     /// A view of a portion of the buffer.
     type View<'a>: Buf + Sized + 'a
@@ -72,7 +78,9 @@ pub trait Buf {
 
     #[inline]
     fn iter(&self, range: impl Into<Range>) -> Result<BufIter<'_, Self>, RangeOutOfBounds> {
-        Ok(BufIter::new(self.chunks(range)?))
+        let range = range.into();
+        let len = range.len_in(0, self.len());
+        Ok(BufIter::new(self.chunks(range)?, len))
     }
 }
 
@@ -187,7 +195,9 @@ pub trait BufMut: Buf {
         &mut self,
         range: impl Into<Range>,
     ) -> Result<BufIterMut<'_, Self>, RangeOutOfBounds> {
-        Ok(BufIterMut::new(self.chunks_mut(range)?))
+        let range = range.into();
+        let len = range.len_in(0, self.len());
+        Ok(BufIterMut::new(self.chunks_mut(range)?, len))
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full>;

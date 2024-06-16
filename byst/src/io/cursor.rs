@@ -75,19 +75,6 @@ impl<B: BufMut> WriteFromBuf for Cursor<B> {
     }
 }
 
-/// Wrapper type for reading views.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    derive_more::From,
-    derive_more::Deref,
-    derive_more::DerefMut,
-    derive_more::AsRef,
-    derive_more::AsMut,
-)]
-pub struct View<B: Buf>(pub B);
-
 #[derive(Clone, Copy, Debug, derive_more::From, derive_more::Into)]
 pub struct Length(pub usize);
 

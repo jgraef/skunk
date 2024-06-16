@@ -1,6 +1,9 @@
+use std::convert::Infallible;
+
 use byst::{
     endianness::NetworkEndian,
     io::read::{
+        End,
         Read,
         ReadIntoBuf,
     },
@@ -16,6 +19,18 @@ use super::{
 /// Max payload size for ethernet frames.
 pub const MTU: usize = 1500;
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Frame is incomplete")]
+    Incomplete(#[from] End),
+}
+
+impl From<Infallible> for Error {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
+}
+
 /// An Ethernet II frame.
 ///
 /// > In computer networking, an Ethernet frame is a data link layer protocol
@@ -26,21 +41,21 @@ pub const MTU: usize = 1500;
 /// > as its payload.[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/Ethernet_frame
-pub struct EthernetFrame<Payload> {
+pub struct EthernetFrame<Payload = AnyPayload> {
     pub destination: MacAddress,
     pub source: MacAddress,
     pub vlan_tags: SmallVec<[VlanTag; 1]>,
     pub ether_type: EtherType,
     pub payload: Payload,
-    pub frame_check_sequence: u32,
+    pub frame_check_sequence: FrameCheckSequence,
 }
 
 impl<R, Payload> Read<R, ()> for EthernetFrame<Payload>
 where
-    R: ReadIntoBuf,
-    Payload: Read<R, (), Error = <R as ReadIntoBuf>::Error>,
+    R: ReadIntoBuf<Error = End>,
+    Payload: Read<R, EtherType, Error = Error>,
 {
-    type Error = <R as ReadIntoBuf>::Error;
+    type Error = Error;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let destination = read!(reader)?;
@@ -54,9 +69,9 @@ where
             vlan_tags.push(read!(reader)?);
         }
 
-        let payload = read!(reader)?;
+        let payload = read!(reader; ether_type)?;
 
-        let frame_check_sequence = read!(reader; NetworkEndian)?;
+        let frame_check_sequence = read!(reader)?;
 
         Ok(Self {
             destination,
@@ -98,4 +113,46 @@ impl EtherType {
 
     /// Internet protocol version 6
     pub const IPV6: Self = Self(0x86dd);
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FrameCheckSequence {
+    Absent,
+    Present(u32),
+    Calculate,
+}
+
+impl<R> Read<R, ()> for FrameCheckSequence
+where
+    u32: Read<R, NetworkEndian>,
+{
+    type Error = Infallible;
+
+    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+        // todo: ideally we would want to know from the error if it happened because
+        // we're at the end of the reader
+        if let Ok(value) = read!(reader => u32; NetworkEndian) {
+            Ok(Self::Present(value))
+        }
+        else {
+            Ok(Self::Absent)
+        }
+    }
+}
+
+#[derive(Clone, Debug, Read)]
+#[byst(
+    params(
+        name = "ether_type",
+        ty = "EtherType"
+    ),
+    match_expr = ether_type,
+    no_wild,
+    error = "Error",
+)]
+pub enum AnyPayload {
+    //#[byst(discriminant = "EtherType::ARP")]
+    //Arp(ArpPacket),
+    #[byst(discriminant = "_")]
+    Unknown,
 }

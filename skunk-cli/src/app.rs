@@ -5,14 +5,20 @@ use std::{
     sync::Arc,
 };
 
+use byst::io::{
+    read::read,
+    Cursor,
+};
 use color_eyre::eyre::{
     bail,
+    eyre,
     Error,
 };
 use skunk::{
     address::TcpAddress,
     protocol::{
         http,
+        inet::ethernet::EthernetFrame,
         tls,
     },
     proxy::{
@@ -63,6 +69,9 @@ pub enum Command {
 
         #[structopt(short, long)]
         rule: Vec<PathBuf>,
+    },
+    Pcap {
+        interface: String,
     },
 }
 
@@ -162,6 +171,7 @@ impl App {
             Command::Proxy { socks, rule } => {
                 self.proxy(socks, rule).await?;
             }
+            Command::Pcap { interface } => test_pcap(&interface).await?,
         }
 
         Ok(())
@@ -426,4 +436,21 @@ fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
     });
 
     token
+}
+
+async fn test_pcap(interface: &str) -> Result<(), Error> {
+    let interface = pcap::Interface::from_name(interface)
+        .ok_or_else(|| eyre!("No such interface {interface}"))?;
+
+    let socket = interface.socket()?;
+    let mut buf = vec![0; 2048];
+
+    loop {
+        let n = socket.receive(&mut buf).await?;
+        let mut reader = Cursor::new(&buf[..n]);
+
+        let packet = read!(&mut reader => EthernetFrame)?;
+    }
+
+    todo!();
 }

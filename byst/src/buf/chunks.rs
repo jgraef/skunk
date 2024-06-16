@@ -1,5 +1,6 @@
 use std::iter::{
     Flatten,
+    Fuse,
     FusedIterator,
 };
 
@@ -106,14 +107,16 @@ impl<'a> FusedIterator for SingleChunkMut<'a> {}
 /// Iterator over the bytes in a buffer.
 #[derive(Debug)]
 pub struct BufIter<'b, B: Buf + ?Sized + 'b> {
-    inner: Flatten<B::Chunks<'b>>,
+    inner: Flatten<Fuse<B::Chunks<'b>>>,
+    len: usize,
 }
 
 impl<'b, B: Buf + ?Sized> BufIter<'b, B> {
     #[inline]
-    pub fn new(chunks: B::Chunks<'b>) -> Self {
+    pub(crate) fn new(chunks: B::Chunks<'b>, len: usize) -> Self {
         Self {
-            inner: chunks.flatten(),
+            inner: chunks.fuse().flatten(),
+            len,
         }
     }
 }
@@ -124,6 +127,11 @@ impl<'b, B: Buf + ?Sized> Iterator for BufIter<'b, B> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next().copied()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
     }
 }
 
@@ -139,16 +147,20 @@ where
 
 impl<'b, B: Buf + ?Sized> FusedIterator for BufIter<'b, B> {}
 
+impl<'b, B: Buf + ?Sized> ExactSizeIterator for BufIter<'b, B> {}
+
 /// Mutable iterator over the bytes in a buffer.
 pub struct BufIterMut<'b, B: BufMut + ?Sized + 'b> {
-    inner: Flatten<B::ChunksMut<'b>>,
+    inner: Flatten<Fuse<B::ChunksMut<'b>>>,
+    len: usize,
 }
 
 impl<'b, B: BufMut + ?Sized> BufIterMut<'b, B> {
     #[inline]
-    pub fn new(chunks: B::ChunksMut<'b>) -> Self {
+    pub(crate) fn new(chunks: B::ChunksMut<'b>, len: usize) -> Self {
         Self {
-            inner: chunks.flatten(),
+            inner: chunks.fuse().flatten(),
+            len,
         }
     }
 }
@@ -159,6 +171,11 @@ impl<'b, B: BufMut + ?Sized> Iterator for BufIterMut<'b, B> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
     }
 }
 
@@ -173,6 +190,8 @@ where
 }
 
 impl<'b, B: BufMut + ?Sized> FusedIterator for BufIterMut<'b, B> {}
+
+impl<'b, B: BufMut + ?Sized> ExactSizeIterator for BufIterMut<'b, B> {}
 
 /// Iterator wrapper to skip empty chunks.
 #[derive(Debug)]

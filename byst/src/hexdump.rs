@@ -6,12 +6,9 @@ use std::fmt::{
 
 use super::{
     buf::Buf,
-    io::{
-        read::ReadIntoBuf,
-        Cursor,
-        Remaining,
-    },
+    io::read::ReadIntoBuf,
 };
+use crate::io::ChunksReader;
 
 pub struct Hexdump<B> {
     buf: B,
@@ -56,7 +53,6 @@ impl<B: Buf> Display for Hexdump<B> {
 
 impl<B: Buf> Debug for Hexdump<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        //writeln!(f, "Hexdump ({} bytes):", self.buf.len())?;
         let hex = Hexdump {
             buf: &self.buf,
             config: Config {
@@ -90,42 +86,44 @@ impl Default for Config {
     }
 }
 
-pub struct Lines<B> {
-    cursor: Cursor<B>,
+pub struct Lines<'b, B: Buf> {
+    // todo: use a chunk reader instead.
+    reader: ChunksReader<'b, B>,
     pad_offset_to: usize,
     offset: usize,
+    remaining: usize,
     emit_empty_line: bool,
 }
 
-impl<B: Buf> Lines<B> {
-    pub fn new(buf: B, config: &Config) -> Self {
+impl<'b, B: Buf> Lines<'b, B> {
+    pub fn new(buf: &'b B, config: &Config) -> Self {
         let pad_offset_to = std::cmp::max(num_hex_digits(config.offset + buf.len()), 4);
         Self {
-            cursor: Cursor::new(buf),
+            reader: ChunksReader::new(buf.chunks(..).unwrap()),
             pad_offset_to,
             offset: config.offset,
+            remaining: buf.len(),
             emit_empty_line: config.at_least_one_line,
         }
     }
 }
 
-impl<B: Buf> Iterator for Lines<B> {
+impl<'b, B: Buf> Iterator for Lines<'b, B> {
     type Item = Line;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let remaining = self.cursor.remaining();
-        (remaining > 0 || self.emit_empty_line).then(|| {
+        (self.remaining > 0 || self.emit_empty_line).then(|| {
             self.emit_empty_line = false;
-            let num_bytes = std::cmp::min(remaining, 16);
+            let num_bytes = std::cmp::min(self.remaining, 16);
             let mut line = [0; 16];
 
-            // step through this
-
-            self.cursor
+            self.reader
                 .read_into_buf(&mut line[..num_bytes])
-                .unwrap_or_else(|_| panic!("Expected at least {num_bytes} more bytes"));
+                .unwrap_or_else(|e| panic!("Expected at least {num_bytes} more bytes: {e}"));
+
             let offset = self.offset;
             self.offset += num_bytes;
+            self.remaining -= num_bytes;
 
             Line {
                 line,
