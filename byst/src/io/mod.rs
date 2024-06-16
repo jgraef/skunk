@@ -119,6 +119,7 @@ mod tests {
     #[test]
     fn derive_read_for_struct_of_basic_types() {
         #[derive(Read)]
+        #[allow(dead_code)]
         struct Foo {
             x1: u8,
             x2: i8,
@@ -167,11 +168,12 @@ mod tests {
     }
 
     #[test]
-    #[allow(dead_code)]
     fn derive_read_for_nested_struct() {
         #[derive(Read)]
+        #[allow(dead_code)]
         struct Bar(u8);
         #[derive(Read)]
+        #[allow(dead_code)]
         struct Foo(Bar);
         assert_read!(Foo);
     }
@@ -187,7 +189,7 @@ mod tests {
         }
 
         let mut cursor = Cursor::new(b"\x12\x34\x12\x34");
-        let foo: Foo = read!(cursor).unwrap();
+        let foo: Foo = read!(&mut cursor).unwrap();
 
         assert_eq!(foo.x, 0x1234);
         assert_eq!(foo.y, 0x3412);

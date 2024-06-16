@@ -151,8 +151,12 @@ fn make_struct_init(
             let (params_ty, params_expr) = field_options.params();
 
             if let Some(error_ty) = error_ty {
+                where_clause
+                    .predicates
+                    .push(parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty> });
+
                 where_clause.predicates.push(
-                    parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty, Error = #error_ty> },
+                    parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::Error> },
                 );
             }
             else {
