@@ -4,7 +4,10 @@ use darling::{
     FromVariant,
 };
 use proc_macro2::TokenStream;
-use proc_macro_error::abort;
+use proc_macro_error::{
+    abort,
+    abort_call_site,
+};
 use quote::quote;
 use syn::{
     self,
@@ -51,13 +54,14 @@ fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStr
     let SplitGenerics {
         mut impl_generics,
         type_generics,
-        mut where_clause,
+        where_clause,
     } = SplitGenerics::from_generics(&item.generics);
     impl_generics.type_params.push(parse_quote! { __R });
+    let mut track = TrackTypes::new(where_clause, options.error.clone());
 
-    let mut error_ty = options.error.clone();
-    let (read_fields, struct_init) = make_struct_init(&s.fields, &mut where_clause, &mut error_ty)?;
-    let error_ty = error_ty.unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
+    let (read_fields, struct_init) = make_struct_init(&s.fields, &mut track)?;
+
+    let (where_clause, error_ty) = track.finish();
 
     Ok(quote! {
         #[automatically_derived]
@@ -80,21 +84,20 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
     let SplitGenerics {
         mut impl_generics,
         type_generics,
-        mut where_clause,
+        where_clause,
     } = SplitGenerics::from_generics(&item.generics);
     impl_generics.type_params.push(parse_quote! { __R });
+    let mut track = TrackTypes::new(where_clause, options.error.clone());
 
-    let discriminant_expr = options.discriminant_expr(&mut where_clause);
+    let discriminant_expr = options.discriminant_expr(&mut track);
     let mut match_arms = Vec::with_capacity(e.variants.len());
-    let mut error_ty = options.error.clone();
 
     for variant in &e.variants {
         let variant_options = VariantOptions::from_variant(&variant)?;
         let variant_name = &variant.ident;
         let pat = variant_options.pat();
 
-        let (read_fields, struct_init) =
-            make_struct_init(&variant.fields, &mut where_clause, &mut error_ty)?;
+        let (read_fields, struct_init) = make_struct_init(&variant.fields, &mut track)?;
 
         match_arms.push(quote! {
             #pat => {
@@ -104,7 +107,30 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
         });
     }
 
-    let error_ty = error_ty.unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
+    if !options.no_wild {
+        match_arms.push(quote! {
+            _ => {
+                return ::std::result::Result::Err(::byst::io::read::InvalidDiscriminant(__discriminant).into());
+            },
+        });
+
+        let discriminant_ty = options.discriminant_ty().unwrap_or_else(|| {
+            abort_call_site!("Can't derive `Read::Error` without knowing the discriminant type. Either specify the discriminant type, or your own error type.")
+        });
+
+        if let Some(error_ty) = &track.error_ty {
+            track.where_clause.predicates.push(
+                parse_quote! { #error_ty: ::std::convert::From<::byst::io::read::InvalidDiscriminant<#discriminant_ty>> },
+            );
+        }
+        else {
+            track.error_ty = Some(parse_quote! {
+                ::byst::io::read::InvalidDiscriminant<#discriminant_ty>
+            });
+        }
+    }
+
+    let (where_clause, error_ty) = track.finish();
 
     Ok(quote! {
         #[automatically_derived]
@@ -125,8 +151,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
 
 fn make_struct_init(
     fields: &Fields,
-    where_clause: &mut WhereClause,
-    error_ty: &mut Option<Type>,
+    track: &mut TrackTypes,
 ) -> Result<(TokenStream, TokenStream), Error> {
     let mut read_fields = Vec::with_capacity(fields.len());
     let mut struct_init = Vec::with_capacity(fields.len());
@@ -150,24 +175,7 @@ fn make_struct_init(
         else {
             let (params_ty, params_expr) = field_options.params();
 
-            if let Some(error_ty) = error_ty {
-                where_clause
-                    .predicates
-                    .push(parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty> });
-
-                where_clause.predicates.push(
-                    parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::Error> },
-                );
-            }
-            else {
-                where_clause
-                    .predicates
-                    .push(parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty> });
-
-                *error_ty = Some(parse_quote! {
-                    <#field_ty as ::byst::io::read::Read<__R, #params_ty>>::Error
-                });
-            }
+            track.reads(field_ty, &params_ty);
 
             read_fields.push(quote!{
                 let #field_var = <#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr)?;
@@ -196,6 +204,45 @@ fn make_struct_init(
     let read_fields = quote! { #(#read_fields)* };
 
     Ok((read_fields, struct_init))
+}
+
+// better name, and move to util (this can probably be used for Write too)
+pub struct TrackTypes {
+    where_clause: WhereClause,
+    error_ty: Option<Type>,
+}
+
+impl TrackTypes {
+    pub fn new(where_clause: WhereClause, error_ty: Option<Type>) -> Self {
+        Self {
+            where_clause,
+            error_ty,
+        }
+    }
+
+    pub fn reads(&mut self, field_ty: &Type, params_ty: &Type) {
+        self.where_clause
+            .predicates
+            .push(parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty> });
+
+        if let Some(error_ty) = &self.error_ty {
+            self.where_clause.predicates.push(
+                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::Error> },
+            );
+        }
+        else {
+            self.error_ty = Some(parse_quote! {
+                <#field_ty as ::byst::io::read::Read<__R, #params_ty>>::Error
+            });
+        }
+    }
+
+    pub fn finish(self) -> (WhereClause, Type) {
+        let error_ty = self
+            .error_ty
+            .unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
+        (self.where_clause, error_ty)
+    }
 }
 
 fn derive_read_for_struct_bitfield(

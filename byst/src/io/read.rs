@@ -59,6 +59,10 @@ impl From<Infallible> for End {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
+#[error("Invalid discriminant: {0}")]
+pub struct InvalidDiscriminant<D>(pub D);
+
 /// Something that can be read from a reader `R`, given the parameters `P`.
 pub trait Read<R, P>: Sized {
     type Error;

@@ -19,8 +19,9 @@ use syn::{
     Pat,
     Path,
     Type,
-    WhereClause,
 };
+
+use crate::derive_read::TrackTypes;
 
 #[derive(FromDeriveInput)]
 #[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
@@ -55,9 +56,14 @@ pub struct ParamDeriveOptions {
 #[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
 pub struct EnumDeriveOptions {
     pub discriminant: Option<DiscriminantDeriveOptions>,
+
+    /// This can be used to implement parsing an enum without it reading the
+    /// discriminant. The discriminant is supplied as parameter.
     pub params: Option<ParamDeriveOptions>,
     pub error: Option<Type>,
     pub match_expr: Option<Expr>,
+    #[darling(default)]
+    pub no_wild: bool,
 }
 
 impl EnumDeriveOptions {
@@ -77,7 +83,7 @@ impl EnumDeriveOptions {
         )
     }
 
-    pub fn discriminant_expr(&self, where_clause: &mut WhereClause) -> Expr {
+    pub fn discriminant_expr(&self, track: &mut TrackTypes) -> Expr {
         if let Some(expr) = &self.match_expr {
             expr.clone()
         }
@@ -85,9 +91,7 @@ impl EnumDeriveOptions {
             let discriminant_ty = &discriminant.ty;
             let (params_ty, params_expr) = discriminant.params();
 
-            where_clause.predicates.push(
-                parse_quote! { #discriminant_ty: for<'__r> ::byst::io::read::Read::<&'__r mut __R, #params_ty> },
-            );
+            track.reads(discriminant_ty, &params_ty);
 
             parse_quote! {
                 <#discriminant_ty as ::byst::io::read::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?
@@ -96,6 +100,10 @@ impl EnumDeriveOptions {
         else {
             abort_call_site!("Either a discriminant type, or a match expression must be specified");
         }
+    }
+
+    pub fn discriminant_ty(&self) -> Option<&Type> {
+        self.discriminant.as_ref().map(|d| &d.ty)
     }
 }
 

@@ -90,6 +90,10 @@ mod tests {
         Cursor,
         Read,
     };
+    use crate::io::read::{
+        End,
+        InvalidDiscriminant,
+    };
 
     macro_rules! assert_read {
         ($($ty:ty),*) => {
@@ -197,11 +201,20 @@ mod tests {
 
     #[test]
     fn derive_read_for_simple_enum() {
-        //#[derive(Read)]
-        //#[byst(discriminant(ty = "u32", big))]
-        //enum Foo {
-        //    One = 1,
-        //    Two = 2,
-        //}
+        #[derive(Debug, thiserror::Error)]
+        #[error("oops")]
+        enum MyErr {
+            End(#[from] End),
+            Invalid(#[from] InvalidDiscriminant<u32>),
+        }
+
+        #[derive(Read)]
+        #[byst(discriminant(ty = "u32", big), error = "MyErr")]
+        enum Foo {
+            One = 1,
+            Two = 2,
+        }
+
+        assert_read!(Foo);
     }
 }
