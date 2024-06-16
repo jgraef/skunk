@@ -14,6 +14,7 @@ use syn::{
     DataStruct,
     DeriveInput,
     Fields,
+    Type,
     WhereClause,
 };
 
@@ -54,12 +55,16 @@ fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStr
     } = SplitGenerics::from_generics(&item.generics);
     impl_generics.type_params.push(parse_quote! { __R });
 
-    let (read_fields, struct_init) = make_struct_init(&s.fields, &mut where_clause)?;
+    let mut error_ty = options.error.clone();
+    let (read_fields, struct_init) = make_struct_init(&s.fields, &mut where_clause, &mut error_ty)?;
+    let error_ty = error_ty.unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
 
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
-            fn read(mut __reader: __R, #params_name: #params_ty) -> ::std::result::Result<Self, ::byst::io::read::End> {
+            type Error = #error_ty;
+
+            fn read(mut __reader: &mut __R, #params_name: #params_ty) -> ::std::result::Result<Self, Self::Error> {
                 #read_fields
                 ::std::result::Result::Ok(Self #struct_init)
             }
@@ -81,13 +86,15 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
 
     let discriminant_expr = options.discriminant_expr(&mut where_clause);
     let mut match_arms = Vec::with_capacity(e.variants.len());
+    let mut error_ty = options.error.clone();
 
     for variant in &e.variants {
         let variant_options = VariantOptions::from_variant(&variant)?;
         let variant_name = &variant.ident;
         let pat = variant_options.pat();
 
-        let (read_fields, struct_init) = make_struct_init(&variant.fields, &mut where_clause)?;
+        let (read_fields, struct_init) =
+            make_struct_init(&variant.fields, &mut where_clause, &mut error_ty)?;
 
         match_arms.push(quote! {
             #pat => {
@@ -97,10 +104,14 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
         });
     }
 
+    let error_ty = error_ty.unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
+
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
-            fn read(mut __reader: __R, #params_name: #params_ty) -> ::std::result::Result<Self, ::byst::io::read::End> {
+            type Error = #error_ty;
+
+            fn read(mut __reader: &mut __R, #params_name: #params_ty) -> ::std::result::Result<Self, Self::Error> {
                 let __discriminant = #discriminant_expr;
                 ::std::result::Result::Ok(
                     match __discriminant {
@@ -115,6 +126,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
 fn make_struct_init(
     fields: &Fields,
     where_clause: &mut WhereClause,
+    error_ty: &mut Option<Type>,
 ) -> Result<(TokenStream, TokenStream), Error> {
     let mut read_fields = Vec::with_capacity(fields.len());
     let mut struct_init = Vec::with_capacity(fields.len());
@@ -138,12 +150,23 @@ fn make_struct_init(
         else {
             let (params_ty, params_expr) = field_options.params();
 
-            where_clause.predicates.push(
-                parse_quote! { #field_ty: for<'__r> ::byst::io::read::Read::<&'__r mut __R, #params_ty> },
-            );
+            if let Some(error_ty) = error_ty {
+                where_clause.predicates.push(
+                    parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty, Error = #error_ty> },
+                );
+            }
+            else {
+                where_clause
+                    .predicates
+                    .push(parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty> });
+
+                *error_ty = Some(parse_quote! {
+                    <#field_ty as ::byst::io::read::Read<__R, #params_ty>>::Error
+                });
+            }
 
             read_fields.push(quote!{
-                let #field_var = <#field_ty as ::byst::io::read::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?;
+                let #field_var = <#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr)?;
             });
         }
 

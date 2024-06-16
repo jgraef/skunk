@@ -122,7 +122,7 @@ macro_rules! impl_buf_for_slice_like {
     } => {
         $(
             impl<$($generics)*> Buf for $ty {
-                type View<'a> = &'a [u8] where Self: 'a;
+                type View<'a> = &$view_lt [u8] where Self: 'a;
 
                 type Chunks<'a> = SingleChunk<'a> where Self: 'a;
 

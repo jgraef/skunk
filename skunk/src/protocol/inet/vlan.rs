@@ -3,7 +3,6 @@ use byst::{
     io::{
         read::{
             read,
-            End,
             Read,
             ReadIntoBuf,
         },
@@ -27,7 +26,9 @@ pub struct VlanTag {
 }
 
 impl<R: ReadIntoBuf> Read<R, ()> for VlanTag {
-    fn read(mut reader: R, _params: ()) -> Result<Self, End> {
+    type Error = <R as ReadIntoBuf>::Error;
+
+    fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let value: u16 = read!(reader; NetworkEndian)?;
         let priority_code_point = PriorityCodePoint((value >> 13) as u8);
         let drop_eligible = value & 0x1000 != 0;

@@ -1,7 +1,6 @@
 use byst::{
     endianness::NetworkEndian,
     io::read::{
-        End,
         Read,
         ReadIntoBuf,
     },
@@ -39,9 +38,11 @@ pub struct EthernetFrame<Payload> {
 impl<R, Payload> Read<R, ()> for EthernetFrame<Payload>
 where
     R: ReadIntoBuf,
-    Payload: for<'r> Read<&'r mut R, ()>,
+    Payload: Read<R, (), Error = <R as ReadIntoBuf>::Error>,
 {
-    fn read(mut reader: R, _params: ()) -> Result<Self, End> {
+    type Error = <R as ReadIntoBuf>::Error;
+
+    fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let destination = read!(reader)?;
         let source = read!(reader)?;
 

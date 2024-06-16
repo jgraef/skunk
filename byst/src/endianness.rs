@@ -7,7 +7,6 @@
 
 use super::io::{
     read::{
-        End,
         Read,
         ReadIntoBuf,
     },
@@ -123,10 +122,11 @@ macro_rules! impl_endianness {
             }
         }
 
-        impl<R: ReadIntoBuf> Read<R, $endianness> for $ty
-        {
+        impl<R: ReadIntoBuf> Read<R, $endianness> for $ty {
+            type Error = <R as ReadIntoBuf>::Error;
+
             #[inline]
-            fn read(mut reader: R, _parameters: $endianness) -> Result<Self, End> {
+            fn read(reader: &mut R, _parameters: $endianness) -> Result<Self, Self::Error> {
                 let mut buf = [0u8; $bytes];
                 reader.read_into_buf(&mut buf)?;
                 Ok(<$ty>::$from_bytes(buf))

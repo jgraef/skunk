@@ -92,16 +92,31 @@ mod tests {
     };
 
     macro_rules! assert_read {
-        ($ty:ty) => {
+        ($($ty:ty),*) => {
             {
-                let mut cursor = Cursor::new(b"");
-                let _ = read!(cursor => $ty);
+                let mut cursor = Cursor::new(b"" as &'static [u8]);
+                $(
+                    match read!(&mut cursor => $ty) {
+                        Ok(v) => {
+                            let _: $ty = v;
+                        }
+                        Err(_) => {}
+                    }
+                )*
             }
         };
     }
 
     #[test]
-    #[allow(dead_code)]
+    fn derive_read_for_unit_struct() {
+        #[derive(Read)]
+        struct Foo;
+        #[derive(Read)]
+        struct Bar();
+        assert_read!(Foo, Bar);
+    }
+
+    #[test]
     fn derive_read_for_struct_of_basic_types() {
         #[derive(Read)]
         struct Foo {

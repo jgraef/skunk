@@ -27,6 +27,7 @@ use syn::{
 pub struct StructDeriveOptions {
     pub bitfield: Option<Bitfield>,
     pub params: Option<ParamDeriveOptions>,
+    pub error: Option<Type>,
 }
 
 impl StructDeriveOptions {
@@ -55,6 +56,7 @@ pub struct ParamDeriveOptions {
 pub struct EnumDeriveOptions {
     pub discriminant: Option<DiscriminantDeriveOptions>,
     pub params: Option<ParamDeriveOptions>,
+    pub error: Option<Type>,
     pub match_expr: Option<Expr>,
 }
 
@@ -123,6 +125,7 @@ pub struct FieldOptions {
     pub endianness: Endianness,
 
     pub params: Option<ParamsFieldOptions>,
+    pub map_err: Option<Expr>,
 }
 
 impl FieldOptions {

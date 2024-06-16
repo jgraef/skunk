@@ -53,6 +53,8 @@ impl<B: Buf> Cursor<B> {
 }
 
 impl<B: Buf> ReadIntoBuf for Cursor<B> {
+    type Error = End;
+
     fn read_into_buf<D: BufMut>(&mut self, buf: D) -> Result<(), End> {
         let n = buf.len();
         let range = self.get_range(n);
@@ -89,8 +91,10 @@ pub struct View<B: Buf>(pub B);
 #[derive(Clone, Copy, Debug, derive_more::From, derive_more::Into)]
 pub struct Length(pub usize);
 
-impl<'b, B: Buf> Read<&'b mut Cursor<B>, Length> for View<B::View<'b>> {
-    fn read(reader: &'b mut Cursor<B>, parameters: Length) -> Result<Self, End> {
+impl<'b> Read<Cursor<&'b [u8]>, Length> for &'b [u8] {
+    type Error = End;
+
+    fn read(reader: &mut Cursor<&'b [u8]>, parameters: Length) -> Result<Self, End> {
         let range = Range::default()
             .with_start(reader.offset)
             .with_length(parameters.0);
@@ -99,7 +103,7 @@ impl<'b, B: Buf> Read<&'b mut Cursor<B>, Length> for View<B::View<'b>> {
             .view(range)
             .map_err(End::from_range_out_of_bounds)?;
         reader.offset += parameters.0;
-        Ok(View(view))
+        Ok(view)
     }
 }
 
