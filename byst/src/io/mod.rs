@@ -95,7 +95,7 @@ mod tests {
         InvalidDiscriminant,
     };
 
-    macro_rules! assert_read {
+    macro_rules! assert_derive_read {
         ($($ty:ty),*) => {
             {
                 let mut cursor = Cursor::new(b"" as &'static [u8]);
@@ -111,13 +111,30 @@ mod tests {
         };
     }
 
+    macro_rules! assert_read {
+        ($ty:ty, $input:expr, $expected:expr) => {
+            {
+                let mut cursor = Cursor::new($input);
+                let got = read!(&mut cursor => $ty).unwrap();
+                assert_eq!(got, $expected);
+            }
+        };
+        ($ty:ty, $input:expr, $expected:expr, $($arg:tt)+) => {
+            {
+                let mut cursor = Cursor::new($input);
+                let got = read!(&mut cursor => $ty).unwrap();
+                assert_eq!(got, $expected, $arg);
+            }
+        };
+    }
+
     #[test]
     fn derive_read_for_unit_struct() {
         #[derive(Read)]
         struct Foo;
         #[derive(Read)]
         struct Bar();
-        assert_read!(Foo, Bar);
+        assert_derive_read!(Foo, Bar);
     }
 
     #[test]
@@ -168,7 +185,7 @@ mod tests {
             x20: PhantomData<()>,
             x21: [u8; 4],
         }
-        assert_read!(Foo);
+        assert_derive_read!(Foo);
     }
 
     #[test]
@@ -179,24 +196,50 @@ mod tests {
         #[derive(Read)]
         #[allow(dead_code)]
         struct Foo(Bar);
-        assert_read!(Foo);
+        assert_derive_read!(Foo);
     }
 
     #[test]
     fn derive_read_uses_specified_endianness() {
-        #[derive(Read)]
+        #[derive(Read, Debug, PartialEq)]
         struct Foo {
             #[byst(big)]
             x: u16,
             #[byst(little)]
             y: u16,
+            #[byst(network)]
+            z: u16,
+        }
+        assert_read!(
+            Foo,
+            b"\x12\x34\x12\x34\x12\x34",
+            Foo {
+                x: 0x1234,
+                y: 0x3412,
+                z: 0x1234
+            }
+        );
+    }
+
+    #[test]
+    fn derive_read_for_empty_enum() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("oops")]
+        enum MyErr {
+            End(#[from] End),
+            Invalid(#[from] InvalidDiscriminant<u8>),
         }
 
-        let mut cursor = Cursor::new(b"\x12\x34\x12\x34");
-        let foo: Foo = read!(&mut cursor).unwrap();
+        #[derive(Read, Debug, PartialEq)]
+        #[byst(discriminant(ty = "u8"), error = "MyErr")]
+        enum Foo {}
 
-        assert_eq!(foo.x, 0x1234);
-        assert_eq!(foo.y, 0x3412);
+        let mut cursor = Cursor::new(b"\x00\x00");
+        let result = read!(&mut cursor => Foo);
+        assert!(matches!(
+            result,
+            Err(MyErr::Invalid(InvalidDiscriminant(0)))
+        ));
     }
 
     #[test]
@@ -205,16 +248,114 @@ mod tests {
         #[error("oops")]
         enum MyErr {
             End(#[from] End),
-            Invalid(#[from] InvalidDiscriminant<u32>),
+            Invalid(#[from] InvalidDiscriminant<u16>),
         }
 
-        #[derive(Read)]
-        #[byst(discriminant(ty = "u32", big), error = "MyErr")]
+        #[derive(Read, Debug, PartialEq)]
+        #[byst(discriminant(ty = "u16", big), error = "MyErr")]
         enum Foo {
             One = 1,
             Two = 2,
         }
 
-        assert_read!(Foo);
+        assert_read!(Foo, b"\x00\x01", Foo::One);
+        assert_read!(Foo, b"\x00\x02", Foo::Two);
+
+        let mut cursor = Cursor::new(b"\x00\x03");
+        let result = read!(&mut cursor => Foo);
+        assert!(matches!(
+            result,
+            Err(MyErr::Invalid(InvalidDiscriminant(3)))
+        ));
+    }
+
+    #[test]
+    fn derive_read_for_enum_with_fields() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("oops")]
+        enum MyErr {
+            End(#[from] End),
+            Invalid(#[from] InvalidDiscriminant<u8>),
+        }
+
+        #[derive(Read, Debug, PartialEq)]
+        #[byst(discriminant(ty = "u8"), error = "MyErr")]
+        enum Foo {
+            #[byst(discriminant = 1)]
+            One {
+                #[byst(big)]
+                x: u16,
+                #[byst(big)]
+                y: u16,
+            },
+            #[byst(discriminant = 2)]
+            Two(#[byst(big)] u16),
+        }
+
+        assert_read!(
+            Foo,
+            b"\x01\x01\x02\xab\xcd",
+            Foo::One {
+                x: 0x0102,
+                y: 0xabcd
+            }
+        );
+        assert_read!(Foo, b"\x02\xac\xab", Foo::Two(0xacab));
+    }
+
+    #[test]
+    fn derive_read_for_enum_with_external_discriminant() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("oops")]
+        enum MyErr {
+            End(#[from] End),
+            Invalid(#[from] InvalidDiscriminant<u8>),
+        }
+
+        #[derive(Read, Debug, PartialEq)]
+        #[byst(discriminant(ty = "u8"), params(name = "discriminant", ty = "u8"), match_expr = discriminant * 2, error = "MyErr")]
+        enum Foo {
+            #[byst(discriminant = 2)]
+            One {
+                #[byst(big)]
+                x: u16,
+                #[byst(big)]
+                y: u16,
+            },
+            #[byst(discriminant = 4)]
+            Two(#[byst(big)] u16),
+        }
+
+        #[derive(Read, Debug, PartialEq)]
+        #[byst(error = "MyErr")]
+        struct Bar {
+            my_discriminant: u8,
+            #[byst(big)]
+            some_data: u16,
+            #[byst(params(ty = "u8", with = my_discriminant))]
+            foo: Foo,
+        }
+
+        assert_read!(
+            Bar,
+            b"\x01\x12\x34\x01\x02\xab\xcd",
+            Bar {
+                my_discriminant: 1,
+                some_data: 0x1234,
+                foo: Foo::One {
+                    x: 0x0102,
+                    y: 0xabcd
+                }
+            }
+        );
+        assert_read!(
+            Bar,
+            b"\x02\x12\x34\xac\xab",
+            Bar {
+                my_discriminant: 2,
+                some_data: 0x1234,
+                foo: Foo::Two(0xacab)
+            }
+        );
     }
 }

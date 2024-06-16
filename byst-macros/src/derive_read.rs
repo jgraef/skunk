@@ -115,7 +115,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
         });
 
         let discriminant_ty = options.discriminant_ty().unwrap_or_else(|| {
-            abort_call_site!("Can't derive `Read::Error` without knowing the discriminant type. Either specify the discriminant type, or your own error type.")
+            abort_call_site!("Can't derive `Read::Error` without knowing the discriminant type.")
         });
 
         if let Some(error_ty) = &track.error_ty {
@@ -134,6 +134,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
 
     Ok(quote! {
         #[automatically_derived]
+        #[allow(unreachable_code)]
         impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
             type Error = #error_ty;
 
