@@ -1,7 +1,4 @@
-use std::fmt::{
-    Debug,
-    Display,
-};
+use std::fmt::Debug;
 
 use super::{
     chunks::Chunks,
@@ -9,7 +6,10 @@ use super::{
 };
 use crate::{
     buf::Empty,
-    util::Peekable,
+    util::{
+        debug_as_hexdump,
+        Peekable,
+    },
     Buf,
 };
 
@@ -18,6 +18,25 @@ pub struct Bytes {
 }
 
 impl Bytes {
+    /// Creates an empty [`Bytes`].
+    ///
+    /// This doesn't allocate.
+    #[inline]
+    pub fn new() -> Self {
+        // note: this really doesn't allocate, since [`Empty`] is a ZST, and a `dyn ZST`
+        // is ZST itself.[1]
+        //
+        // [1]: https://users.rust-lang.org/t/what-does-box-dyn-actually-allocate/56618/2
+        Self::from_impl(Box::new(Empty))
+    }
+
+    #[cfg(feature = "bytes-impl")]
+    #[inline]
+    pub fn from_impl(inner: Box<dyn BytesImpl>) -> Self {
+        Self { inner }
+    }
+
+    #[cfg(not(feature = "bytes-impl"))]
     #[inline]
     pub(crate) fn from_impl(inner: Box<dyn BytesImpl>) -> Self {
         Self { inner }
@@ -26,9 +45,11 @@ impl Bytes {
 
 impl Default for Bytes {
     /// Creates an empty [`Bytes`].
+    ///
+    /// This doesn't allocate.
     #[inline]
     fn default() -> Self {
-        Self::from(Empty)
+        Self::new()
     }
 }
 
@@ -74,20 +95,7 @@ impl Buf for Bytes {
 
 impl Debug for Bytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use crate::hexdump::{
-            Config,
-            Hexdump,
-        };
-        let hex = Hexdump::with_config(
-            self,
-            Config {
-                offset: 0,
-                trailing_newline: false,
-                at_least_one_line: false,
-                header: false,
-            },
-        );
-        Display::fmt(&hex, f)
+        debug_as_hexdump(f, self)
     }
 }
 

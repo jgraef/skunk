@@ -3,6 +3,10 @@ name = "byst"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+bytes-impl = []
+
 [dependencies.byst-macros]
 #version = "0.1.0"
 path = "../byst-macros"

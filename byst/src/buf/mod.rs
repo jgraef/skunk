@@ -1,4 +1,4 @@
-mod arc_buf;
+pub mod arc_buf;
 mod array_buf;
 pub mod chunks;
 pub mod copy;
@@ -24,7 +24,6 @@ use self::chunks::{
     SingleChunkMut,
 };
 pub use self::{
-    arc_buf::ArcBuf,
     array_buf::ArrayBuf,
     empty::Empty,
 };

@@ -1,9 +1,14 @@
 use std::{
-    fmt::Debug,
+    fmt::{
+        Debug,
+        Display,
+    },
     iter::FusedIterator,
 };
 
 pub use byst_macros::for_tuple;
+
+use crate::Buf;
 
 #[inline]
 pub(crate) fn ptr_len<T>(ptr: *const [T]) -> usize {
@@ -296,4 +301,33 @@ pub struct IsEnd<T> {
     pub is_start: bool,
     pub is_end: bool,
     pub item: T,
+}
+
+pub fn debug_as_hexdump(f: &mut std::fmt::Formatter, buf: impl Buf) -> std::fmt::Result {
+    use crate::hexdump::{
+        Config,
+        Hexdump,
+    };
+    let hex = Hexdump::with_config(
+        buf,
+        Config {
+            offset: 0,
+            trailing_newline: false,
+            at_least_one_line: false,
+            header: false,
+        },
+    );
+    Display::fmt(&hex, f)
+}
+
+/// Checks if `needle` is a sub-slice of `haystack`, and returns the index at
+/// which `needle` starts in `haystack`.
+pub fn sub_slice_index(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let haystack_start = haystack.as_ptr() as usize;
+    let haystack_end = haystack_start + haystack.len();
+    let needle_start = needle.as_ptr() as usize;
+    let needle_end = needle_start + needle.len();
+
+    (needle_start >= haystack_start && needle_end <= haystack_end)
+        .then(|| needle_start - haystack_start)
 }
