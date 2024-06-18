@@ -1,7 +1,4 @@
-use std::{
-    iter::FusedIterator,
-    sync::Arc,
-};
+use std::iter::FusedIterator;
 
 use super::{
     bytes::Chunks,
@@ -15,12 +12,12 @@ use super::{
 use crate::{
     buf::{
         arc_buf::ArcBufMut,
-        rope::Segment,
         Empty,
         Full,
         Length,
         SizeLimit,
     },
+    util::buf_eq,
     Buf,
     BufMut,
     Range,
@@ -66,6 +63,13 @@ impl Length for BytesMut {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
+    }
+}
+
+impl<T: Buf> PartialEq<T> for BytesMut {
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        buf_eq(self, other)
     }
 }
 
@@ -260,6 +264,7 @@ pub struct ChunksMut<'a> {
 }
 
 impl<'a> ChunksMut<'a> {
+    #[inline]
     pub(crate) fn from_impl(inner: Box<dyn ChunksMutIterImpl<'a> + 'a>) -> Self {
         Self { inner }
     }
@@ -284,18 +289,3 @@ impl<'a> DoubleEndedIterator for ChunksMut<'a> {
 impl<'a> FusedIterator for ChunksMut<'a> {}
 
 impl<'a> ExactSizeIterator for ChunksMut<'a> {}
-
-struct SpillOver {
-    segments: Arc<Vec<Segment<Box<dyn BytesMutImpl>>>>,
-}
-
-impl SpillOver {
-    pub fn new(inner: Box<dyn BytesMutImpl>) -> Self {
-        Self {
-            segments: Arc::new(vec![Segment {
-                offset: 0,
-                buf: inner,
-            }]),
-        }
-    }
-}

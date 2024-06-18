@@ -14,9 +14,15 @@ pub use self::{
         Read,
     },
 };
-use super::buf::chunks::NonEmptyIter;
+use super::buf::chunks::NonEmpty;
 use crate::{
-    buf::copy::copy_chunks,
+    buf::{
+        chunks::{
+            ChunksExt,
+            ChunksMutExt,
+        },
+        copy::copy_chunks,
+    },
     util::Peekable,
     Buf,
     BufMut,
@@ -65,7 +71,7 @@ pub trait Skip {
 }
 
 pub struct ChunksReader<'a, B: Buf + 'a> {
-    inner: Peekable<NonEmptyIter<B::Chunks<'a>>>,
+    inner: Peekable<NonEmpty<B::Chunks<'a>>>,
     offset: usize,
 }
 
@@ -73,7 +79,7 @@ impl<'a, B: Buf + 'a> ChunksReader<'a, B> {
     #[inline]
     pub fn new(inner: B::Chunks<'a>) -> Self {
         Self {
-            inner: Peekable::new(NonEmptyIter(inner)),
+            inner: Peekable::new(inner.non_empty()),
             offset: 0,
         }
     }
@@ -83,9 +89,11 @@ impl<'a, B: Buf + 'a> ReadIntoBuf for ChunksReader<'a, B> {
     type Error = End;
 
     fn read_into_buf<D: BufMut>(&mut self, mut buf: D) -> Result<(), Self::Error> {
-        let mut dest_chunks = Peekable::new(NonEmptyIter(
-            buf.chunks_mut(..).map_err(End::from_range_out_of_bounds)?,
-        ));
+        let mut dest_chunks = Peekable::new(
+            buf.chunks_mut(..)
+                .map_err(End::from_range_out_of_bounds)?
+                .non_empty(),
+        );
         let mut dest_offset = 0;
         let total_copied = copy_chunks(
             &mut dest_chunks,

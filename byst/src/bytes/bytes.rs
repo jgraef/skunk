@@ -13,8 +13,8 @@ use crate::{
         Length,
     },
     util::{
+        buf_eq,
         debug_as_hexdump,
-        Peekable,
     },
     Buf,
 };
@@ -56,6 +56,14 @@ impl Default for Bytes {
     #[inline]
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for Bytes {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -102,51 +110,16 @@ impl Length for Bytes {
 }
 
 impl Debug for Bytes {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_as_hexdump(f, self)
     }
 }
 
-impl PartialEq for Bytes {
-    fn eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
-            return false;
-        }
-
-        let mut left_offset = 0;
-        let mut right_offset = 0;
-
-        let mut left_chunks = Peekable::new(self.chunks(..).unwrap());
-        let mut right_chunks = Peekable::new(other.chunks(..).unwrap());
-
-        loop {
-            match (left_chunks.peek(), right_chunks.peek()) {
-                (None, None) => unreachable!("Expected both Bytes to be of different lengths."),
-                (Some(_), None) | (None, Some(_)) => break false,
-                (Some(left), Some(right)) => {
-                    let n = std::cmp::min(
-                        <[u8]>::len(left) - left_offset,
-                        <[u8]>::len(right) - right_offset,
-                    );
-
-                    if left[left_offset..][..n] != right[right_offset..][..n] {
-                        break false;
-                    }
-
-                    left_offset += n;
-                    right_offset += n;
-
-                    if left_offset == <[u8]>::len(left) {
-                        left_offset = 0;
-                        left_chunks.next();
-                    }
-                    if right_offset == <[u8]>::len(right) {
-                        right_offset = 0;
-                        right_chunks.next();
-                    }
-                }
-            }
-        }
+impl<T: Buf> PartialEq<T> for Bytes {
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        buf_eq(self, other)
     }
 }
 

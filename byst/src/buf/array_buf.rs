@@ -24,6 +24,7 @@ use crate::{
         Range,
         RangeOutOfBounds,
     },
+    util::buf_eq,
 };
 
 /// A buffer backed by an array. The array is initially empty, but can grow
@@ -134,10 +135,10 @@ impl<const N: usize> Debug for ArrayBuf<N> {
     }
 }
 
-impl<const N: usize> PartialEq for ArrayBuf<N> {
+impl<const N: usize, T: Buf> PartialEq<T> for ArrayBuf<N> {
     #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        &self.inner == &other.inner
+    fn eq(&self, other: &T) -> bool {
+        buf_eq(self, other)
     }
 }
 

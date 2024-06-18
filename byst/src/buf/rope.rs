@@ -8,7 +8,10 @@ use std::{
     },
 };
 
-use super::Length;
+use super::{
+    chunks::WithOffset,
+    Length,
+};
 use crate::{
     util::{
         ExactSizeIter,
@@ -28,7 +31,7 @@ pub(crate) struct Segment<B> {
     pub(crate) buf: B,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Rope<B> {
     segments: Vec<Segment<B>>,
 }
@@ -98,18 +101,11 @@ impl<B: Length> Length for Rope<B> {
     }
 }
 
-impl<B: Buf> FromIterator<B> for Rope<B> {
+impl<B: Length> FromIterator<B> for Rope<B> {
     fn from_iter<T: IntoIterator<Item = B>>(iter: T) -> Self {
-        let mut current_offset = 0;
-
         Self {
-            segments: iter
-                .into_iter()
-                .map(|buf| {
-                    let offset = current_offset;
-                    current_offset += buf.len();
-                    Segment { offset, buf }
-                })
+            segments: WithOffset::new(iter.into_iter())
+                .map(|(offset, buf)| Segment { offset, buf })
                 .collect(),
         }
     }
@@ -267,17 +263,16 @@ impl<'b, B: Buf> MapFunc<IsEnd<&'b Segment<B>>> for MapSegmentsToChunks {
     }
 }
 
-pub(crate) fn find_segment<B: Length>(
-    segments: &[Segment<B>],
+pub(crate) fn find_segment<S>(
+    segments: &[S],
     offset: usize,
     end_spill_over: bool,
+    bounds: impl Fn(&S) -> (usize, usize),
 ) -> Option<usize> {
     segments
         .binary_search_by(|segment| {
-            match (
-                offset.cmp(&segment.offset),
-                offset.cmp(&(segment.offset + segment.buf.len())),
-            ) {
+            let (start, end) = bounds(segment);
+            match (offset.cmp(&start), offset.cmp(&end)) {
                 // target is left of current
                 (Ordering::Less, _) => Ordering::Greater,
                 // target is definitely right of current
@@ -294,29 +289,62 @@ pub(crate) fn find_segment<B: Length>(
         .ok()
 }
 
-fn view_unchecked<B: Length>(segments: &[Segment<B>], start: usize, end: usize) -> View<'_, B> {
+pub(crate) struct SegmentBounds {
+    pub start_segment: usize,
+    pub start_offset: usize,
+    pub end_segment: usize,
+    pub end_offset: usize,
+}
+
+pub(crate) fn segment_bounds_unchecked<S>(
+    segments: &[S],
+    start: usize,
+    end: usize,
+    bounds: impl Fn(&S) -> (usize, usize),
+) -> Option<SegmentBounds> {
     if start == end {
+        None
+    }
+    else {
+        let start_segment =
+            find_segment(segments, start, true, &bounds).expect("Bug: Didn't find start segment");
+        let start_offset = start - bounds(&segments[start_segment]).0;
+
+        let end_segment = find_segment(&segments[start_segment..], end, false, &bounds)
+            .expect("Bug: Didn't find end segment")
+            + start_segment;
+        let end_offset = end - bounds(&segments[end_segment]).0;
+
+        Some(SegmentBounds {
+            start_segment,
+            start_offset,
+            end_segment,
+            end_offset,
+        })
+    }
+}
+
+fn view_unchecked<B: Length>(segments: &[Segment<B>], start: usize, end: usize) -> View<'_, B> {
+    let bounds = |segment: &Segment<B>| (segment.offset, segment.offset + segment.buf.len());
+
+    if let Some(SegmentBounds {
+        start_segment,
+        start_offset,
+        end_segment,
+        end_offset,
+    }) = segment_bounds_unchecked(segments, start, end, bounds)
+    {
+        View {
+            segments: &segments[start_segment..=end_segment],
+            start_offset,
+            end_offset,
+        }
+    }
+    else {
         View {
             segments: &[],
             start_offset: 0,
             end_offset: 0,
-        }
-    }
-    else {
-        let start_segment =
-            find_segment(segments, start, true).expect("Bug: Didn't find start segment");
-        let start_offset = start - segments[start_segment].offset;
-
-        let end_segment = find_segment(&segments[start_segment..], end, false)
-            .expect("Bug: Didn't find end segment")
-            + start_segment;
-        let end_offset = end - segments[end_segment].offset;
-
-        View {
-            segments: &segments[start_segment..=end_segment],
-
-            start_offset,
-            end_offset,
         }
     }
 }

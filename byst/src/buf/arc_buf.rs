@@ -31,6 +31,7 @@ use crate::{
         ChunksIterImpl,
     },
     util::{
+        buf_eq,
         debug_as_hexdump,
         ptr_len,
     },
@@ -54,7 +55,7 @@ struct Buffer {
     /// buffer was allocated for it, and thus must not be deallocated.
     buf: *const [UnsafeCell<MaybeUninit<u8>>],
 
-    /// Made from a `Box<AtomicUsize>`
+    /// Made from a `Box<AtomicRefCount>`
     ///
     /// Invariant: This pointer is valid as long as [`BufferOwned`] exists, or
     /// a [`BufferRef`] exists.
@@ -133,38 +134,47 @@ impl Buffer {
     }
 }
 
-/// This manages the reference count of a [`Buffer`].
+/// This manages the reference count of a [`Buffer`]:
 ///
-/// [`Buffers`] can be owned by a [`Slab`], or *orphaned*. This is through a
-/// [`BufferOwned`]. This is encoded as the least significant bit.
-///
-/// [`Buffers`] can have any number of references through [`BufferRef`].
+/// - [`Buffer`]s can have *one* reference from a [`Reclaim`]. This is stored as
+///   the LSB.
+/// - [`Buffer`]s can have any number of references through [`BufferRef`]. This
+///   is stored in the remaining bits.
 struct AtomicRefCount(AtomicUsize);
 
 impl AtomicRefCount {
     #[inline]
-    fn new(ref_count: usize, owned: bool) -> Self {
-        Self(AtomicUsize::new(ref_count << 1 | if owned { 1 } else { 0 }))
+    fn new(ref_count: usize, reclaim: bool) -> Self {
+        Self(AtomicUsize::new(
+            ref_count << 1 | if reclaim { 1 } else { 0 },
+        ))
     }
 
+    /// Increments reference count for [`BufferRef`]s
     #[inline]
     fn increment(&self) {
         self.0.fetch_add(2, Ordering::Relaxed);
     }
 
-    /// Decrements reference count ([`BufferRef`]) and returns whether the
+    /// Decrements reference count for [`BufferRef`]s and returns whether the
     /// buffer must be deallocated.
     #[inline]
     fn decrement(&self) -> MustDrop {
-        MustDrop(self.0.fetch_sub(2, Ordering::Relaxed) == 2)
+        let old_value = self.0.fetch_sub(2, Ordering::Relaxed);
+        assert!(old_value >= 2);
+        MustDrop(old_value == 2)
     }
 
-    /// Orphans the buffer and returns whether the buffer must be deallocated.
+    /// Removes the [`Reclaim`] reference and returns whether the buffer must be
+    /// deallocated.
     #[inline]
-    fn orphan(&self) -> MustDrop {
+    fn make_unreclaimable(&self) -> MustDrop {
         MustDrop(self.0.fetch_and(!1, Ordering::Relaxed) == 1)
     }
 
+    /// Trys to reclaim the buffer. This will only be successful if the
+    /// reclaim-reference is the only one to the buffer. In this case it'll
+    /// increase the normal ref-count and return `true`.
     #[inline]
     fn try_reclaim(&self) -> bool {
         self.0
@@ -172,6 +182,7 @@ impl AtomicRefCount {
             .is_ok()
     }
 
+    /// Checks if the buffer can be reclaimed.
     #[inline]
     fn can_reclaim(&self) -> bool {
         self.0.load(Ordering::Relaxed) == 1
@@ -191,19 +202,16 @@ impl From<MustDrop> for bool {
 #[derive(Clone, Copy, Debug)]
 pub enum RefCount {
     Static,
-    SlabManaged { ref_count: usize },
-    Orphaned { ref_count: usize },
+    Counted { ref_count: usize, reclaim: bool },
 }
 
 impl RefCount {
     fn from_atomic(value: &AtomicRefCount) -> Self {
         let value = value.0.load(Ordering::Relaxed);
         let ref_count = value >> 1;
-        if value & 1 != 0 {
-            Self::SlabManaged { ref_count }
-        }
-        else {
-            Self::Orphaned { ref_count }
+        Self::Counted {
+            ref_count,
+            reclaim: value & 1 != 0,
         }
     }
 
@@ -211,57 +219,28 @@ impl RefCount {
     pub fn ref_count(&self) -> Option<usize> {
         match self {
             Self::Static => None,
-            Self::SlabManaged { ref_count } | Self::Orphaned { ref_count } => Some(*ref_count),
+            Self::Counted { ref_count, .. } => Some(*ref_count),
         }
     }
 
     #[inline]
-    pub fn is_orphaned(&self) -> bool {
-        matches!(self, Self::Orphaned { .. })
-    }
-}
-
-struct BufferOwned(Buffer);
-
-impl Drop for BufferOwned {
-    fn drop(&mut self) {
-        if !self.0.ref_count.is_null() {
-            unsafe {
-                if (*self.0.ref_count).orphan().into() {
-                    self.0.deallocate();
-                }
-            }
-        }
-    }
-}
-
-impl BufferOwned {
-    #[inline]
-    fn try_reclaim(&self) -> Option<BufferRef> {
-        unsafe {
-            // SAFETY: See invariant on `BufferPtr`
-            (*self.0.ref_count).try_reclaim().then(|| {
-                // we reclaimed the buffer, thus we can hand out a new reference to it :)
-                BufferRef {
-                    buf: self.0,
-                    start: 0,
-                    end: self.0.len(),
-                }
-            })
+    pub fn can_be_reclaimed(&self) -> bool {
+        match self {
+            RefCount::Static => false,
+            RefCount::Counted { reclaim, .. } => *reclaim,
         }
     }
 
     #[inline]
-    fn can_reclaim(&self) -> bool {
-        unsafe {
-            // SAFETY: See invariant on `BufferPtr`
-            (*self.0.ref_count).can_reclaim()
-        }
+    pub fn is_static(&self) -> bool {
+        matches!(self, Self::Static)
     }
 }
 
 struct BufferRef {
     buf: Buffer,
+    // todo: replace `start` and `end` with a `*const [UnsafeCell<MaybeUninit<u8>>]` for that
+    // portion of the buffer.
     start: usize,
     end: usize,
 }
@@ -360,27 +339,66 @@ impl Drop for BufferRef {
 }
 
 pub struct Reclaim {
-    inner: BufferOwned,
+    buf: Buffer,
 }
 
 impl Reclaim {
     pub fn try_reclaim(&self) -> Option<ArcBufMut> {
-        self.inner.try_reclaim().map(|inner| {
-            ArcBufMut {
-                inner,
-                initialized: 0,
-            }
-        })
+        if self.buf.ref_count.is_null() {
+            Some(ArcBufMut::default())
+        }
+        else {
+            let reclaimed = unsafe {
+                // SAFETY: We have a [`Reclaim`] reference to the buffer, so it hasn't been
+                // deallocated. Thus it's safe to dereference the `ref_count`.
+                (*self.buf.ref_count).try_reclaim()
+            };
+
+            reclaimed.then(|| {
+                // we reclaimed the buffer, thus we can hand out a new reference to it :)
+                ArcBufMut {
+                    inner: BufferRef {
+                        buf: self.buf,
+                        start: 0,
+                        end: self.buf.len(),
+                    },
+                    initialized: 0,
+                }
+            })
+        }
     }
 
     #[inline]
     pub fn can_reclaim(&self) -> bool {
-        self.inner.can_reclaim()
+        if !self.buf.ref_count.is_null() {
+            unsafe {
+                // SAFETY: We have a [`Reclaim`] reference to the buffer, so it hasn't been
+                // deallocated. Thus it's safe to dereference the `ref_count`.
+                (*self.buf.ref_count).can_reclaim()
+            }
+        }
+        else {
+            true
+        }
     }
 
     #[inline]
     pub fn ref_count(&self) -> RefCount {
-        self.inner.0.ref_count()
+        self.buf.ref_count()
+    }
+}
+
+impl Drop for Reclaim {
+    fn drop(&mut self) {
+        if !self.buf.ref_count.is_null() {
+            unsafe {
+                // SAFETY: We have a [`Reclaim`] reference to the buffer, so it hasn't been
+                // deallocated. Thus it's safe to dereference the `ref_count`.
+                if (*self.buf.ref_count).make_unreclaimable().into() {
+                    self.buf.deallocate();
+                }
+            }
+        }
     }
 }
 
@@ -476,6 +494,13 @@ impl Debug for ArcBuf {
     }
 }
 
+impl<T: Buf> PartialEq<T> for ArcBuf {
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        buf_eq(self, other)
+    }
+}
+
 #[derive(Default)]
 pub struct ArcBufMut {
     inner: BufferRef,
@@ -505,9 +530,7 @@ impl ArcBufMut {
             },
             initialized: 0,
         };
-        let reclaim = Reclaim {
-            inner: BufferOwned(buf),
-        };
+        let reclaim = Reclaim { buf };
         (this, reclaim)
     }
 
@@ -612,6 +635,13 @@ impl Debug for ArcBufMut {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_as_hexdump(f, self.bytes())
+    }
+}
+
+impl<T: Buf> PartialEq<T> for ArcBufMut {
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        buf_eq(self, other)
     }
 }
 
@@ -769,5 +799,31 @@ impl BytesMutImpl for ArcBufMut {
         // todo: sucks to re-allocate a `Box` for self here :/
         let other = ArcBufMut::split_at(&mut self, at)?;
         Ok((Box::new(self), Box::new(other)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // most tests are in `crate::slab`, but tests here would be nice too :3
+
+    use super::ArcBufMut;
+
+    #[test]
+    fn it_reclaims_empty_buffers_correctly() {
+        // don't ask me why we have specifically this test lol
+        let (buf, reclaim) = ArcBufMut::new_reclaimable(0);
+        assert!(buf.inner.buf.ref_count.is_null());
+        assert!(buf.ref_count().is_static());
+        drop(buf);
+        assert!(reclaim.can_reclaim());
+        let reclaimed = reclaim.try_reclaim().unwrap();
+        assert!(reclaimed.ref_count().is_static());
+    }
+
+    #[test]
+    fn empty_bufs_dont_ref_count() {
+        let buf = ArcBufMut::new(10);
+        let frozen = buf.freeze();
+        assert_eq!(frozen.ref_count().ref_count(), None);
     }
 }

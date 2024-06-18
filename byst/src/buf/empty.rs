@@ -1,3 +1,8 @@
+use std::ops::{
+    Deref,
+    DerefMut,
+};
+
 use super::{
     Buf,
     Full,
@@ -113,6 +118,39 @@ impl Length for Empty {
     #[inline]
     fn is_empty(&self) -> bool {
         true
+    }
+}
+
+impl<T: Buf> PartialEq<T> for Empty {
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        other.is_empty()
+    }
+}
+
+impl Deref for Empty {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        Default::default()
+    }
+}
+
+impl DerefMut for Empty {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Default::default()
+    }
+}
+
+impl AsRef<[u8]> for Empty {
+    fn as_ref(&self) -> &[u8] {
+        Default::default()
+    }
+}
+
+impl AsMut<[u8]> for Empty {
+    fn as_mut(&mut self) -> &mut [u8] {
+        Default::default()
     }
 }
 

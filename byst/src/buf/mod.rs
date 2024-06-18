@@ -5,6 +5,7 @@ pub mod copy;
 mod empty;
 mod partially_initialized;
 pub mod rope;
+mod slab;
 
 use std::{
     borrow::Cow,
@@ -26,6 +27,7 @@ use self::chunks::{
 pub use self::{
     array_buf::ArrayBuf,
     empty::Empty,
+    slab::Slab,
 };
 use super::range::{
     Range,

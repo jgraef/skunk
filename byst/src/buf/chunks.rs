@@ -7,6 +7,7 @@ use std::iter::{
 use super::{
     Buf,
     BufMut,
+    Length,
 };
 
 /// Chunk iterator for contiguous buffers.
@@ -195,30 +196,123 @@ impl<'b, B: BufMut + ?Sized> ExactSizeIterator for BufIterMut<'b, B> {}
 
 /// Iterator wrapper to skip empty chunks.
 #[derive(Debug)]
-pub struct NonEmptyIter<I>(pub I);
+pub struct NonEmpty<I> {
+    inner: I,
+}
 
-impl<T: AsRef<[u8]>, I: Iterator<Item = T>> Iterator for NonEmptyIter<I> {
+impl<I> NonEmpty<I> {
+    #[inline]
+    pub fn new(inner: I) -> Self {
+        Self { inner }
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> I {
+        self.inner
+    }
+}
+
+impl<T: Length, I: Iterator<Item = T>> Iterator for NonEmpty<I> {
     type Item = T;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let x = self.0.next()?;
-        (!x.as_ref().is_empty()).then_some(x)
+        let item = self.inner.next()?;
+        (!item.is_empty()).then_some(item)
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, self.0.size_hint().1)
+        (0, self.inner.size_hint().1)
     }
 }
 
-impl<T: AsRef<[u8]>, I: Iterator<Item = T> + DoubleEndedIterator> DoubleEndedIterator
-    for NonEmptyIter<I>
-{
+impl<T: Length, I: Iterator<Item = T> + DoubleEndedIterator> DoubleEndedIterator for NonEmpty<I> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.0.next_back()
+        self.inner.next_back()
     }
 }
 
-impl<T: AsRef<[u8]>, I: Iterator<Item = T>> FusedIterator for NonEmptyIter<I> {}
+impl<T: Length, I: Iterator<Item = T> + FusedIterator> FusedIterator for NonEmpty<I> {}
+
+/// Wrapper for chunk iterators that also tracks the current offset.
+pub struct WithOffset<I> {
+    inner: I,
+    offset: usize,
+}
+
+impl<I> WithOffset<I> {
+    #[inline]
+    pub fn new(inner: I) -> Self {
+        Self::with_offset(inner, 0)
+    }
+
+    #[inline]
+    pub fn with_offset(inner: I, offset: usize) -> Self {
+        Self { inner, offset }
+    }
+
+    #[inline]
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> I {
+        self.inner
+    }
+}
+
+impl<T: Length, I: Iterator<Item = T>> Iterator for WithOffset<I> {
+    type Item = (usize, T);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk = self.inner.next()?;
+        let offset = self.offset;
+        self.offset += chunk.len();
+        Some((offset, chunk))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<T: Length, I: Iterator<Item = T> + FusedIterator> FusedIterator for WithOffset<I> {}
+
+pub trait ChunksExt: Sized {
+    fn non_empty(self) -> NonEmpty<Self>;
+    fn with_offset(self) -> WithOffset<Self>;
+}
+
+impl<'a, I: Iterator<Item = &'a [u8]>> ChunksExt for I {
+    #[inline]
+    fn non_empty(self) -> NonEmpty<Self> {
+        NonEmpty::new(self)
+    }
+
+    #[inline]
+    fn with_offset(self) -> WithOffset<Self> {
+        WithOffset::new(self)
+    }
+}
+
+pub trait ChunksMutExt: Sized {
+    fn non_empty(self) -> NonEmpty<Self>;
+    fn with_offset(self) -> WithOffset<Self>;
+}
+
+impl<'a, I: Iterator<Item = &'a mut [u8]>> ChunksMutExt for I {
+    #[inline]
+    fn non_empty(self) -> NonEmpty<Self> {
+        NonEmpty::new(self)
+    }
+
+    #[inline]
+    fn with_offset(self) -> WithOffset<Self> {
+        WithOffset::new(self)
+    }
+}

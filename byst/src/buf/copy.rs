@@ -6,7 +6,10 @@ use super::{
     RangeOutOfBounds,
 };
 use crate::{
-    buf::chunks::NonEmptyIter,
+    buf::chunks::{
+        ChunksExt,
+        ChunksMutExt,
+    },
     util::Peekable,
 };
 
@@ -98,21 +101,23 @@ pub fn copy(
 
     let mut total_copied = 0;
 
-    let mut source_chunks = Peekable::new(NonEmptyIter(
+    let mut source_chunks = Peekable::new(
         source
             .chunks(source_range)
-            .map_err(CopyError::SourceRangeOutOfBounds)?,
-    ));
+            .map_err(CopyError::SourceRangeOutOfBounds)?
+            .non_empty(),
+    );
     let mut source_offset = 0;
 
     if let Some(destination_write_end) = destination_write_end {
         // overwrite existing part of the destination buffer
 
-        let mut destination_chunks = Peekable::new(NonEmptyIter(
+        let mut destination_chunks = Peekable::new(
             destination
                 .chunks_mut(destination_start..destination_write_end)
-                .map_err(CopyError::DestinationRangeOutOfBounds)?,
-        ));
+                .map_err(CopyError::DestinationRangeOutOfBounds)?
+                .non_empty(),
+        );
         let mut destination_offset = 0;
 
         total_copied += copy_chunks(

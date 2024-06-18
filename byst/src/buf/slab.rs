@@ -289,9 +289,9 @@ mod tests {
         let mut slab = Slab::new(128, 32);
         let bytes_mut = slab.get();
 
-        assert!(!bytes_mut.ref_count().is_orphaned());
+        assert!(bytes_mut.ref_count().can_be_reclaimed());
         drop(slab);
-        assert!(bytes_mut.ref_count().is_orphaned());
+        assert!(!bytes_mut.ref_count().can_be_reclaimed());
     }
 
     #[test]

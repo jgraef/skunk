@@ -331,3 +331,49 @@ pub fn sub_slice_index(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     (needle_start >= haystack_start && needle_end <= haystack_end)
         .then(|| needle_start - haystack_start)
 }
+
+pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut left_offset = 0;
+    let mut right_offset = 0;
+
+    let mut left_chunks =
+        Peekable::new(left.chunks(..).expect("Buf::chunks failed for full range."));
+    let mut right_chunks = Peekable::new(
+        right
+            .chunks(..)
+            .expect("Buf::chunks failed for full range."),
+    );
+
+    loop {
+        match (left_chunks.peek(), right_chunks.peek()) {
+            (None, None) => unreachable!("Expected both Bytes to be of different lengths."),
+            (Some(_), None) | (None, Some(_)) => break false,
+            (Some(left), Some(right)) => {
+                let n = std::cmp::min(
+                    <[u8]>::len(left) - left_offset,
+                    <[u8]>::len(right) - right_offset,
+                );
+
+                if left[left_offset..][..n] != right[right_offset..][..n] {
+                    break false;
+                }
+
+                left_offset += n;
+                right_offset += n;
+
+                if left_offset == <[u8]>::len(left) {
+                    left_offset = 0;
+                    left_chunks.next();
+                }
+                if right_offset == <[u8]>::len(right) {
+                    right_offset = 0;
+                    right_chunks.next();
+                }
+            }
+        }
+    }
+}

@@ -17,7 +17,6 @@ pub mod endianness;
 pub mod hexdump;
 pub mod io;
 mod range;
-pub mod slab;
 pub mod util;
 
 pub use self::{
