@@ -10,6 +10,7 @@ use std::{
 use super::{
     partially_initialized::PartiallyInitialized,
     Full,
+    Length,
 };
 use crate::{
     buf::{
@@ -160,7 +161,9 @@ impl<const N: usize> Buf for ArrayBuf<N> {
     fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
         self.inner.chunks(range)
     }
+}
 
+impl<const N: usize> Length for ArrayBuf<N> {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
@@ -257,7 +260,7 @@ mod tests {
             copy(&mut bytes_mut, 0..8, b"abcdefgh", 0..8).unwrap_err(),
             CopyError::Full(Full {
                 required: 8,
-                buf_length: 4
+                capacity: 4
             })
         );
     }

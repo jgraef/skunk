@@ -32,13 +32,78 @@ use super::range::{
     RangeOutOfBounds,
 };
 
+pub trait Length {
+    /// Returns the length of this buffer in bytes.
+    fn len(&self) -> usize;
+
+    /// Returns whether this buffer is empty (i.e. has length 0).
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Length for [u8] {
+    fn len(&self) -> usize {
+        <[u8]>::len(self)
+    }
+}
+
+impl<const N: usize> Length for [u8; N] {
+    fn len(&self) -> usize {
+        N
+    }
+}
+
+impl<'a, T: Length + ?Sized> Length for &'a T {
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+}
+
+impl<'a, T: Length + ?Sized> Length for &'a mut T {
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+}
+
+impl<'a, T: Length + ?Sized> Length for Box<T> {
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+}
+
+impl<'a, T: Length + ?Sized> Length for Arc<T> {
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+}
+
+impl<'a, T: Length + ?Sized> Length for Rc<T> {
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+}
+
+impl<'a, T: Length + ToOwned + ?Sized> Length for Cow<'a, T> {
+    fn len(&self) -> usize {
+        T::len(self)
+    }
+}
+
+impl<'a> Length for Vec<u8> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+}
+
 /// Read access to a buffer of bytes.
 ///
 /// # TODO
 ///
 /// - Some methods have the same name as methods in `[u8]`, which is annoying
 ///   when trying to use them in a `&[u8]`.
-pub trait Buf {
+pub trait Buf: Length {
     /// A view of a portion of the buffer.
     type View<'a>: Buf + Sized + 'a
     where
@@ -56,21 +121,13 @@ pub trait Buf {
     /// buffer.
     fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds>;
 
-    /// Returns the length of this buffer in bytes.
-    fn len(&self) -> usize;
-
-    /// Returns whether this buffer is empty (i.e. has length 0).
-    #[inline]
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Returns whether this buffer contains bytes for the given range.
     ///
     /// # Default implementation
     ///
     /// The default implementation will check if the range is contained by
     /// `..self.len()`.
+    #[inline]
     fn contains(&self, range: impl Into<Range>) -> bool {
         range.into().contained_by(..self.len())
     }
@@ -102,11 +159,6 @@ macro_rules! impl_buf_with_deref {
                 #[inline]
                 fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
                     <B as Buf>::chunks(self.deref(), range)
-                }
-
-                #[inline]
-                fn len(&self) -> usize {
-                    <B as Buf>::len(self.deref())
                 }
             }
         )*
@@ -141,11 +193,6 @@ macro_rules! impl_buf_for_slice_like {
                 #[inline]
                 fn chunks<'a>(&'a self, range: impl Into<Range>) -> Result<Self::Chunks<$view_lt>, RangeOutOfBounds> {
                     Ok(SingleChunk::new(range.into().slice_get(self)?))
-                }
-
-                #[inline]
-                fn len(&self) -> usize {
-                    AsRef::<[u8]>::as_ref(self).len()
                 }
             }
         )*
@@ -209,10 +256,12 @@ pub trait BufMut: Buf {
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("buffer is full: range ({required:?}) can't fit into buffer with length {buf_length}")]
+#[error(
+    "buffer is full: data with length ({required}) can't fit into buffer with length {capacity}"
+)]
 pub struct Full {
     pub required: usize,
-    pub buf_length: usize,
+    pub capacity: usize,
 }
 
 macro_rules! impl_buf_mut_with_deref {
@@ -301,7 +350,7 @@ macro_rules! impl_buf_mut_for_slice_like {
                     if size > self.len() {
                         Err(Full {
                             required: size,
-                            buf_length: self.len(),
+                            capacity: self.len(),
                         })
                     }
                     else {
@@ -315,7 +364,7 @@ macro_rules! impl_buf_mut_for_slice_like {
                     if new_len > self.len() {
                         Err(Full {
                             required: new_len,
-                            buf_length: self.len(),
+                            capacity: self.len(),
                         })
                     }
                     else {
@@ -328,7 +377,7 @@ macro_rules! impl_buf_mut_for_slice_like {
                 fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
                     Err(Full {
                         required: with.len(),
-                        buf_length: self.len(),
+                        capacity: self.len(),
                     })
                 }
 

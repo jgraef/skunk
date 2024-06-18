@@ -234,7 +234,7 @@ mod tests {
             copy(&mut bytes_mut, 0..8, b"abcdefgh", 0..8).unwrap_err(),
             CopyError::Full(Full {
                 required: 8,
-                buf_length: 4
+                capacity: 4
             })
         );
     }

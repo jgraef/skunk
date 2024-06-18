@@ -19,9 +19,17 @@ use super::{
         SingleChunkMut,
     },
     Full,
+    Length,
     SizeLimit,
 };
 use crate::{
+    bytes::r#impl::{
+        BytesImpl,
+        BytesMutImpl,
+        BytesMutViewImpl,
+        BytesMutViewMutImpl,
+        ChunksIterImpl,
+    },
     util::{
         debug_as_hexdump,
         ptr_len,
@@ -30,6 +38,7 @@ use crate::{
     BufMut,
     IndexOutOfBounds,
     Range,
+    RangeOutOfBounds,
 };
 
 #[derive(Clone, Copy)]
@@ -285,7 +294,7 @@ impl BufferRef {
     }
 
     /// Splits `self` into:
-    /// 
+    ///
     /// 1. `self`: `[at..]`
     /// 2. returns: `[..at)`
     fn split_at(&mut self, at: usize) -> BufferRef {
@@ -407,7 +416,7 @@ impl Buf for ArcBuf {
     where
         Self: 'a;
 
-    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, crate::RangeOutOfBounds> {
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
         let (start, end) = range.into().indices_checked_in(0, self.inner.len())?;
         if start == end {
             Ok(Self::default())
@@ -419,10 +428,26 @@ impl Buf for ArcBuf {
         }
     }
 
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, crate::RangeOutOfBounds> {
+    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
         Ok(SingleChunk::new(range.into().slice_get(self.bytes())?))
     }
+}
 
+impl BytesImpl for ArcBuf {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl>, RangeOutOfBounds> {
+        Ok(Box::new(Buf::view(self, range)?))
+    }
+
+    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
+        Ok(Box::new(Buf::chunks(self, range)?))
+    }
+
+    fn clone(&self) -> Box<dyn BytesImpl> {
+        Box::new(Clone::clone(self))
+    }
+}
+
+impl Length for ArcBuf {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
@@ -493,11 +518,10 @@ impl ArcBufMut {
 
     pub fn copy_from_slice(from: &[u8]) -> Self {
         let mut this = Self::new(from.len());
-        this.extend(from).unwrap();
+        BufMut::extend(&mut this, from).unwrap();
         this
     }
 
-    #[inline]
     pub fn freeze(mut self) -> ArcBuf {
         if self.initialized == 0 {
             ArcBuf::default()
@@ -514,10 +538,9 @@ impl ArcBufMut {
     }
 
     /// Splits `self` into:
-    /// 
+    ///
     /// 1. `self`: `[at..]`
     /// 2. returns: `[..at)`
-    #[inline]
     pub fn split_at(&mut self, at: usize) -> Result<ArcBufMut, IndexOutOfBounds> {
         let initialized = self.initialized;
         if at == 0 {
@@ -601,14 +624,16 @@ impl Buf for ArcBufMut {
     where
         Self: 'a;
 
-    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, crate::RangeOutOfBounds> {
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
         Ok(range.into().slice_get(self.bytes())?)
     }
 
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, crate::RangeOutOfBounds> {
+    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
         Ok(SingleChunk::new(range.into().slice_get(self.bytes())?))
     }
+}
 
+impl Length for ArcBufMut {
     #[inline]
     fn len(&self) -> usize {
         self.initialized
@@ -624,17 +649,14 @@ impl BufMut for ArcBufMut {
     where
         Self: 'a;
 
-    fn view_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ViewMut<'_>, crate::RangeOutOfBounds> {
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
         Ok(range.into().slice_get_mut(self.bytes_mut())?)
     }
 
     fn chunks_mut(
         &mut self,
         range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, crate::RangeOutOfBounds> {
+    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
         Ok(SingleChunkMut::new(
             range.into().slice_get_mut(self.bytes_mut())?,
         ))
@@ -647,7 +669,7 @@ impl BufMut for ArcBufMut {
         else {
             Err(Full {
                 required: size,
-                buf_length: self.capacity(),
+                capacity: self.capacity(),
             })
         }
     }
@@ -668,7 +690,7 @@ impl BufMut for ArcBufMut {
         else {
             Err(Full {
                 required: new_len,
-                buf_length: self.capacity(),
+                capacity: self.capacity(),
             })
         }
     }
@@ -690,7 +712,7 @@ impl BufMut for ArcBufMut {
         else {
             Err(Full {
                 required: new_len,
-                buf_length: self.capacity(),
+                capacity: self.capacity(),
             })
         }
     }
@@ -698,5 +720,54 @@ impl BufMut for ArcBufMut {
     #[inline]
     fn size_limit(&self) -> SizeLimit {
         SizeLimit::Exact(self.capacity())
+    }
+}
+
+impl BytesMutImpl for ArcBufMut {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds> {
+        Ok(Box::new(Buf::view(self, range)?))
+    }
+
+    fn view_mut(
+        &mut self,
+        range: Range,
+    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds> {
+        Ok(Box::new(BufMut::view_mut(self, range)?))
+    }
+
+    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
+        Ok(Box::new(Buf::chunks(self, range)?))
+    }
+
+    fn chunks_mut(
+        &mut self,
+        range: Range,
+    ) -> Result<Box<dyn crate::bytes::r#impl::ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds> {
+        Ok(Box::new(BufMut::chunks_mut(self, range)?))
+    }
+
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        BufMut::reserve(self, size)
+    }
+
+    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
+        BufMut::grow(self, new_len, value)
+    }
+
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        BufMut::extend(self, with)
+    }
+
+    fn size_limit(&self) -> SizeLimit {
+        BufMut::size_limit(self)
+    }
+
+    fn split_at(
+        mut self,
+        at: usize,
+    ) -> Result<(Box<dyn BytesMutImpl>, Box<dyn BytesMutImpl>), IndexOutOfBounds> {
+        // todo: sucks to re-allocate a `Box` for self here :/
+        let other = ArcBufMut::split_at(&mut self, at)?;
+        Ok((Box::new(self), Box::new(other)))
     }
 }

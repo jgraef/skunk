@@ -1,11 +1,17 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    iter::FusedIterator,
+};
 
-use super::{
-    chunks::Chunks,
-    r#impl::BytesImpl,
+use super::r#impl::{
+    BytesImpl,
+    ChunksIterImpl,
 };
 use crate::{
-    buf::Empty,
+    buf::{
+        Empty,
+        Length,
+    },
     util::{
         debug_as_hexdump,
         Peekable,
@@ -86,7 +92,9 @@ impl Buf for Bytes {
             self.inner.chunks(range.into())?,
         )))
     }
+}
 
+impl Length for Bytes {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
@@ -141,3 +149,33 @@ impl PartialEq for Bytes {
         }
     }
 }
+
+pub struct Chunks<'a> {
+    inner: Box<dyn ChunksIterImpl<'a> + 'a>,
+}
+
+impl<'a> Chunks<'a> {
+    pub(crate) fn from_impl(inner: Box<dyn ChunksIterImpl<'a> + 'a>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<'a> Iterator for Chunks<'a> {
+    type Item = &'a [u8];
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+impl<'a> DoubleEndedIterator for Chunks<'a> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back()
+    }
+}
+
+impl<'a> FusedIterator for Chunks<'a> {}
+
+impl<'a> ExactSizeIterator for Chunks<'a> {}

@@ -1,6 +1,5 @@
 pub mod bytes;
 pub mod bytes_mut;
-mod chunks;
 
 #[cfg(not(feature = "bytes-impl"))]
 pub(crate) mod r#impl;

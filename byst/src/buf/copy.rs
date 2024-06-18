@@ -213,7 +213,7 @@ mod tests {
             Ok(_) => panic!("copy didn't fail"),
             Err(CopyError::Full(Full {
                 required,
-                buf_length,
+                capacity: buf_length,
             })) => {
                 assert_eq!(required, 16);
                 assert_eq!(buf_length, 4);

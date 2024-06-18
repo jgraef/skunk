@@ -12,7 +12,10 @@ use std::{
     },
 };
 
-use super::Full;
+use super::{
+    Full,
+    Length,
+};
 use crate::{
     buf::{
         Buf,
@@ -166,7 +169,9 @@ impl<B: AsRef<[MaybeUninit<u8>]>> Buf for PartiallyInitialized<B> {
     fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
         Ok(SingleChunk::new(range.into().slice_get(self.bytes())?))
     }
+}
 
+impl<B: AsRef<[MaybeUninit<u8>]>> Length for PartiallyInitialized<B> {
     #[inline]
     fn len(&self) -> usize {
         self.initialized
@@ -205,7 +210,7 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
         else {
             Err(Full {
                 required: size,
-                buf_length: n,
+                capacity: n,
             })
         }
     }
@@ -223,7 +228,7 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
         else {
             Err(Full {
                 required: new_len,
-                buf_length: n,
+                capacity: n,
             })
         }
     }
@@ -240,7 +245,7 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
         else {
             Err(Full {
                 required: new_len,
-                buf_length: n,
+                capacity: n,
             })
         }
     }

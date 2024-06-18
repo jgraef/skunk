@@ -6,9 +6,9 @@ use std::{
         Fuse,
         FusedIterator,
     },
-    ops::Deref,
 };
 
+use super::Length;
 use crate::{
     util::{
         ExactSizeIter,
@@ -23,79 +23,14 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
-struct Segment<B> {
-    offset: usize,
-    buf: B,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Inner<S> {
-    segments: S,
-}
-
-impl<B: Buf, S: Deref<Target = [Segment<B>]>> Inner<S> {
-    fn find_segment(
-        &self,
-        offset: usize,
-        start_segment: usize,
-        end_spill_over: bool,
-    ) -> Option<usize> {
-        let segment_index = self.segments[start_segment..]
-            .binary_search_by(|segment| {
-                match (
-                    offset.cmp(&segment.offset),
-                    offset.cmp(&(segment.offset + segment.buf.len())),
-                ) {
-                    // target is left of current
-                    (Ordering::Less, _) => Ordering::Greater,
-                    // target is definitely right of current
-                    (_, Ordering::Greater) => Ordering::Less,
-                    // offset falls on end of this segment. What we do here depends no
-                    // `end_spill_over`. This is used to go to the next segment,
-                    // if we're looking for the start of a range, or return this segment, if we're
-                    // looking for the end of a range.
-                    (_, Ordering::Equal) if end_spill_over => Ordering::Less,
-                    // remaining cases are if this is the segment
-                    _ => Ordering::Equal,
-                }
-            })
-            .ok()?;
-        Some(segment_index + start_segment)
-    }
-
-    fn view_unchecked(&self, start: usize, end: usize) -> View<'_, B> {
-        if start == end {
-            View {
-                inner: Inner { segments: &[] },
-                start_offset: 0,
-                end_offset: 0,
-            }
-        }
-        else {
-            let start_segment = self
-                .find_segment(start, 0, true)
-                .expect("Bug: Didn't find start segment");
-            let start_offset = start - self.segments[start_segment].offset;
-
-            let end_segment = self
-                .find_segment(end, start_segment, false)
-                .expect("Bug: Didn't find end segment");
-            let end_offset = end - self.segments[end_segment].offset;
-
-            View {
-                inner: Inner {
-                    segments: &self.segments[start_segment..=end_segment],
-                },
-                start_offset,
-                end_offset,
-            }
-        }
-    }
+pub(crate) struct Segment<B> {
+    pub(crate) offset: usize,
+    pub(crate) buf: B,
 }
 
 #[derive(Debug)]
 pub struct Rope<B> {
-    inner: Inner<Vec<Segment<B>>>,
+    segments: Vec<Segment<B>>,
 }
 
 impl<B> Rope<B> {
@@ -107,22 +42,20 @@ impl<B> Rope<B> {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            inner: Inner {
-                segments: Vec::with_capacity(capacity),
-            },
+            segments: Vec::with_capacity(capacity),
         }
     }
 
     #[inline]
     pub fn num_segments(&self) -> usize {
-        self.inner.segments.len()
+        self.segments.len()
     }
 }
 
-impl<B: Buf> Rope<B> {
+impl<B: Length> Rope<B> {
     pub fn push(&mut self, segment: B) {
         if !segment.is_empty() {
-            self.inner.segments.push(Segment {
+            self.segments.push(Segment {
                 offset: self.len(),
                 buf: segment,
             });
@@ -131,7 +64,7 @@ impl<B: Buf> Rope<B> {
 
     fn view_checked(&self, range: Range) -> Result<View<'_, B>, RangeOutOfBounds> {
         let (start, end) = range.indices_checked_in(0, self.len())?;
-        Ok(self.inner.view_unchecked(start, end))
+        Ok(view_unchecked(&self.segments, start, end))
     }
 }
 
@@ -153,11 +86,12 @@ impl<B: Buf> Buf for Rope<B> {
     fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
         Ok(Chunks::from_view(self.view_checked(range.into())?))
     }
+}
 
+impl<B: Length> Length for Rope<B> {
     #[inline]
     fn len(&self) -> usize {
-        self.inner
-            .segments
+        self.segments
             .last()
             .map(|segment| segment.offset + segment.buf.len())
             .unwrap_or_default()
@@ -169,16 +103,14 @@ impl<B: Buf> FromIterator<B> for Rope<B> {
         let mut current_offset = 0;
 
         Self {
-            inner: Inner {
-                segments: iter
-                    .into_iter()
-                    .map(|buf| {
-                        let offset = current_offset;
-                        current_offset += buf.len();
-                        Segment { offset, buf }
-                    })
-                    .collect(),
-            },
+            segments: iter
+                .into_iter()
+                .map(|buf| {
+                    let offset = current_offset;
+                    current_offset += buf.len();
+                    Segment { offset, buf }
+                })
+                .collect(),
         }
     }
 }
@@ -192,7 +124,7 @@ impl<B> Default for Rope<B> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct View<'b, B> {
-    inner: Inner<&'b [Segment<B>]>,
+    segments: &'b [Segment<B>],
     start_offset: usize,
     end_offset: usize,
 }
@@ -201,12 +133,12 @@ impl<'b, B: Buf> View<'b, B> {
     fn view_checked(&self, range: Range) -> Result<View<'_, B>, RangeOutOfBounds> {
         let (start, end) = range.indices_checked_in(0, self.len())?;
         let first_offset = self
-            .inner
             .segments
             .first()
             .map(|segment| segment.offset)
             .unwrap_or_default();
-        Ok(self.inner.view_unchecked(
+        Ok(view_unchecked(
+            self.segments,
             start + first_offset + self.start_offset,
             end + first_offset + self.start_offset,
         ))
@@ -231,12 +163,13 @@ impl<'b, B: Buf> Buf for View<'b, B> {
     fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
         Ok(Chunks::from_view(self.view_checked(range.into())?))
     }
+}
 
+impl<'b, B: Length> Length for View<'b, B> {
     fn len(&self) -> usize {
-        self.inner
-            .segments
+        self.segments
             .first()
-            .zip(self.inner.segments.last())
+            .zip(self.segments.last())
             .map(|(first, last)| last.offset - first.offset + self.end_offset - self.start_offset)
             .unwrap_or_default()
     }
@@ -252,7 +185,7 @@ impl<'b, B: Buf> Chunks<'b, B> {
     #[inline]
     fn from_view(view: View<'b, B>) -> Self {
         let len = view.len();
-        Self::new(view.inner.segments, view.start_offset, view.end_offset, len)
+        Self::new(view.segments, view.start_offset, view.end_offset, len)
     }
 
     #[inline]
@@ -334,6 +267,60 @@ impl<'b, B: Buf> MapFunc<IsEnd<&'b Segment<B>>> for MapSegmentsToChunks {
     }
 }
 
+pub(crate) fn find_segment<B: Length>(
+    segments: &[Segment<B>],
+    offset: usize,
+    end_spill_over: bool,
+) -> Option<usize> {
+    segments
+        .binary_search_by(|segment| {
+            match (
+                offset.cmp(&segment.offset),
+                offset.cmp(&(segment.offset + segment.buf.len())),
+            ) {
+                // target is left of current
+                (Ordering::Less, _) => Ordering::Greater,
+                // target is definitely right of current
+                (_, Ordering::Greater) => Ordering::Less,
+                // offset falls on end of this segment. What we do here depends no
+                // `end_spill_over`. This is used to go to the next segment,
+                // if we're looking for the start of a range, or return this segment, if we're
+                // looking for the end of a range.
+                (_, Ordering::Equal) if end_spill_over => Ordering::Less,
+                // remaining cases are if this is the segment
+                _ => Ordering::Equal,
+            }
+        })
+        .ok()
+}
+
+fn view_unchecked<B: Length>(segments: &[Segment<B>], start: usize, end: usize) -> View<'_, B> {
+    if start == end {
+        View {
+            segments: &[],
+            start_offset: 0,
+            end_offset: 0,
+        }
+    }
+    else {
+        let start_segment =
+            find_segment(segments, start, true).expect("Bug: Didn't find start segment");
+        let start_offset = start - segments[start_segment].offset;
+
+        let end_segment = find_segment(&segments[start_segment..], end, false)
+            .expect("Bug: Didn't find end segment")
+            + start_segment;
+        let end_offset = end - segments[end_segment].offset;
+
+        View {
+            segments: &segments[start_segment..=end_segment],
+
+            start_offset,
+            end_offset,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,10 +336,10 @@ mod tests {
 
         let rope = input.iter().collect::<Rope<_>>();
 
-        assert_eq!(rope.inner.segments[0].offset, 0);
-        assert_eq!(rope.inner.segments[1].offset, 5);
-        assert_eq!(rope.inner.segments[2].offset, 6);
-        assert_eq!(rope.inner.segments[3].offset, 11);
+        assert_eq!(rope.segments[0].offset, 0);
+        assert_eq!(rope.segments[1].offset, 5);
+        assert_eq!(rope.segments[2].offset, 6);
+        assert_eq!(rope.segments[3].offset, 11);
 
         let chunks = rope.chunks(..).unwrap().collect::<Vec<_>>();
         assert_eq!(input, chunks);
