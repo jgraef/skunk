@@ -33,7 +33,6 @@ use crate::{
     util::{
         buf_eq,
         debug_as_hexdump,
-        ptr_len,
     },
     Buf,
     BufMut,
@@ -109,7 +108,7 @@ impl Buffer {
     }
 
     fn len(&self) -> usize {
-        ptr_len(self.buf)
+        self.buf.len()
     }
 
     #[inline]
@@ -267,6 +266,19 @@ struct BufferRef {
 impl BufferRef {
     /// # Safety
     ///
+    /// The caller must ensure that `buf` is valid.
+    unsafe fn from_buf(buf: Buffer) -> Self {
+        let end = buf.len();
+        Self {
+            buf,
+            start: 0,
+            end,
+            tail: end != 0,
+        }
+    }
+
+    /// # Safety
+    ///
     /// The caller must ensure that there are no mutable references to this
     /// portion of the buffer, and that the range is valid.
     #[inline]
@@ -395,21 +407,41 @@ impl BufferRef {
     /// 2. returns: `[..at)`
     fn split_at(&mut self, at: usize) -> BufferRef {
         let split_offset = at + self.start;
+
         assert!(split_offset <= self.end);
-        let mut new = self.clone();
-        self.start = split_offset;
-        new.end = split_offset;
-        new.tail = false;
-        new
+
+        if at == self.start {
+            Self::default()
+        }
+        else if at == self.end {
+            std::mem::take(self)
+        }
+        else {
+            let mut new = self.clone();
+            new.end = split_offset;
+            new.tail = false;
+
+            self.start = split_offset;
+
+            new
+        }
     }
 
     fn shrink(&mut self, start: usize, end: usize) {
         let new_start = self.start + start;
         let new_end = self.start + end;
+
         assert!(new_start >= self.start);
         assert!(new_end <= self.end);
-        self.start = new_start;
-        self.end = new_end;
+        assert!(new_start <= new_end);
+
+        if new_start == new_end {
+            *self = Default::default();
+        }
+        else {
+            self.start = new_start;
+            self.end = new_end;
+        }
     }
 
     #[inline]
@@ -680,30 +712,46 @@ pub struct ArcBufMut {
 }
 
 impl ArcBufMut {
-    pub fn new(capacity: usize) -> Self {
-        let buf = Buffer::new(capacity, 1, false);
+    /// # Safety
+    ///
+    /// The caller must ensure that `buf` is valid.
+    unsafe fn from_buffer(buf: Buffer) -> Self {
         Self {
-            inner: BufferRef {
-                buf,
-                start: 0,
-                end: buf.len(),
-                tail: true,
-            },
+            inner: unsafe { BufferRef::from_buf(buf) },
             filled: 0,
         }
     }
 
+    #[inline]
+    pub fn new(capacity: usize) -> Self {
+        let buf = Buffer::new(capacity, 1, false);
+        unsafe { Self::from_buffer(buf) }
+    }
+
+    /// Creates a new [`ArcBufMut`], with a handle to reclaim it.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use byst::buf::arc_buf::ArcBufMut;
+    /// #
+    /// let (mut buf, reclaim) = ArcBufMut::new_reclaimable(10);
+    ///
+    /// // Do something with `buf`...
+    /// # let _ = &mut buf;
+    ///
+    /// // Right now we can't reclaim it, since it's still in use.
+    /// assert!(!reclaim.can_reclaim());
+    ///
+    /// // Drop it.
+    /// drop(buf);
+    ///
+    /// // Once all references to the underlying buffer have been dropped, we can reuse it.
+    /// let reclaimed_buf = reclaim.try_reclaim().unwrap();
+    /// ```
     pub fn new_reclaimable(capacity: usize) -> (Self, Reclaim) {
         let buf = Buffer::new(capacity, 1, true);
-        let this = Self {
-            inner: BufferRef {
-                buf,
-                start: 0,
-                end: buf.len(),
-                tail: true,
-            },
-            filled: 0,
-        };
+        let this = unsafe { Self::from_buffer(buf) };
         let reclaim = Reclaim { buf };
         (this, reclaim)
     }
@@ -713,6 +761,7 @@ impl ArcBufMut {
         self.inner.len()
     }
 
+    /// Creates a new [`ArcBufMut`] with data copied from a slice.
     pub fn copy_from_slice(from: &[u8]) -> Self {
         let mut this = Self::new(from.len());
         BufMut::extend(&mut this, from).unwrap();
@@ -736,23 +785,20 @@ impl ArcBufMut {
 
     /// Splits `self` into:
     ///
-    /// 1. `self`: `[at..]`
-    /// 2. returns: `[..at)`
+    /// 1. `self`: Right half starting with `at`. (`[at..]`)
+    /// 2. returns: Left half up to `at`, but not including it. (`[..at)`)
     pub fn split_at(&mut self, at: usize) -> Result<ArcBufMut, IndexOutOfBounds> {
         let filled = self.filled;
         if at == 0 {
             Ok(Self::default())
         }
         else if at == filled {
-            Ok(std::mem::replace(self, Self::default()))
+            Ok(std::mem::take(self))
         }
         else if at < filled {
             let inner = self.inner.split_at(at);
-            self.filled = at;
-            Ok(Self {
-                inner,
-                filled: filled - at,
-            })
+            self.filled = filled - at;
+            Ok(Self { inner, filled: at })
         }
         else {
             Err(IndexOutOfBounds {
@@ -762,6 +808,7 @@ impl ArcBufMut {
         }
     }
 
+    /// Returns an immutable reference to the filled portion of the buffer.
     #[inline]
     fn filled(&self) -> &[u8] {
         unsafe {
@@ -773,6 +820,7 @@ impl ArcBufMut {
         }
     }
 
+    /// Returns a mutable reference to the filled portion of the buffer.
     #[inline]
     fn filled_mut(&self) -> &mut [u8] {
         unsafe {
@@ -784,6 +832,7 @@ impl ArcBufMut {
         }
     }
 
+    /// Returns an immutable reference to the initialized portion of the buffer.
     #[inline]
     pub fn initialized(&self) -> &[u8] {
         unsafe {
@@ -799,7 +848,40 @@ impl ArcBufMut {
     /// This is useful if you want to write to the buffer, without having to
     /// fill it first. You can resize the [`ArcBufMut`] to include the written
     /// data with [`set_filled_to`]. To fully initialize a buffer, you can use
-    /// [`fully_initialize`]
+    /// [`fully_initialize`].
+    ///
+    /// # Example
+    ///
+    /// This example shows how an [`ArcBufMut`] can be used to read data from
+    /// the OS, which usually requires a contiguous initialized buffer, and
+    /// returns the number of bytes read.
+    ///
+    /// ```
+    /// # use byst::buf::arc_buf::ArcBufMut;
+    /// #
+    /// # struct Socket;
+    /// #
+    /// # impl Socket {
+    /// #     fn recv(&mut self, buf: &mut [u8]) -> usize {
+    /// #         buf[0] = 0xac;
+    /// #         buf[1] = 0xab;
+    /// #         2
+    /// #     }
+    /// # }
+    /// #
+    /// # let mut socket = Socket;
+    /// #
+    /// let mut buf = ArcBufMut::new(1522);
+    /// buf.fully_initialize();
+    ///
+    /// // Some OS function that writes to a contiguous buffer, and returns the number of bytes read.
+    /// // In this example this call will write b"\xac\xab" to the buffer, and return 2.
+    /// let n_read = socket.recv(buf.initialized_mut());
+    ///
+    /// buf.set_filled_to(n_read);
+    ///
+    /// assert_eq!(buf, b"\xac\xab");
+    /// ```
     ///
     /// [`set_filled_to`]: Self::set_filled_to
     /// [`fully_initialize`]: Self::fully_initialize
@@ -816,35 +898,19 @@ impl ArcBufMut {
     /// Resizes the buffer to include all bytes upto `to`.
     ///
     /// This is useful if the buffer was previously written to using
-    /// [`initialized_mut`].
-    ///
-    /// # Example
-    ///
-    /// This example shows how an [`ArcBufMut`] can be useful to read data from
-    /// the OS, which usually requires a contiguous initialized buffer and
-    /// returns the number of bytes read.
-    ///
-    /// ```
-    /// # struct Socket;
-    /// # impl Socket { fn read(self, _: &mut [u8]) -> usize { 0 }}
-    /// # let socket = Socket;
-    /// let buf = ArcBufMut::new(1522);
-    ///
-    /// // some OS function that writes to a contiguous buffer, and returns the number of bytes read.
-    /// let n_read = socket.recv(buf.initialized_mut());
-    ///
-    /// buf.set_filled_to(n_read);
-    /// ```
+    /// [`initialized_mut`]. You can fully initialize a buffer using
+    /// [`fully_initialize`]
     ///
     /// # Panics
     ///
     /// Panics if the buffer hasn't been initialized upto `to`.
     ///
-    /// [`initialized_mut`]: ArcBufMut::initialized_mut
+    /// [`initialized_mut`]: Self::initialized_mut
+    /// [`fully_initialize`]: Self::fully_initialize
     #[inline]
     pub fn set_filled_to(&mut self, to: usize) {
         assert!(
-            to < self.inner.initialized_end() - self.inner.start,
+            to <= self.inner.initialized_end() - self.inner.start,
             "`ArcBufMut::set_filled_to`: Argument `to` is out of bounds: {to}"
         );
         self.filled = to;
@@ -1072,10 +1138,17 @@ impl BytesMutImpl for ArcBufMut {
 
 #[cfg(test)]
 mod tests {
-    // most tests are in `crate::slab`, but tests here would be nice too :3
-
     use super::ArcBufMut;
-    use crate::util::ptr_len;
+    use crate::{
+        buf::{
+            copy::{
+                copy,
+                CopyError,
+            },
+            Full,
+        },
+        hexdump::Hexdump,
+    };
 
     #[test]
     fn it_reclaims_empty_buffers_correctly() {
@@ -1093,23 +1166,102 @@ mod tests {
     fn empty_bufs_dont_ref_count() {
         let buf = ArcBufMut::new(10);
         let frozen = buf.freeze();
-        assert_eq!(frozen.ref_count().ref_count(), None);
+        assert!(frozen.ref_count().is_static());
+
+        let buf = ArcBufMut::new(0);
+        assert!(buf.ref_count().is_static());
     }
 
     #[test]
     fn empty_bufs_dont_allocate() {
-        let buf = ArcBufMut::new(10);
-        assert_eq!(ptr_len(buf.inner.buf.buf), 0);
+        let buf = ArcBufMut::new(0);
+        assert!(buf.inner.buf.buf.is_empty());
+        assert!(buf.inner.buf.meta_data.is_null());
+
+        let mut buf = ArcBufMut::new(10);
+        let _buf_ref = buf.inner.split_at(10);
         assert!(buf.inner.buf.meta_data.is_null());
     }
 
     #[test]
-    fn empty_bufs_are_tail_less() {
-        let buf = ArcBufMut::new(0);
+    fn bufs_split_correctly() {
+        let mut buf = ArcBufMut::new(20);
+        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+
+        let new = buf.split_at(5).unwrap();
+
+        assert_eq!(new.len(), 5);
+        assert_eq!(buf.len(), 15);
+
+        println!("{}", Hexdump::new(&new));
+        println!("{}", Hexdump::new(&buf));
+
+        assert_eq!(new, b"Hello");
+        assert_eq!(buf, b" World. This is");
+    }
+
+    #[test]
+    fn split_off_buf_doesnt_spill_into_other_half() {
+        let mut buf = ArcBufMut::new(20);
+        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+
+        let mut new = buf.split_at(5).unwrap();
+
+        let e = copy(&mut new, .., b"Spill much?", ..).unwrap_err();
+
+        assert_eq!(
+            e,
+            CopyError::Full(Full {
+                required: 11,
+                capacity: 5
+            })
+        );
+        assert_eq!(new, b"Hello");
+        assert_eq!(buf, b" World. This is");
+    }
+
+    #[test]
+    fn left_half_of_split_is_not_tail() {
+        let mut buf = ArcBufMut::new(20);
+        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        let left = buf.split_at(5).unwrap();
+        assert!(!left.inner.tail);
+    }
+
+    #[test]
+    fn buf_shrunk_to_zero_size_is_static() {
+        let mut buf = ArcBufMut::new(20);
+        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+
+        buf.inner.shrink(5, 5);
+        assert!(buf.ref_count().is_static());
+        assert!(buf.inner.buf.meta_data.is_null());
         assert!(!buf.inner.tail);
-        let mut buf = ArcBufMut::new(10);
-        let buf_ref = buf.inner.split_at(10);
-        assert_eq!(buf_ref.len(), 0);
-        assert!(!buf_ref.tail);
+    }
+
+    #[test]
+    fn it_splits_with_left_empty_correctly() {
+        let mut buf = ArcBufMut::new(20);
+        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+
+        let left = buf.split_at(0).unwrap();
+        assert!(left.is_empty());
+        assert_eq!(buf.len(), 20);
+        assert!(left.ref_count().is_static());
+        assert!(left.inner.buf.meta_data.is_null());
+        assert!(!left.inner.tail);
+    }
+
+    #[test]
+    fn it_splits_with_right_empty_correctly() {
+        let mut buf = ArcBufMut::new(20);
+        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+
+        let left = buf.split_at(20).unwrap();
+        assert!(buf.is_empty());
+        assert_eq!(left.len(), 20);
+        assert!(buf.ref_count().is_static());
+        assert!(buf.inner.buf.meta_data.is_null());
+        assert!(!buf.inner.tail);
     }
 }

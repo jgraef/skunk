@@ -10,14 +10,6 @@ pub use byst_macros::for_tuple;
 
 use crate::Buf;
 
-#[inline]
-pub(crate) fn ptr_len<T>(ptr: *const [T]) -> usize {
-    let ptr: *const [()] = ptr as _;
-    // SAFETY: There is no aliasing as () is zero-sized
-    let slice: &[()] = unsafe { &*ptr };
-    slice.len()
-}
-
 pub struct Peekable<I: Iterator> {
     pub inner: I,
     pub peeked: Option<I::Item>,
@@ -333,8 +325,16 @@ pub fn sub_slice_index(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
-    if left.len() != right.len() {
+    let left_len = left.len();
+    let right_len = right.len();
+
+    if left_len != right_len {
         return false;
+    }
+
+    if left_len == 0 {
+        // this also means right_len == 0
+        return true;
     }
 
     let mut left_offset = 0;
@@ -350,7 +350,11 @@ pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
 
     loop {
         match (left_chunks.peek(), right_chunks.peek()) {
-            (None, None) => unreachable!("Expected both Bytes to be of different lengths."),
+            (None, None) => {
+                // boths chunks are exhausted at the same time, and they haven't been unequal
+                // yet. thus they're equal.
+                break true;
+            }
             (Some(_), None) | (None, Some(_)) => break false,
             (Some(left), Some(right)) => {
                 let n = std::cmp::min(
@@ -375,5 +379,59 @@ pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::buf_eq;
+    use crate::buf::rope::Rope;
+
+    #[test]
+    fn buf_eq_returns_false_for_different_lengths() {
+        assert!(!buf_eq(b"Hello", b"Wor"));
+        assert!(!buf_eq(b"", b"Hello"));
+        assert!(!buf_eq(b"Hello", b""));
+    }
+
+    #[test]
+    fn buf_eq_returns_false_for_same_length_buf_different_bytes() {
+        assert!(!buf_eq(b"Hello", b"World"));
+        assert!(!buf_eq(b"Hello", b"HellO"));
+    }
+
+    #[test]
+    fn buf_eq_returns_true_for_empty_buffers() {
+        assert!(buf_eq(b"", b""));
+    }
+
+    #[test]
+    fn buf_eq_returns_true_for_equal_buffers() {
+        assert!(buf_eq(b"Hello", b"Hello"));
+    }
+
+    #[test]
+    fn buf_eq_returns_true_for_same_contents_but_differently_sized_chunks() {
+        let mut buf1 = Rope::with_capacity(2);
+        buf1.push(b"Hello" as &[u8]);
+        buf1.push(b" World" as &[u8]);
+        let mut buf2 = Rope::with_capacity(2);
+        buf2.push(b"Hel" as &[u8]);
+        buf2.push(b"lo World" as &[u8]);
+        assert!(buf_eq(buf1, buf2));
+    }
+
+    #[test]
+    fn buf_eq_returns_true_even_if_with_empty_chunks() {
+        let mut buf1 = Rope::with_capacity(5);
+        buf1.push(b"" as &[u8]);
+        buf1.push(b"Hello" as &[u8]);
+        buf1.push(b"" as &[u8]);
+        buf1.push(b"World" as &[u8]);
+        buf1.push(b"" as &[u8]);
+        let mut buf2 = Rope::with_capacity(2);
+        buf2.push(b"Hello" as &[u8]);
+        buf2.push(b"World" as &[u8]);
+        assert!(buf_eq(buf1, buf2));
     }
 }
