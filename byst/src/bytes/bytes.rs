@@ -1,26 +1,33 @@
-use std::{
-    fmt::Debug,
-    iter::FusedIterator,
-};
+use std::fmt::Debug;
 
-use super::r#impl::{
-    BytesImpl,
-    ChunksIterImpl,
+use super::{
+    r#impl::BytesImpl,
+    r#static::Static,
+    view::View,
 };
 use crate::{
     buf::{
         Empty,
         Length,
     },
+    impl_me,
+    io::{
+        BufReader,
+        End,
+    },
     util::{
         buf_eq,
+        cfg_pub,
         debug_as_hexdump,
     },
     Buf,
+    Range,
+    RangeOutOfBounds,
 };
 
+#[derive(Clone)]
 pub struct Bytes {
-    inner: Box<dyn BytesImpl>,
+    inner: View<'static>,
 }
 
 impl Bytes {
@@ -36,15 +43,17 @@ impl Bytes {
         Self::from_impl(Box::new(Empty))
     }
 
-    #[cfg(feature = "bytes-impl")]
-    #[inline]
-    pub fn from_impl(inner: Box<dyn BytesImpl>) -> Self {
-        Self { inner }
+    cfg_pub! {
+        #[inline]
+        pub(#[cfg(feature = "bytes-impl")]) fn from_impl(inner: Box<dyn BytesImpl<'static> + 'static>) -> Self {
+            View::from_impl(inner).into()
+        }
     }
+}
 
-    #[cfg(not(feature = "bytes-impl"))]
+impl From<View<'static>> for Bytes {
     #[inline]
-    pub(crate) fn from_impl(inner: Box<dyn BytesImpl>) -> Self {
+    fn from(inner: View<'static>) -> Self {
         Self { inner }
     }
 }
@@ -59,46 +68,68 @@ impl Default for Bytes {
     }
 }
 
-impl Clone for Bytes {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
+impl<'b> Debug for Bytes {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        debug_as_hexdump(f, self)
+    }
+}
+
+impl<'b, R: Buf> PartialEq<R> for Bytes {
+    #[inline]
+    fn eq(&self, other: &R) -> bool {
+        buf_eq(self, other)
     }
 }
 
 impl From<&'static [u8]> for Bytes {
     #[inline]
     fn from(value: &'static [u8]) -> Self {
-        Self::from_impl(Box::new(value))
+        Self::from_impl(Box::new(Static(value)))
     }
 }
 
 impl Buf for Bytes {
-    type View<'a> = Bytes
+    type View<'a> = Self
     where
         Self: 'a;
 
-    type Chunks<'a> = Chunks<'a>
+    type Reader<'a> = Self
     where
         Self: 'a;
 
     #[inline]
-    fn view(
-        &self,
-        range: impl Into<crate::Range>,
-    ) -> Result<Self::View<'_>, crate::RangeOutOfBounds> {
-        Ok(Bytes::from_impl(self.inner.view(range.into())?))
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
+        Ok(Buf::view(&self.inner, range.into())?.into())
     }
 
     #[inline]
-    fn chunks(
-        &self,
-        range: impl Into<crate::Range>,
-    ) -> Result<Self::Chunks<'_>, crate::RangeOutOfBounds> {
-        Ok(Chunks::from_impl(Box::new(
-            self.inner.chunks(range.into())?,
-        )))
+    fn reader(&self) -> Self::Reader<'_> {
+        self.clone()
+    }
+}
+
+impl BufReader for Bytes {
+    type View = Self;
+
+    #[inline]
+    fn view(&self, length: usize) -> Result<Self::View, End> {
+        Ok(Bytes::from(<View as BufReader>::view(&self.inner, length)?))
+    }
+
+    #[inline]
+    fn chunk(&self) -> Result<&[u8], End> {
+        <View as BufReader>::chunk(&self.inner)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        <View as BufReader>::advance(&mut self.inner, by)
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        <View as BufReader>::remaining(&self.inner)
     }
 }
 
@@ -109,46 +140,6 @@ impl Length for Bytes {
     }
 }
 
-impl Debug for Bytes {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        debug_as_hexdump(f, self)
-    }
+impl_me! {
+    impl Reader for Bytes as BufReader;
 }
-
-impl<T: Buf> PartialEq<T> for Bytes {
-    #[inline]
-    fn eq(&self, other: &T) -> bool {
-        buf_eq(self, other)
-    }
-}
-
-pub struct Chunks<'a> {
-    inner: Box<dyn ChunksIterImpl<'a> + 'a>,
-}
-
-impl<'a> Chunks<'a> {
-    pub(crate) fn from_impl(inner: Box<dyn ChunksIterImpl<'a> + 'a>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<'a> Iterator for Chunks<'a> {
-    type Item = &'a [u8];
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
-    }
-}
-
-impl<'a> DoubleEndedIterator for Chunks<'a> {
-    #[inline]
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.next_back()
-    }
-}
-
-impl<'a> FusedIterator for Chunks<'a> {}
-
-impl<'a> ExactSizeIterator for Chunks<'a> {}

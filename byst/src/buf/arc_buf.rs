@@ -14,10 +14,8 @@ use std::{
 };
 
 use super::{
-    chunks::{
-        SingleChunk,
-        SingleChunkMut,
-    },
+    BufReader,
+    BufWriter,
     Full,
     Length,
     SizeLimit,
@@ -26,10 +24,9 @@ use crate::{
     bytes::r#impl::{
         BytesImpl,
         BytesMutImpl,
-        BytesMutViewImpl,
-        BytesMutViewMutImpl,
-        ChunksIterImpl,
     },
+    impl_me,
+    io::End,
     util::{
         buf_eq,
         debug_as_hexdump,
@@ -306,8 +303,11 @@ impl BufferRef {
         std::slice::from_raw_parts_mut(UnsafeCell::raw_get(ptr.as_ptr()), self.end - self.start)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that there are no mutable borrows to this buffer.
     #[inline]
-    fn initialized_end(&self) -> usize {
+    unsafe fn initialized_end(&self) -> usize {
         if self.tail {
             let initialized = unsafe {
                 // SAFETY:
@@ -331,8 +331,12 @@ impl BufferRef {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the access is unique, and that all bytes
+    /// upto `to` have been initialized.
     #[inline]
-    unsafe fn initialized_increase(&self, to: usize) {
+    unsafe fn set_initialized_to(&self, to: usize) {
         let to = self.start + to;
         assert!(
             to <= self.end,
@@ -356,6 +360,10 @@ impl BufferRef {
 
                 *initialized = std::cmp::max(*initialized, to);
             }
+        }
+        else {
+            // if it's not tail, we don't care since the portion of the buffer
+            // is fully initialized anyway.
         }
     }
 
@@ -580,7 +588,7 @@ impl Reclaim {
     #[inline]
     pub fn ref_count(&self) -> RefCount {
         unsafe {
-            // SAFETY: As long as there is a [`BufferRef`], the [`Buffer`] is valid.
+            // SAFETY: As long as there is a [`Reclaim`], the [`Buffer`] is valid.
             self.buf.ref_count()
         }
     }
@@ -642,38 +650,78 @@ impl Buf for ArcBuf {
     where
         Self: 'a;
 
-    type Chunks<'a> = SingleChunk<'a>
+    type Reader<'a> = Self
     where
         Self: 'a;
 
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-        let (start, end) = range.into().indices_checked_in(0, self.inner.len())?;
-        if start == end {
-            Ok(Self::default())
-        }
-        else {
-            let mut inner = self.inner.clone();
-            inner.shrink(start, end);
-            Ok(ArcBuf { inner })
-        }
+        let (start, end) = range.into().indices_checked_in(0, self.len())?;
+        let mut cloned = Clone::clone(self);
+        cloned.inner.shrink(start, end);
+        Ok(cloned)
     }
 
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(SingleChunk::new(range.into().slice_get(self.bytes())?))
+    #[inline]
+    fn reader(&self) -> Self::Reader<'_> {
+        Clone::clone(self)
     }
 }
 
-impl BytesImpl for ArcBuf {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl>, RangeOutOfBounds> {
+impl_me! {
+    impl Reader for ArcBuf as BufReader;
+}
+
+impl BufReader for ArcBuf {
+    type View = Self;
+
+    #[inline]
+    fn view(&self, length: usize) -> Result<Self::View, End> {
+        let mut view = Buf::view(self, 0..length).map_err(|RangeOutOfBounds { .. }| End)?;
+        view.inner.shrink(length, self.len());
+        Ok(view)
+    }
+
+    #[inline]
+    fn chunk(&self) -> Result<&[u8], End> {
+        if self.is_empty() {
+            Err(End)
+        }
+        else {
+            Ok(self.bytes())
+        }
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        if by <= self.len() {
+            self.inner.shrink(by, self.len());
+            Ok(())
+        }
+        else {
+            Err(End)
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<'b> BytesImpl<'b> for ArcBuf {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds> {
         Ok(Box::new(Buf::view(self, range)?))
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
+    fn clone(&self) -> Box<dyn BytesImpl<'b> + 'b> {
+        Box::new(Clone::clone(self))
     }
 
-    fn clone(&self) -> Box<dyn BytesImpl> {
-        Box::new(Clone::clone(self))
+    fn chunk(&self) -> Result<&[u8], End> {
+        Ok(BufReader::chunk(self)?)
+    }
+
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        BufReader::advance(self, by)
     }
 }
 
@@ -738,6 +786,7 @@ impl ArcBufMut {
         }
     }
 
+    /// Creates a new [`ArcBufMut`] with the specified capacity.
     #[inline]
     pub fn new(capacity: usize) -> Self {
         let buf = Buffer::new(capacity, 1, false);
@@ -745,6 +794,12 @@ impl ArcBufMut {
     }
 
     /// Creates a new [`ArcBufMut`], with a handle to reclaim it.
+    ///
+    /// A reclaimable buffer will not be freed when all ordinary references
+    /// (i.e. [`ArcBuf`]s and [`ArcBufMut`]s, but not [`Reclaim`]s) to it are
+    /// dropped. It can be be reclaimed using the [`Reclaim`] handle. When all
+    /// ordinary references *and* the [`Reclaim`] is dropped, the buffer will be
+    /// deallocated.
     ///
     /// # Example
     ///
@@ -765,6 +820,7 @@ impl ArcBufMut {
     /// // Once all references to the underlying buffer have been dropped, we can reuse it.
     /// let reclaimed_buf = reclaim.try_reclaim().unwrap();
     /// ```
+    #[inline]
     pub fn new_reclaimable(capacity: usize) -> (Self, Reclaim) {
         let buf = Buffer::new(capacity, 1, true);
         let this = unsafe { Self::from_buffer(buf) };
@@ -772,28 +828,28 @@ impl ArcBufMut {
         (this, reclaim)
     }
 
+    /// Returns the capacity of the buffer.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.inner.len()
     }
 
-    /// Creates a new [`ArcBufMut`] with data copied from a slice.
-    pub fn copy_from_slice(from: &[u8]) -> Self {
-        let mut this = Self::new(from.len());
-        BufMut::extend(&mut this, from).unwrap();
-        this
-    }
-
+    /// Makes the buffer immutable.
+    ///
+    /// This returns an [`ArcBuf`] that can be cheaply cloned and shared.
+    ///
+    /// This will drop the buffer if the buffer hasn't been filled and return an
+    /// [`ArcBuf`] that has no heap-allocation.
+    #[inline]
     pub fn freeze(mut self) -> ArcBuf {
-        if self.filled == 0 {
-            ArcBuf::default()
-        }
-        else {
-            self.inner.shrink(0, self.filled);
-            ArcBuf { inner: self.inner }
-        }
+        self.inner.shrink(0, self.filled);
+        ArcBuf { inner: self.inner }
     }
 
+    /// Returns the reference count for this buffer.
+    ///
+    /// This includes all references to the underlying buffer, even if it was
+    /// split.
     #[inline]
     pub fn ref_count(&self) -> RefCount {
         self.inner.ref_count()
@@ -831,7 +887,7 @@ impl ArcBufMut {
             // SAFETY:
             //
             // - `..self.filled` is initialized
-            // - We have the only mutable reference to that portion of the buffer.
+            // - We have the only reference to that portion of the buffer.
             MaybeUninit::slice_assume_init_ref(&self.inner.uninitialized()[..self.filled])
         }
     }
@@ -843,7 +899,7 @@ impl ArcBufMut {
             // SAFETY:
             //
             // - `..self.filled` is initialized
-            // - We have the only mutable reference to that portion of the buffer.
+            // - We have the only reference to that portion of the buffer.
             MaybeUninit::slice_assume_init_mut(&mut self.inner.uninitialized_mut()[..self.filled])
         }
     }
@@ -854,7 +910,7 @@ impl ArcBufMut {
         unsafe {
             // SAFETY:
             //
-            // - We have the only mutable reference to that portion of the buffer.
+            // - We have the only reference to that portion of the buffer.
             self.inner.initialized()
         }
     }
@@ -911,6 +967,28 @@ impl ArcBufMut {
         }
     }
 
+    /// Returns an immutable reference to the full buffer.
+    #[inline]
+    pub fn uninitialized(&self) -> &[MaybeUninit<u8>] {
+        unsafe {
+            // SAFETY:
+            //
+            // - We have the only reference to that portion of the buffer.
+            self.inner.uninitialized()
+        }
+    }
+
+    /// Returns a mutable reference to the full buffer.
+    #[inline]
+    pub fn uninitialized_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        unsafe {
+            // SAFETY:
+            //
+            // - We have the only reference to that portion of the buffer.
+            self.inner.uninitialized_mut()
+        }
+    }
+
     /// Resizes the buffer to include all bytes upto `to`.
     ///
     /// This is useful if the buffer was previously written to using
@@ -925,11 +1003,33 @@ impl ArcBufMut {
     /// [`fully_initialize`]: Self::fully_initialize
     #[inline]
     pub fn set_filled_to(&mut self, to: usize) {
+        let end = unsafe {
+            // SAFETY: we have a `&mut self`, so there are no other mutable references to
+            // this buffer.
+            self.inner.initialized_end()
+        };
         assert!(
-            to <= self.inner.initialized_end() - self.inner.start,
+            to <= end - self.inner.start,
             "`ArcBufMut::set_filled_to`: Argument `to` is out of bounds: {to}"
         );
         self.filled = to;
+    }
+
+    /// Sets the buffer as initialized upto `to`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the buffer was initialized upto `to`. To do
+    /// this a `&mut [MaybeUninit<u8>]` can be obtained through
+    /// [`uninitialized_mut`]
+    ///
+    /// # Panics
+    ///
+    /// Panics if `to` is out of bounds.
+    ///
+    /// [`uninitialized_mut`]: Self::uninitialized_mut
+    pub unsafe fn set_initialized_to(&mut self, to: usize) {
+        self.inner.set_initialized_to(to);
     }
 
     /// Fully initializes the underlying buffer.
@@ -999,16 +1099,18 @@ impl Buf for ArcBufMut {
     where
         Self: 'a;
 
-    type Chunks<'a> = SingleChunk<'a>
+    type Reader<'a> = &'a [u8]
     where
         Self: 'a;
 
+    #[inline]
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
         Ok(range.into().slice_get(self.filled())?)
     }
 
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(SingleChunk::new(range.into().slice_get(self.filled())?))
+    #[inline]
+    fn reader(&self) -> Self::Reader<'_> {
+        self.filled()
     }
 }
 
@@ -1024,21 +1126,18 @@ impl BufMut for ArcBufMut {
     where
         Self: 'a;
 
-    type ChunksMut<'a> = SingleChunkMut<'a>
+    type Writer<'a> = Writer<'a>
     where
         Self: 'a;
 
+    #[inline]
     fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
         Ok(range.into().slice_get_mut(self.filled_mut())?)
     }
 
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        Ok(SingleChunkMut::new(
-            range.into().slice_get_mut(self.filled_mut())?,
-        ))
+    #[inline]
+    fn writer(&mut self) -> Self::Writer<'_> {
+        Writer::new(self)
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
@@ -1053,50 +1152,6 @@ impl BufMut for ArcBufMut {
         }
     }
 
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), super::Full> {
-        if new_len <= self.capacity() {
-            if new_len > self.filled {
-                unsafe {
-                    MaybeUninit::fill(
-                        &mut self.inner.uninitialized_mut()[self.filled..new_len],
-                        value,
-                    );
-                    self.inner.initialized_increase(new_len);
-                    self.filled = new_len;
-                }
-            }
-            Ok(())
-        }
-        else {
-            Err(Full {
-                required: new_len,
-                capacity: self.capacity(),
-            })
-        }
-    }
-
-    fn extend(&mut self, with: &[u8]) -> Result<(), super::Full> {
-        let new_len = self.filled + with.len();
-        if new_len <= self.capacity() {
-            unsafe {
-                MaybeUninit::fill_from(
-                    &mut self.inner.uninitialized_mut()[self.filled..new_len],
-                    with.iter().copied(),
-                );
-                self.inner.initialized_increase(new_len);
-                self.filled = new_len;
-            }
-
-            Ok(())
-        }
-        else {
-            Err(Full {
-                required: new_len,
-                capacity: self.capacity(),
-            })
-        }
-    }
-
     #[inline]
     fn size_limit(&self) -> SizeLimit {
         SizeLimit::Exact(self.capacity())
@@ -1104,51 +1159,32 @@ impl BufMut for ArcBufMut {
 }
 
 impl BytesMutImpl for ArcBufMut {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(self, range)?))
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl + '_>, RangeOutOfBounds> {
+        Ok(Box::new(range.slice_get(self.filled())?))
     }
 
-    fn view_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds> {
+    fn view_mut(&mut self, range: Range) -> Result<Box<dyn BytesMutImpl + '_>, RangeOutOfBounds> {
         Ok(Box::new(BufMut::view_mut(self, range)?))
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
+    fn reader(&self) -> Box<dyn BytesImpl<'_> + '_> {
+        Box::new(self.filled())
     }
 
-    fn chunks_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn crate::bytes::r#impl::ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(BufMut::chunks_mut(self, range)?))
+    fn writer(&mut self) -> Box<dyn crate::bytes::r#impl::WriterImpl + '_> {
+        Box::new(self.filled_mut())
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
         BufMut::reserve(self, size)
     }
 
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        BufMut::grow(self, new_len, value)
-    }
-
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        BufMut::extend(self, with)
-    }
-
     fn size_limit(&self) -> SizeLimit {
         BufMut::size_limit(self)
     }
 
-    fn split_at(
-        mut self,
-        at: usize,
-    ) -> Result<(Box<dyn BytesMutImpl>, Box<dyn BytesMutImpl>), IndexOutOfBounds> {
-        // todo: sucks to re-allocate a `Box` for self here :/
-        let other = ArcBufMut::split_at(&mut self, at)?;
-        Ok((Box::new(self), Box::new(other)))
+    fn split_at(&mut self, at: usize) -> Result<Box<dyn BytesMutImpl + '_>, IndexOutOfBounds> {
+        Ok(Box::new(ArcBufMut::split_at(self, at)?))
     }
 }
 
@@ -1173,6 +1209,102 @@ impl From<ArcBufMut> for Bytes {
     }
 }
 
+pub struct Writer<'a> {
+    buf: &'a mut ArcBufMut,
+    position: usize,
+}
+
+impl<'a> Writer<'a> {
+    pub fn new(buf: &'a mut ArcBufMut) -> Self {
+        Self { buf, position: 0 }
+    }
+
+    /// Fills the next `length` bytes by applying the closure `f` to it.
+    ///
+    /// # Safety
+    ///
+    /// `f` must initialize make sure the whole slice it is passed is
+    /// initialized after its call.
+    unsafe fn fill_with(
+        &mut self,
+        length: usize,
+        f: impl FnOnce(&mut [MaybeUninit<u8>]),
+    ) -> Result<(), Full> {
+        let end = self.position + length;
+
+        if end <= self.buf.capacity() {
+            f(&mut self.buf.uninitialized_mut()[self.position..end]);
+
+            unsafe {
+                // SAFETY:
+                //  - access is unqiue, because we have a `&mut self`
+                //  - the bytes upto `end` have just been initialized
+                self.buf.set_initialized_to(end);
+            }
+
+            self.buf.filled = std::cmp::max(self.buf.filled, end);
+            self.position = end;
+
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: length,
+                capacity: self.buf.capacity(),
+            })
+        }
+    }
+}
+
+impl<'a> BufWriter for Writer<'a> {
+    #[inline]
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        if self.position < self.buf.filled {
+            Ok(&mut self.buf.filled_mut()[self.position..])
+        }
+        else {
+            Err(End)
+        }
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        // note: The cursor position can't be greater than `self.filled`, and both point
+        // into the initialized portion, so it's safe to assume that the buffer has been
+        // initialized upto `already_filled`.
+        let already_filled = self.buf.filled - self.position;
+
+        if by > already_filled {
+            unsafe {
+                // SAFETY: The closure initializes `already_filled..`. `..already_filled` is
+                // already filled, and thus initialized.
+                self.fill_with(by, |buf| {
+                    MaybeUninit::fill(&mut buf[already_filled..], 0);
+                })
+            }
+        }
+        else {
+            self.position += by;
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.buf.filled - self.position
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        unsafe {
+            // SAFETY: The closure initializes the whole slice.
+            self.fill_with(with.len(), |buf| {
+                MaybeUninit::copy_from_slice(buf, with);
+            })
+        }
+    }
+}
+
 // SAFETY:
 //
 // This is safe to impl `Send` and `Sync`, because it only does mutable access
@@ -1185,14 +1317,14 @@ mod tests {
     use super::ArcBufMut;
     use crate::{
         buf::{
-            copy::{
-                copy,
-                CopyError,
-            },
+            tests::buf_mut_tests,
             Full,
         },
+        copy,
         hexdump::Hexdump,
     };
+
+    buf_mut_tests!(ArcBufMut::new(20));
 
     #[test]
     fn it_reclaims_empty_buffers_correctly() {
@@ -1230,7 +1362,7 @@ mod tests {
     #[test]
     fn bufs_split_correctly() {
         let mut buf = ArcBufMut::new(20);
-        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        copy(&mut buf, b"Hello World. This is").unwrap();
 
         let new = buf.split_at(5).unwrap();
 
@@ -1247,18 +1379,18 @@ mod tests {
     #[test]
     fn split_off_buf_doesnt_spill_into_other_half() {
         let mut buf = ArcBufMut::new(20);
-        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        copy(&mut buf, b"Hello World. This is").unwrap();
 
         let mut new = buf.split_at(5).unwrap();
 
-        let e = copy(&mut new, .., b"Spill much?", ..).unwrap_err();
+        let e = copy(&mut new, b"Spill much?").unwrap_err();
 
         assert_eq!(
             e,
-            CopyError::Full(Full {
+            Full {
                 required: 11,
                 capacity: 5
-            })
+            }
         );
         assert_eq!(new, b"Hello");
         assert_eq!(buf, b" World. This is");
@@ -1267,7 +1399,7 @@ mod tests {
     #[test]
     fn left_half_of_split_is_not_tail() {
         let mut buf = ArcBufMut::new(20);
-        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        copy(&mut buf, b"Hello World. This is").unwrap();
         let left = buf.split_at(5).unwrap();
         assert!(!left.inner.tail);
     }
@@ -1275,7 +1407,7 @@ mod tests {
     #[test]
     fn buf_shrunk_to_zero_size_is_static() {
         let mut buf = ArcBufMut::new(20);
-        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        copy(&mut buf, b"Hello World. This is").unwrap();
 
         buf.inner.shrink(5, 5);
         assert!(buf.ref_count().is_static());
@@ -1286,7 +1418,7 @@ mod tests {
     #[test]
     fn it_splits_with_left_empty_correctly() {
         let mut buf = ArcBufMut::new(20);
-        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        copy(&mut buf, b"Hello World. This is").unwrap();
 
         let left = buf.split_at(0).unwrap();
         assert!(left.is_empty());
@@ -1299,7 +1431,7 @@ mod tests {
     #[test]
     fn it_splits_with_right_empty_correctly() {
         let mut buf = ArcBufMut::new(20);
-        copy(&mut buf, .., b"Hello World. This is", ..).unwrap();
+        copy(&mut buf, b"Hello World. This is").unwrap();
 
         let left = buf.split_at(20).unwrap();
         assert!(buf.is_empty());

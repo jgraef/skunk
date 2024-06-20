@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 use byst::{
     endianness::NetworkEndian,
-    io::read::{
+    io::{
         read,
         End,
         Read,

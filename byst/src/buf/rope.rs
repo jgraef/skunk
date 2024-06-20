@@ -1,25 +1,15 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    iter::{
-        Flatten,
-        Fuse,
-        FusedIterator,
-    },
 };
 
 use super::{
     chunks::WithOffset,
+    BufReader,
     Length,
 };
 use crate::{
-    util::{
-        ExactSizeIter,
-        IsEnd,
-        IsEndIter,
-        Map,
-        MapFunc,
-    },
+    impl_me,
     Buf,
     Range,
     RangeOutOfBounds,
@@ -76,7 +66,7 @@ impl<B: Buf> Buf for Rope<B> {
     where
         Self: 'a;
 
-    type Chunks<'a> = Chunks<'a, B>
+    type Reader<'a> = Reader<'a, B>
     where
         Self: 'a;
 
@@ -86,8 +76,8 @@ impl<B: Buf> Buf for Rope<B> {
     }
 
     #[inline]
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(Chunks::from_view(self.view_checked(range.into())?))
+    fn reader(&self) -> Self::Reader<'_> {
+        todo!();
     }
 }
 
@@ -146,9 +136,9 @@ impl<'b, B: Buf> Buf for View<'b, B> {
     where
         Self: 'a;
 
-    type Chunks<'a> = Chunks<'a, B>
-    where
-        Self: 'a;
+    type Reader<'a> = Reader<'a, B>
+        where
+            Self: 'a;
 
     #[inline]
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
@@ -156,8 +146,8 @@ impl<'b, B: Buf> Buf for View<'b, B> {
     }
 
     #[inline]
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(Chunks::from_view(self.view_checked(range.into())?))
+    fn reader(&self) -> Self::Reader<'_> {
+        todo!();
     }
 }
 
@@ -171,96 +161,40 @@ impl<'b, B: Length> Length for View<'b, B> {
     }
 }
 
-pub struct Chunks<'b, B: Buf> {
-    inner: ExactSizeIter<
-        Fuse<Flatten<Map<IsEndIter<std::slice::Iter<'b, Segment<B>>>, MapSegmentsToChunks>>>,
-    >,
+pub struct Reader<'a, B> {
+    segments: std::slice::Iter<'a, Segment<B>>,
 }
 
-impl<'b, B: Buf> Chunks<'b, B> {
-    #[inline]
-    fn from_view(view: View<'b, B>) -> Self {
-        let len = view.len();
-        Self::new(view.segments, view.start_offset, view.end_offset, len)
-    }
-
-    #[inline]
-    fn new(segments: &'b [Segment<B>], start_offset: usize, end_offset: usize, len: usize) -> Self {
+impl<'a, B> Default for Reader<'a, B> {
+    fn default() -> Self {
         Self {
-            inner: ExactSizeIter::new(
-                Map::new(
-                    IsEndIter::new(segments.iter()),
-                    MapSegmentsToChunks {
-                        start_offset,
-                        end_offset,
-                    },
-                )
-                .flatten()
-                .fuse(),
-                len,
-            ),
+            segments: [].iter(),
         }
     }
 }
 
-impl<'b, B: Buf> Iterator for Chunks<'b, B> {
-    type Item = &'b [u8];
+impl<'a, B: Buf> BufReader for Reader<'a, B> {
+    type View = View<'a, B>;
 
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+    fn view(&self, length: usize) -> Result<Self::View, crate::io::End> {
+        todo!()
     }
 
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
+    fn chunk(&self) -> Result<&[u8], crate::io::End> {
+        todo!()
     }
-}
 
-impl<'b, B: Buf> DoubleEndedIterator for Chunks<'b, B>
-where
-    B::Chunks<'b>: DoubleEndedIterator,
-{
-    #[inline]
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.next_back()
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::End> {
+        todo!()
+    }
+
+    fn remaining(&self) -> usize {
+        todo!()
     }
 }
 
-impl<'b, B: Buf> ExactSizeIterator for Chunks<'b, B> {}
-
-impl<'b, B: Buf + Debug> Debug for Chunks<'b, B>
-where
-    B::Chunks<'b>: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Chunks")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
-
-impl<'b, B: Buf> FusedIterator for Chunks<'b, B> {}
-
-#[derive(Debug)]
-struct MapSegmentsToChunks {
-    start_offset: usize,
-    end_offset: usize,
-}
-
-impl<'b, B: Buf> MapFunc<IsEnd<&'b Segment<B>>> for MapSegmentsToChunks {
-    type Output = B::Chunks<'b>;
-
-    fn map(&mut self, input: IsEnd<&'b Segment<B>>) -> Self::Output {
-        let mut range = Range::default();
-        if input.is_start {
-            range = range.with_start(self.start_offset);
-        }
-        if input.is_end {
-            range = range.with_end(self.end_offset);
-        }
-        input.item.buf.chunks(range).unwrap()
-    }
+impl_me! {
+    impl['a, B: Buf] Reader for Reader<'a, B> as BufReader;
 }
 
 pub(crate) fn find_segment<S>(
@@ -352,6 +286,18 @@ fn view_unchecked<B: Length>(segments: &[Segment<B>], start: usize, end: usize) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::buf::BufExt;
+
+    fn collect_chunks<B: Buf>(buf: B) -> Vec<Vec<u8>> {
+        // uggh... fix this when we solved the BufReader lifetime issue.
+        let mut reader = buf.reader();
+        let mut chunks = vec![];
+        while let Ok(chunk) = reader.chunk() {
+            chunks.push(chunk.to_owned());
+            reader.advance(chunk.len()).unwrap();
+        }
+        chunks
+    }
 
     #[test]
     fn it_chunks_correctly() {
@@ -369,8 +315,7 @@ mod tests {
         assert_eq!(rope.segments[2].offset, 6);
         assert_eq!(rope.segments[3].offset, 11);
 
-        let chunks = rope.chunks(..).unwrap().collect::<Vec<_>>();
-        assert_eq!(input, chunks);
+        assert_eq!(input, collect_chunks(&rope));
     }
 
     #[test]
@@ -385,13 +330,13 @@ mod tests {
         .collect::<Rope<_>>();
 
         let view = rope.view(2..9).unwrap();
-        assert_eq!(view.iter(..).unwrap().collect::<Vec<_>>(), b"llo Wor");
+        assert_eq!(view.into_vec(), b"llo Wor");
 
         let view = rope.view(5..9).unwrap();
-        assert_eq!(view.iter(..).unwrap().collect::<Vec<_>>(), b" Wor");
+        assert_eq!(view.into_vec(), b" Wor");
 
         let view = rope.view(6..).unwrap();
-        assert_eq!(view.iter(..).unwrap().collect::<Vec<_>>(), b"World!");
+        assert_eq!(view.into_vec(), b"World!");
     }
 
     #[test]
@@ -405,11 +350,13 @@ mod tests {
         .iter()
         .collect::<Rope<_>>();
 
-        let chunks = rope.chunks(5..6).unwrap().collect::<Vec<_>>();
+        let view = rope.view(5..6).unwrap();
+        let chunks = collect_chunks(&view);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], b" ");
 
-        let chunks = rope.chunks(5..11).unwrap().collect::<Vec<_>>();
+        let view = rope.view(5..11).unwrap();
+        let chunks = collect_chunks(&view);
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0], b" ");
         assert_eq!(chunks[1], b"World");
@@ -427,13 +374,16 @@ mod tests {
         .collect::<Rope<_>>();
 
         let view = rope.view(2..9).unwrap();
-        assert_eq!(view.iter(2..4).unwrap().collect::<Vec<_>>(), b"o ");
+        let view2 = view.view(2..4).unwrap();
+        assert_eq!(view2.into_vec(), b"o ");
 
         let view = rope.view(5..9).unwrap();
-        assert_eq!(view.iter(1..).unwrap().collect::<Vec<_>>(), b"Wor");
+        let view2 = view.view(1..).unwrap();
+        assert_eq!(view2.into_vec(), b"Wor");
 
         let view = rope.view(6..).unwrap();
-        assert_eq!(view.iter(..5).unwrap().collect::<Vec<_>>(), b"World");
+        let view2 = view.view(..5).unwrap();
+        assert_eq!(view2.into_vec(), b"World");
     }
 
     #[test]

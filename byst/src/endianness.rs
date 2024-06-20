@@ -6,15 +6,15 @@
 //!   features, and we don't really need them.
 
 use super::io::{
-    read::{
-        Read,
-        ReadIntoBuf,
-    },
-    write::{
-        Full,
-        WriteFromBuf,
-        WriteXe,
-    },
+    End,
+    Full,
+    Read,
+    WriteFromBuf,
+    WriteXe,
+};
+use crate::io::{
+    BufReader,
+    ReaderExt,
 };
 
 mod sealed {
@@ -122,14 +122,12 @@ macro_rules! impl_endianness {
             }
         }
 
-        impl<R: ReadIntoBuf> Read<R, $endianness> for $ty {
-            type Error = <R as ReadIntoBuf>::Error;
+        impl<R: BufReader> Read<R, $endianness> for $ty {
+            type Error = End;
 
             #[inline]
             fn read(reader: &mut R, _parameters: $endianness) -> Result<Self, Self::Error> {
-                let mut buf = [0u8; $bytes];
-                reader.read_into_buf(&mut buf)?;
-                Ok(<$ty>::$from_bytes(buf))
+                Ok(<$ty>::$from_bytes(reader.read_byte_array()?))
             }
         }
 

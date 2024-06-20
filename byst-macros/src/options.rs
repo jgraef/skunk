@@ -96,7 +96,7 @@ impl EnumDeriveOptions {
             track.reads(discriminant_ty, &params_ty);
 
             parse_quote! {
-                <#discriminant_ty as ::byst::io::read::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?
+                <#discriminant_ty as ::byst::io::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?
             }
         }
         else {

@@ -146,80 +146,29 @@ mod tests {
     use super::Slab;
     use crate::{
         buf::{
-            arc_buf::RefCount,
-            copy::{
-                copy,
-                CopyError,
-            },
+            tests::buf_mut_tests,
+            BufExt,
             Full,
         },
+        copy,
         Buf,
         RangeOutOfBounds,
     };
 
-    #[test]
-    fn write_read_full_from_start() {
+    buf_mut_tests!({
         let mut slab = Slab::new(128, 32);
-
-        let mut bytes_mut = slab.get();
-        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
-        assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abcd");
-    }
-
-    #[test]
-    fn write_read_partial_from_start() {
-        let mut slab = Slab::new(128, 32);
-
-        let mut bytes_mut = slab.get();
-        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
-        assert_eq!(bytes_mut.chunks(0..2).unwrap().next().unwrap(), b"ab");
-    }
-
-    #[test]
-    fn write_with_fill() {
-        let mut slab = Slab::new(128, 32);
-
-        let mut bytes_mut = slab.get();
-        copy(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
-        assert_eq!(
-            bytes_mut.chunks(..).unwrap().next().unwrap(),
-            b"\x00\x00\x00\x00abcd"
-        );
-    }
-
-    #[test]
-    fn write_over_buf_end() {
-        let mut slab = Slab::new(128, 32);
-
-        let mut bytes_mut = slab.get();
-
-        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
-        copy(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
-
-        assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
-    }
-
-    #[test]
-    fn write_extend_with_unbounded_destination_slice() {
-        let mut slab = Slab::new(128, 32);
-
-        let mut bytes_mut = slab.get();
-
-        copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
-        copy(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
-
-        assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
-    }
+        slab.get()
+    });
 
     #[test]
     fn cant_read_more_than_written() {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        copy(&mut bytes_mut, 0..4, b"abcd", 0..4).unwrap();
+        copy(&mut bytes_mut, b"abcd").unwrap();
 
         assert_eq!(
-            bytes_mut.chunks(0..8).unwrap_err(),
+            bytes_mut.view(0..8).unwrap_err(),
             RangeOutOfBounds {
                 required: (0..8).into(),
                 bounds: (0, 4)
@@ -233,11 +182,11 @@ mod tests {
 
         let mut bytes_mut = slab.get();
         assert_eq!(
-            copy(&mut bytes_mut, 0..8, b"abcdefgh", 0..8).unwrap_err(),
-            CopyError::Full(Full {
+            copy(&mut bytes_mut, b"abcdefgh").unwrap_err(),
+            Full {
                 required: 8,
                 capacity: 4
-            })
+            }
         );
     }
 
@@ -246,63 +195,13 @@ mod tests {
         let mut slab = Slab::new(128, 32);
 
         let mut bytes_mut = slab.get();
-        copy(&mut bytes_mut, 0..4, b"abcd", 0..4).unwrap();
+        copy(&mut bytes_mut, b"abcd").unwrap();
 
         let bytes = bytes_mut.freeze();
-        assert_eq!(bytes.chunks(..).unwrap().next().unwrap(), b"abcd");
+        assert_eq!(bytes.into_vec(), b"abcd");
 
         let bytes2 = bytes.clone();
-        assert_eq!(bytes2.chunks(..).unwrap().next().unwrap(), b"abcd");
-    }
-
-    #[test]
-    fn it_increments_ref_count_on_clone() {
-        let mut slab = Slab::new(128, 32);
-        let mut bytes_mut = slab.get();
-        // if we don't write something into the buffer, we'll get a static (dangling,
-        // zero-sized) buffer.
-        copy(&mut bytes_mut, .., b"foobar", ..).unwrap();
-        let bytes = bytes_mut.freeze();
-
-        assert_eq!(bytes.ref_count().ref_count().unwrap(), 1);
-        let bytes2 = bytes.clone();
-        assert_eq!(bytes.ref_count().ref_count().unwrap(), 2);
-        assert_eq!(bytes2.ref_count().ref_count().unwrap(), 2);
-    }
-
-    #[test]
-    fn it_decrements_ref_count_on_drop() {
-        let mut slab = Slab::new(128, 32);
-        let mut bytes_mut = slab.get();
-        // if we don't write something into the buffer, we'll get a static (dangling,
-        // zero-sized) buffer.
-        copy(&mut bytes_mut, .., b"foobar", ..).unwrap();
-        let bytes = bytes_mut.freeze();
-        let bytes2 = bytes.clone();
-
-        assert_eq!(bytes.ref_count().ref_count().unwrap(), 2);
-        assert_eq!(bytes2.ref_count().ref_count().unwrap(), 2);
-        drop(bytes2);
-        assert_eq!(bytes.ref_count().ref_count().unwrap(), 1);
-    }
-
-    #[test]
-    fn it_orphanes_buffers() {
-        let mut slab = Slab::new(128, 32);
-        let bytes_mut = slab.get();
-
-        assert!(bytes_mut.ref_count().can_be_reclaimed());
-        drop(slab);
-        assert!(!bytes_mut.ref_count().can_be_reclaimed());
-    }
-
-    #[test]
-    fn empty_bytes_are_not_ref_counted() {
-        let mut slab = Slab::new(128, 32);
-        let bytes_mut = slab.get();
-        let bytes = bytes_mut.freeze();
-
-        assert!(matches!(bytes.ref_count(), RefCount::Static));
+        assert_eq!(bytes2.into_vec(), b"abcd");
     }
 
     #[test]

@@ -2,10 +2,12 @@
 
 use crate::{
     buf::{
+        BufWriter,
         Full,
         Length,
         SizeLimit,
     },
+    io::{End, BufReader},
     Buf,
     BufMut,
     IndexOutOfBounds,
@@ -20,144 +22,78 @@ use crate::{
 ///
 /// [`Bytes`]: super::Bytes
 /// [`Bytes::from_impl`]: super::Bytes::from_impl
-pub trait BytesImpl: Length + Send + Sync {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl>, RangeOutOfBounds>;
-    fn chunks<'a>(
-        &'a self,
-        range: Range,
-    ) -> Result<Box<dyn ChunksIterImpl<'a> + 'a>, RangeOutOfBounds>;
-    fn clone(&self) -> Box<dyn BytesImpl>;
+pub trait BytesImpl<'b>: Length + Send + Sync {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds>;
+    fn clone(&self) -> Box<dyn BytesImpl<'b> + 'b>;
+    fn chunk(&self) -> Result<&[u8], End>;
+    fn advance(&mut self, by: usize) -> Result<(), End>;
 }
 
 /// The trait backing the [`BytesMut`] implementation.
 ///
 /// Implement this for your type, for it to be usable as a [`BytesMut`]. Use
 /// [`BytesMut::from_impl`] to implement a conversion from your type to
-/// [`Bytes`].
+/// [`BytesMut`].
 ///
 /// [`BytesMut`]: super::BytesMut
 /// [`BytesMut::from_impl`]: super::BytesMut::from_impl
 pub trait BytesMutImpl: Length + Send + Sync {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds>;
-    fn view_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds>;
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds>;
-    fn chunks_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds>;
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'_> + '_>, RangeOutOfBounds>;
+    fn view_mut(&mut self, range: Range) -> Result<Box<dyn BytesMutImpl + '_>, RangeOutOfBounds>;
+    fn reader(&self) -> Box<dyn BytesImpl<'_> + '_>;
+    fn writer(&mut self) -> Box<dyn WriterImpl + '_>;
     fn reserve(&mut self, size: usize) -> Result<(), Full>;
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full>;
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
     fn size_limit(&self) -> SizeLimit;
     fn split_at(
-        self,
+        &mut self,
         at: usize,
-    ) -> Result<(Box<dyn BytesMutImpl>, Box<dyn BytesMutImpl>), IndexOutOfBounds>;
+    ) -> Result<Box<dyn BytesMutImpl + '_>, IndexOutOfBounds>;
 }
 
-pub trait ChunksIterImpl<'a>: Iterator<Item = &'a [u8]> + DoubleEndedIterator {}
-
-impl<'a, T: Iterator<Item = &'a [u8]> + DoubleEndedIterator> ChunksIterImpl<'a> for T {}
-
-pub trait ChunksMutIterImpl<'a>: Iterator<Item = &'a mut [u8]> + DoubleEndedIterator {}
-
-impl<'a, T: Iterator<Item = &'a mut [u8]> + DoubleEndedIterator> ChunksMutIterImpl<'a> for T {}
-
-pub trait BytesMutViewImpl<'b>: Length + Send + Sync {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl<'b> + 'b>, RangeOutOfBounds>;
-    fn chunks<'a>(
-        &'a self,
-        range: Range,
-    ) -> Result<Box<dyn ChunksIterImpl<'a> + 'a>, RangeOutOfBounds>;
-}
-
-pub trait BytesMutViewMutImpl<'b>: Length + Send + Sync {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds>;
-    fn view_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds>;
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds>;
-    fn chunks_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds>;
-    fn reserve(&mut self, size: usize) -> Result<(), Full>;
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full>;
+pub trait WriterImpl {
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End>;
+    fn advance(&mut self, by: usize) -> Result<(), Full>;
+    fn remaining(&self) -> usize;
     fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
-    fn size_limit(&self) -> SizeLimit;
-    fn split_at(
-        self,
-        at: usize,
-    ) -> Result<
-        (
-            Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-            Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-        ),
-        IndexOutOfBounds,
-    >;
 }
 
-impl BytesImpl for &'static [u8] {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl>, RangeOutOfBounds> {
+impl<'b> BytesImpl<'b> for &'b [u8] {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds> {
         Ok(Box::new(Buf::view(self, range)?))
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
-    }
-
-    fn clone(&self) -> Box<dyn BytesImpl> {
+    fn clone(&self) -> Box<dyn BytesImpl<'b> + 'b> {
         Box::new(*self)
     }
-}
 
-impl<'b> BytesMutViewImpl<'b> for &'b [u8] {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl<'b> + 'b>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(self, range)?))
+    fn chunk(&self) -> Result<&[u8], End> {
+        Ok(BufReader::chunk(self)?)
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        BufReader::advance(self, by)
     }
 }
 
-impl<'b> BytesMutViewMutImpl<'b> for &'b mut [u8] {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds> {
+impl<'b> BytesMutImpl for &'b mut [u8] {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl + '_>, RangeOutOfBounds> {
         Ok(Box::new(Buf::view(self, range)?))
     }
 
-    fn view_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds> {
+    fn view_mut(&mut self, range: Range) -> Result<Box<dyn BytesMutImpl + '_>, RangeOutOfBounds> {
         Ok(Box::new(BufMut::view_mut(self, range)?))
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
+    fn reader(&self) -> Box<dyn BytesImpl<'_> + '_> {
+        Box::new(&**self)
     }
 
-    fn chunks_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(BufMut::chunks_mut(self, range)?))
+    fn writer(&mut self) -> Box<dyn WriterImpl + '_> {
+        Box::new(&mut **self)
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
         BufMut::reserve(self, size)
-    }
-
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        BufMut::grow(self, new_len, value)
-    }
-
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        BufMut::extend(self, with)
     }
 
     fn size_limit(&self) -> SizeLimit {
@@ -165,24 +101,29 @@ impl<'b> BytesMutViewMutImpl<'b> for &'b mut [u8] {
     }
 
     fn split_at(
-        self,
+        &mut self,
         at: usize,
-    ) -> Result<
-        (
-            Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-            Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-        ),
-        IndexOutOfBounds,
-    > {
-        if at <= self.len() {
-            let (left, right) = (*self).split_at_mut(at);
-            Ok((Box::new(left), Box::new(right)))
-        }
-        else {
-            Err(IndexOutOfBounds {
-                required: at,
-                bounds: (0, self.len()),
-            })
-        }
+    ) -> Result<Box<dyn BytesMutImpl + '_>, IndexOutOfBounds> {
+        let (left, right) = <[u8]>::split_at_mut(std::mem::take(self), at);
+        *self = right;
+        Ok(Box::new(left))
+    }
+}
+
+impl<'b> WriterImpl for &'b mut [u8] {
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        Ok(BufWriter::chunk_mut(self)?)
+    }
+
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        BufWriter::advance(self, by)
+    }
+
+    fn remaining(&self) -> usize {
+        <[u8]>::len(self)
+    }
+
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        BufWriter::extend(self, with)
     }
 }

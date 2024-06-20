@@ -1,12 +1,11 @@
-use std::iter::FusedIterator;
+use std::fmt::Debug;
 
 use super::{
-    bytes::Chunks,
-    r#impl::{
-        BytesMutImpl,
-        BytesMutViewImpl,
-        BytesMutViewMutImpl,
-        ChunksMutIterImpl,
+    r#impl::BytesMutImpl,
+    view::{
+        View,
+        ViewMut,
+        ViewMutWriter,
     },
 };
 use crate::{
@@ -17,7 +16,11 @@ use crate::{
         Length,
         SizeLimit,
     },
-    util::buf_eq,
+    util::{
+        buf_eq,
+        cfg_pub,
+        debug_as_hexdump,
+    },
     Buf,
     BufMut,
     Range,
@@ -25,20 +28,17 @@ use crate::{
 };
 
 pub struct BytesMut {
-    inner: Box<dyn BytesMutImpl>,
+    inner: ViewMut<'static>,
 }
 
 impl BytesMut {
-    #[cfg(feature = "bytes-impl")]
-    #[inline]
-    pub fn from_impl(inner: Box<dyn BytesMutImpl>) -> Self {
-        Self { inner }
-    }
-
-    #[cfg(not(feature = "bytes-impl"))]
-    #[inline]
-    pub(crate) fn from_impl(inner: Box<dyn BytesMutImpl>) -> Self {
-        Self { inner }
+    cfg_pub! {
+        #[inline]
+        pub(#[cfg(feature = "bytes-impl")]) fn from_impl(inner: Box<dyn BytesMutImpl>) -> Self {
+            Self {
+                inner: ViewMut::from_impl(inner),
+            }
+        }
     }
 
     #[inline]
@@ -59,17 +59,24 @@ impl Default for BytesMut {
     }
 }
 
+impl<'b> Debug for BytesMut {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        debug_as_hexdump(f, self)
+    }
+}
+
+impl<'b, R: Buf> PartialEq<R> for BytesMut {
+    #[inline]
+    fn eq(&self, other: &R) -> bool {
+        buf_eq(self, other)
+    }
+}
+
 impl Length for BytesMut {
     #[inline]
     fn len(&self) -> usize {
         self.inner.len()
-    }
-}
-
-impl<T: Buf> PartialEq<T> for BytesMut {
-    #[inline]
-    fn eq(&self, other: &T) -> bool {
-        buf_eq(self, other)
     }
 }
 
@@ -78,24 +85,18 @@ impl Buf for BytesMut {
     where
         Self: 'a;
 
-    type Chunks<'a> = Chunks<'a>
+    type Reader<'a> = View<'a>
     where
         Self: 'a;
 
     #[inline]
-    fn view(
-        &self,
-        range: impl Into<crate::Range>,
-    ) -> Result<Self::View<'_>, crate::RangeOutOfBounds> {
-        Ok(View::from_impl(self.inner.view(range.into())?))
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
+        Ok(self.inner.view(range.into())?)
     }
 
     #[inline]
-    fn chunks(
-        &self,
-        range: impl Into<crate::Range>,
-    ) -> Result<Self::Chunks<'_>, crate::RangeOutOfBounds> {
-        Ok(Chunks::from_impl(self.inner.chunks(range.into())?))
+    fn reader(&self) -> Self::Reader<'_> {
+        self.inner.reader()
     }
 }
 
@@ -104,21 +105,18 @@ impl BufMut for BytesMut {
     where
         Self: 'a;
 
-    type ChunksMut<'a> = ChunksMut<'a>
+    type Writer<'a> = ViewMutWriter<'a>
     where
         Self: 'a;
 
     #[inline]
     fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-        Ok(ViewMut::from_impl(self.inner.view_mut(range.into())?))
+        self.inner.view_mut(range)
     }
 
     #[inline]
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        Ok(ChunksMut::from_impl(self.inner.chunks_mut(range.into())?))
+    fn writer(&mut self) -> Self::Writer<'_> {
+        self.inner.writer()
     }
 
     #[inline]
@@ -127,165 +125,7 @@ impl BufMut for BytesMut {
     }
 
     #[inline]
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        self.inner.grow(new_len, value)
-    }
-
-    #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        self.inner.extend(with)
-    }
-
-    #[inline]
     fn size_limit(&self) -> SizeLimit {
         self.inner.size_limit()
     }
 }
-
-pub struct View<'b> {
-    inner: Box<dyn BytesMutViewImpl<'b> + 'b>,
-}
-
-impl<'b> View<'b> {
-    pub(crate) fn from_impl(inner: Box<dyn BytesMutViewImpl<'b> + 'b>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<'b> Length for View<'b> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-impl<'b> Buf for View<'b> {
-    type View<'a> = View<'b>
-    where
-        Self: 'a;
-
-    type Chunks<'a> = Chunks<'a>
-    where
-        Self: 'a;
-
-    #[inline]
-    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'b>, RangeOutOfBounds> {
-        Ok(View::from_impl(self.inner.view(range.into())?))
-    }
-
-    #[inline]
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(Chunks::from_impl(self.inner.chunks(range.into())?))
-    }
-}
-
-pub struct ViewMut<'b> {
-    inner: Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-}
-
-impl<'b> ViewMut<'b> {
-    pub(crate) fn from_impl(inner: Box<dyn BytesMutViewMutImpl<'b> + 'b>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<'b> Length for ViewMut<'b> {
-    #[inline]
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-impl<'b> Buf for ViewMut<'b> {
-    type View<'a> = View<'a>
-    where
-        Self: 'a;
-
-    type Chunks<'a> = Chunks<'a>
-    where
-        Self: 'a;
-
-    #[inline]
-    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-        Ok(View::from_impl(self.inner.view(range.into())?))
-    }
-
-    #[inline]
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(Chunks::from_impl(self.inner.chunks(range.into())?))
-    }
-}
-
-impl<'b> BufMut for ViewMut<'b> {
-    type ViewMut<'a> = ViewMut<'a>
-    where
-        Self: 'a;
-
-    type ChunksMut<'a> = ChunksMut<'a>
-    where
-        Self: 'a;
-
-    #[inline]
-    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-        Ok(ViewMut::from_impl(self.inner.view_mut(range.into())?))
-    }
-
-    #[inline]
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        Ok(ChunksMut::from_impl(self.inner.chunks_mut(range.into())?))
-    }
-
-    #[inline]
-    fn reserve(&mut self, size: usize) -> Result<(), Full> {
-        self.inner.reserve(size)
-    }
-
-    #[inline]
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        self.inner.grow(new_len, value)
-    }
-
-    #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        self.inner.extend(with)
-    }
-
-    #[inline]
-    fn size_limit(&self) -> SizeLimit {
-        self.inner.size_limit()
-    }
-}
-
-pub struct ChunksMut<'a> {
-    inner: Box<dyn ChunksMutIterImpl<'a> + 'a>,
-}
-
-impl<'a> ChunksMut<'a> {
-    #[inline]
-    pub(crate) fn from_impl(inner: Box<dyn ChunksMutIterImpl<'a> + 'a>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<'a> Iterator for ChunksMut<'a> {
-    type Item = &'a mut [u8];
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
-    }
-}
-
-impl<'a> DoubleEndedIterator for ChunksMut<'a> {
-    #[inline]
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.next_back()
-    }
-}
-
-impl<'a> FusedIterator for ChunksMut<'a> {}
-
-impl<'a> ExactSizeIterator for ChunksMut<'a> {}

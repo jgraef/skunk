@@ -1,31 +1,27 @@
-mod cursor;
-pub mod read;
-pub mod write;
+mod read;
+mod write;
 
-use read::{
-    End,
-    ReadIntoBuf,
+pub use byst_macros::{
+    Read,
+    Write,
 };
 
 pub use self::{
-    cursor::Cursor,
     read::{
         read,
+        BufReader,
+        End,
+        InvalidDiscriminant,
         Read,
+        Reader,
+        ReaderExt,
     },
-};
-use super::buf::chunks::NonEmpty;
-use crate::{
-    buf::{
-        chunks::{
-            ChunksExt,
-            ChunksMutExt,
-        },
-        copy::copy_chunks,
+    write::{
+        Full,
+        Write,
+        WriteFromBuf,
+        WriteXe,
     },
-    util::Peekable,
-    Buf,
-    BufMut,
 };
 
 /// A reader that also has knowledge about the position in the underlying
@@ -70,46 +66,12 @@ pub trait Skip {
     fn skip(&mut self, n: usize) -> Result<(), End>;
 }
 
-pub struct ChunksReader<'a, B: Buf + 'a> {
-    inner: Peekable<NonEmpty<B::Chunks<'a>>>,
-    offset: usize,
-}
+#[derive(Clone, Copy, Debug)]
+pub struct Length(pub usize);
 
-impl<'a, B: Buf + 'a> ChunksReader<'a, B> {
-    #[inline]
-    pub fn new(inner: B::Chunks<'a>) -> Self {
-        Self {
-            inner: Peekable::new(inner.non_empty()),
-            offset: 0,
-        }
-    }
-}
-
-impl<'a, B: Buf + 'a> ReadIntoBuf for ChunksReader<'a, B> {
-    type Error = End;
-
-    fn read_into_buf<D: BufMut>(&mut self, mut buf: D) -> Result<(), Self::Error> {
-        let mut dest_chunks = Peekable::new(
-            buf.chunks_mut(..)
-                .map_err(End::from_range_out_of_bounds)?
-                .non_empty(),
-        );
-        let mut dest_offset = 0;
-        let total_copied = copy_chunks(
-            &mut dest_chunks,
-            &mut dest_offset,
-            &mut self.inner,
-            &mut self.offset,
-            None,
-        )
-        .map_err(End::from_copy_error)?;
-        drop(dest_chunks);
-        if total_copied < buf.len() {
-            Err(End)
-        }
-        else {
-            Ok(())
-        }
+impl From<usize> for Length {
+    fn from(value: usize) -> Self {
+        Self(value)
     }
 }
 
@@ -118,28 +80,20 @@ mod tests {
     use std::marker::PhantomData;
 
     use super::{
-        read::{
-            read,
-            ReadIntoBuf,
-        },
-        ChunksReader,
-        Cursor,
+        read::read,
         Read,
     };
-    use crate::{
-        io::read::{
-            End,
-            InvalidDiscriminant,
-        },
-        Buf,
+    use crate::io::read::{
+        End,
+        InvalidDiscriminant,
     };
 
     macro_rules! assert_derive_read {
         ($($ty:ty),*) => {
             {
-                let mut cursor = Cursor::new(b"" as &'static [u8]);
+                let mut reader: &'static [u8] = b"";
                 $(
-                    match read!(&mut cursor => $ty) {
+                    match read!(&mut reader => $ty) {
                         Ok(v) => {
                             let _: $ty = v;
                         }
@@ -151,18 +105,21 @@ mod tests {
     }
 
     macro_rules! assert_read {
-        ($ty:ty, $input:expr, $expected:expr) => {
+        ($ty:ty, $input:expr, $expected:expr $(, $($arg:tt)+)?) => {
             {
-                let mut cursor = Cursor::new($input);
-                let got = read!(&mut cursor => $ty).unwrap();
-                assert_eq!(got, $expected);
+                let mut reader: &'static [u8] = $input;
+                let got = read!(&mut reader => $ty).expect("Expected read to be successful");
+                assert_eq!(got, $expected $(, $($arg)+)?);
             }
         };
-        ($ty:ty, $input:expr, $expected:expr, $($arg:tt)+) => {
+    }
+
+    macro_rules! assert_read_fail {
+        ($ty:ty, $input:expr, $expected:expr $(, $($arg:tt)+)?) => {
             {
-                let mut cursor = Cursor::new($input);
-                let got = read!(&mut cursor => $ty).unwrap();
-                assert_eq!(got, $expected, $arg);
+                let mut reader: &'static [u8] = $input;
+                let got = read!(&mut reader => $ty).expect_err("Expected read to fail");
+                assert_eq!(got, $expected $(, $($arg)+)?);
             }
         };
     }
@@ -262,7 +219,7 @@ mod tests {
 
     #[test]
     fn derive_read_for_empty_enum() {
-        #[derive(Debug, thiserror::Error)]
+        #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
             End(#[from] End),
@@ -273,8 +230,8 @@ mod tests {
         #[byst(discriminant(ty = "u8"), error = "MyErr")]
         enum Foo {}
 
-        let mut cursor = Cursor::new(b"\x00\x00");
-        let result = read!(&mut cursor => Foo);
+        let mut reader: &'static [u8] = b"\x00\x00";
+        let result = read!(&mut reader => Foo);
         assert!(matches!(
             result,
             Err(MyErr::Invalid(InvalidDiscriminant(0)))
@@ -283,7 +240,7 @@ mod tests {
 
     #[test]
     fn derive_read_for_simple_enum() {
-        #[derive(Debug, thiserror::Error)]
+        #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
             End(#[from] End),
@@ -299,18 +256,12 @@ mod tests {
 
         assert_read!(Foo, b"\x00\x01", Foo::One);
         assert_read!(Foo, b"\x00\x02", Foo::Two);
-
-        let mut cursor = Cursor::new(b"\x00\x03");
-        let result = read!(&mut cursor => Foo);
-        assert!(matches!(
-            result,
-            Err(MyErr::Invalid(InvalidDiscriminant(3)))
-        ));
+        assert_read_fail!(Foo, b"\x00\x03", MyErr::Invalid(InvalidDiscriminant(3)));
     }
 
     #[test]
     fn derive_read_for_enum_with_fields() {
-        #[derive(Debug, thiserror::Error)]
+        #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
             End(#[from] End),
@@ -344,7 +295,7 @@ mod tests {
 
     #[test]
     fn derive_read_for_enum_with_external_discriminant() {
-        #[derive(Debug, thiserror::Error)]
+        #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
             End(#[from] End),
@@ -396,24 +347,5 @@ mod tests {
                 foo: Foo::Two(0xacab)
             }
         );
-    }
-
-    #[test]
-    fn test_chunks_reader() {
-        let buf = b"HelloWorld";
-        let mut reader = ChunksReader::<&[u8]>::new(Buf::chunks(buf, ..).unwrap());
-
-        let mut buf2 = [0u8; 5];
-
-        reader.read_into_buf(&mut buf2).unwrap();
-        assert_eq!(&buf2, b"Hello");
-
-        reader.read_into_buf(&mut buf2).unwrap();
-        assert_eq!(&buf2, b"World");
-
-        match reader.read_into_buf(&mut buf2) {
-            Err(End) => {}
-            _ => panic!("Expected end of reader"),
-        }
     }
 }

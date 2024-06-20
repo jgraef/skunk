@@ -1,7 +1,8 @@
 //! # Note
 //!
 //! This is intentionally not public. If used with a type `B`, which doesn't
-//! uphold some invariants, can cause UB.
+//! uphold some invariants, can cause UB. We could make the `new` method unsafe,
+//! or use an unsafe-marked trait.
 
 use std::{
     fmt::Debug,
@@ -13,6 +14,7 @@ use std::{
 };
 
 use super::{
+    BufWriter,
     Full,
     Length,
 };
@@ -20,14 +22,14 @@ use crate::{
     buf::{
         Buf,
         BufMut,
-        SingleChunk,
-        SingleChunkMut,
         SizeLimit,
     },
+    io::End,
     range::{
         Range,
         RangeOutOfBounds,
     },
+    util::debug_as_hexdump,
 };
 
 /// A contiguous chunk of memory that is partially initialized.
@@ -49,7 +51,7 @@ impl<B> PartiallyInitialized<B> {
 
     #[inline]
     pub unsafe fn assume_initialized(&mut self, initialized: usize) {
-        self.initialized = initialized;
+        self.initialized = self.initialized.max(initialized);
     }
 
     #[inline]
@@ -66,6 +68,11 @@ impl<B> PartiallyInitialized<B> {
     pub fn inner_mut(&mut self) -> &mut B {
         &mut self.buf
     }
+
+    #[inline]
+    pub fn into_parts(self) -> (B, usize) {
+        (self.buf, self.initialized)
+    }
 }
 
 impl<B: AsRef<[MaybeUninit<u8>]>> PartiallyInitialized<B> {
@@ -78,12 +85,17 @@ impl<B: AsRef<[MaybeUninit<u8>]>> PartiallyInitialized<B> {
     }
 
     #[inline]
+    pub fn capacity(&self) -> usize {
+        self.buf.as_ref().len()
+    }
+
+    #[inline]
     pub fn is_full(&self) -> bool {
         self.initialized == self.buf.as_ref().len()
     }
 }
 
-impl<B: AsMut<[MaybeUninit<u8>]>> PartiallyInitialized<B> {
+impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> PartiallyInitialized<B> {
     #[inline]
     fn bytes_mut(&mut self) -> &mut [u8] {
         // invariant: this will always return a slice of length `self.initialized`.
@@ -93,7 +105,7 @@ impl<B: AsMut<[MaybeUninit<u8>]>> PartiallyInitialized<B> {
     }
 
     pub fn resize(&mut self, new_len: usize, value: u8) {
-        let n = self.buf.as_mut().len();
+        let n = self.buf.as_ref().len();
         if new_len > n {
             panic!("Can't resize ArrayBuf<{n}> to length {new_len}");
         }
@@ -113,7 +125,9 @@ impl<B: AsRef<[MaybeUninit<u8>]>> AsRef<[u8]> for PartiallyInitialized<B> {
     }
 }
 
-impl<B: AsMut<[MaybeUninit<u8>]>> AsMut<[u8]> for PartiallyInitialized<B> {
+impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> AsMut<[u8]>
+    for PartiallyInitialized<B>
+{
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
         self.bytes_mut()
@@ -137,8 +151,9 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> DerefMut for Partia
 }
 
 impl<B: AsRef<[MaybeUninit<u8>]>> Debug for PartiallyInitialized<B> {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.bytes()).finish()
+        debug_as_hexdump(f, self)
     }
 }
 
@@ -156,7 +171,7 @@ impl<B: AsRef<[MaybeUninit<u8>]>> Buf for PartiallyInitialized<B> {
     where
         Self: 'a;
 
-    type Chunks<'a> = SingleChunk<'a>
+    type Reader<'a> = &'a [u8]
     where
         Self: 'a;
 
@@ -166,8 +181,8 @@ impl<B: AsRef<[MaybeUninit<u8>]>> Buf for PartiallyInitialized<B> {
     }
 
     #[inline]
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-        Ok(SingleChunk::new(range.into().slice_get(self.bytes())?))
+    fn reader(&self) -> Self::Reader<'_> {
+        self.bytes()
     }
 }
 
@@ -183,7 +198,7 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
     where
         Self: 'a;
 
-    type ChunksMut<'a> = SingleChunkMut<'a>
+    type Writer<'a> = PartiallyInitializedWriter<'a, B>
     where
         Self: 'a;
 
@@ -193,13 +208,11 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
     }
 
     #[inline]
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        Ok(SingleChunkMut::new(
-            range.into().slice_get_mut(self.bytes_mut())?,
-        ))
+    fn writer(&mut self) -> Self::Writer<'_> {
+        PartiallyInitializedWriter {
+            partially_initialized: self,
+            position: 0,
+        }
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
@@ -215,43 +228,101 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
         }
     }
 
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        let n = self.buf.as_ref().len();
-        if new_len <= n {
-            // after this the struct invariant still holds
-            if new_len > self.initialized {
-                MaybeUninit::fill(&mut self.buf.as_mut()[self.initialized..new_len], value);
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        self.buf.as_ref().len().into()
+    }
+}
+
+pub struct PartiallyInitializedWriter<'a, B> {
+    partially_initialized: &'a mut PartiallyInitialized<B>,
+    position: usize,
+}
+
+impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> PartiallyInitializedWriter<'a, B> {
+    /// Fills the next `length` bytes by applying the closure `f` to it.
+    ///
+    /// # Safety
+    ///
+    /// `f` must initialize make sure the whole slice it is passed is
+    /// initialized after its call.
+    unsafe fn fill_with(
+        &mut self,
+        length: usize,
+        f: impl FnOnce(&mut [MaybeUninit<u8>]),
+    ) -> Result<(), Full> {
+        let end = self.position + length;
+
+        if end <= self.partially_initialized.capacity() {
+            f(&mut self.partially_initialized.buf.as_mut()[self.position..end]);
+
+            unsafe {
+                // SAFETY:
+                //  - access is unqiue, because we have a `&mut self`
+                //  - the bytes upto `end` have just been initialized
+                self.partially_initialized.assume_initialized(end);
             }
-            self.initialized = new_len;
+
+            self.position = end;
+
             Ok(())
         }
         else {
             Err(Full {
-                required: new_len,
-                capacity: n,
+                required: length,
+                capacity: self.partially_initialized.capacity(),
             })
         }
     }
+}
 
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        let n = self.buf.as_ref().len();
-        let new_len = self.initialized + with.len();
-        if new_len <= n {
-            // after this the struct invariant still holds
-            MaybeUninit::copy_from_slice(&mut self.buf.as_mut()[self.initialized..new_len], with);
-            self.initialized = new_len;
-            Ok(())
+impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
+    for PartiallyInitializedWriter<'a, B>
+{
+    #[inline]
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        if self.position < self.partially_initialized.initialized {
+            Ok(&mut self.partially_initialized.bytes_mut()[self.position..])
         }
         else {
-            Err(Full {
-                required: new_len,
-                capacity: n,
-            })
+            Err(End)
         }
     }
 
     #[inline]
-    fn size_limit(&self) -> SizeLimit {
-        self.buf.as_ref().len().into()
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        // note: The cursor position can't be greater than `self.filled`, and both point
+        // into the initialized portion, so it's safe to assume that the buffer has been
+        // initialized upto `already_filled`.
+        let already_filled = self.partially_initialized.initialized - self.position;
+
+        if by > already_filled {
+            unsafe {
+                // SAFETY: The closure initializes `already_filled..`. `..already_filled` is
+                // already filled, and thus initialized.
+                self.fill_with(by, |buf| {
+                    MaybeUninit::fill(&mut buf[already_filled..], 0);
+                })
+            }
+        }
+        else {
+            self.position += by;
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.partially_initialized.initialized - self.position
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        unsafe {
+            // SAFETY: The closure initializes the whole slice.
+            self.fill_with(with.len(), |buf| {
+                MaybeUninit::copy_from_slice(buf, with);
+            })
+        }
     }
 }

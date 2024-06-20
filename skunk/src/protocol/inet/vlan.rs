@@ -1,17 +1,14 @@
 use byst::{
     endianness::NetworkEndian,
     io::{
-        read::{
-            read,
-            Read,
-            ReadIntoBuf,
-        },
-        write::{
-            Full,
-            Write,
-            WriteFromBuf,
-            WriteXe,
-        },
+        read,
+        BufReader,
+        End,
+        Full,
+        Read,
+        Write,
+        WriteFromBuf,
+        WriteXe,
     },
 };
 
@@ -25,8 +22,8 @@ pub struct VlanTag {
     pub vlan_identifier: VlanIdentifier,
 }
 
-impl<R: ReadIntoBuf> Read<R, ()> for VlanTag {
-    type Error = <R as ReadIntoBuf>::Error;
+impl<R: BufReader> Read<R, ()> for VlanTag {
+    type Error = End;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let value: u16 = read!(reader; NetworkEndian)?;

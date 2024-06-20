@@ -13,9 +13,8 @@ use byst::{
     },
     io::{
         read,
-        write::Write,
-        Cursor,
         Read,
+        Write,
     },
     Bytes,
 };
@@ -175,7 +174,7 @@ pub struct Receiver {
 impl Receiver {
     pub async fn receive<T>(&mut self) -> Result<T, ReceiveError<T::Error>>
     where
-        T: Read<Cursor<Bytes>, ()>,
+        T: Read<Bytes, ()>,
     {
         loop {
             let mut buf = self.shared.get_buf();
@@ -187,9 +186,8 @@ impl Receiver {
             }
             else {
                 buf.set_filled_to(n_read);
-                let buf = Bytes::from(buf);
-                let mut cursor = Cursor::new(buf);
-                let packet = read!(&mut cursor => T).map_err(ReceiveError::Decode)?;
+                let mut buf = Bytes::from(buf);
+                let packet = read!(&mut buf => T).map_err(ReceiveError::Decode)?;
                 break Ok(packet);
             }
         }
@@ -226,7 +224,7 @@ pub struct Sender {
 impl Sender {
     pub async fn send<T>(&mut self, _packet: T) -> Result<(), SendError<()>>
     where
-        T: Write<Cursor<ArcBufMut>>,
+        T: Write<ArcBufMut>,
     {
         //let mut buf = self.shared.get_buf();
 

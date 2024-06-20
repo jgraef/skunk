@@ -8,7 +8,13 @@ use std::{
 
 pub use byst_macros::for_tuple;
 
-use crate::Buf;
+use crate::{
+    io::{
+        BufReader,
+        End,
+    },
+    Buf,
+};
 
 pub struct Peekable<I: Iterator> {
     pub inner: I,
@@ -199,7 +205,9 @@ impl<I: Iterator> Iterator for ExactSizeIter<I> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        let item = self.inner.next()?;
+        self.exact_size -= 1;
+        Some(item)
     }
 
     #[inline]
@@ -211,7 +219,9 @@ impl<I: Iterator> Iterator for ExactSizeIter<I> {
 impl<I: DoubleEndedIterator> DoubleEndedIterator for ExactSizeIter<I> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.next_back()
+        let item = self.inner.next_back()?;
+        self.exact_size -= 1;
+        Some(item)
     }
 }
 
@@ -337,50 +347,107 @@ pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
         return true;
     }
 
-    let mut left_offset = 0;
-    let mut right_offset = 0;
-
-    let mut left_chunks =
-        Peekable::new(left.chunks(..).expect("Buf::chunks failed for full range."));
-    let mut right_chunks = Peekable::new(
-        right
-            .chunks(..)
-            .expect("Buf::chunks failed for full range."),
-    );
+    let mut left_reader = left.reader();
+    let mut right_reader = right.reader();
 
     loop {
-        match (left_chunks.peek(), right_chunks.peek()) {
-            (None, None) => {
+        match (left_reader.chunk(), right_reader.chunk()) {
+            (Err(End), Err(End)) => {
                 // boths chunks are exhausted at the same time, and they haven't been unequal
                 // yet. thus they're equal.
                 break true;
             }
-            (Some(_), None) | (None, Some(_)) => break false,
-            (Some(left), Some(right)) => {
-                let n = std::cmp::min(
-                    <[u8]>::len(left) - left_offset,
-                    <[u8]>::len(right) - right_offset,
-                );
+            (Ok(_), Err(End)) | (Err(End), Ok(_)) => {
+                // we checked that both bufs have the same length, so this should not happen.
 
-                if left[left_offset..][..n] != right[right_offset..][..n] {
+                panic!(
+                    "Both bufs have same length ({left_len}), but readers read different amount of bytes."
+                );
+            }
+            (Ok(left), Ok(right)) => {
+                let left_len = <[u8]>::len(left);
+                let right_len = <[u8]>::len(right);
+                let n = std::cmp::min(left_len, right_len);
+
+                if left[..n] != right[..n] {
                     break false;
                 }
 
-                left_offset += n;
-                right_offset += n;
-
-                if left_offset == <[u8]>::len(left) {
-                    left_offset = 0;
-                    left_chunks.next();
-                }
-                if right_offset == <[u8]>::len(right) {
-                    right_offset = 0;
-                    right_chunks.next();
-                }
+                left_reader.advance(n).unwrap_or_else(|End| {
+                    panic!(
+                        "Reader returned chunk of length {left_len}, but failed to advance by {n}."
+                    )
+                });
+                right_reader.advance(n).unwrap_or_else(|End| {
+                    panic!(
+                        "Reader returned chunk of length {right_len}, but failed to advance by {n}."
+                    )
+                });
             }
         }
     }
 }
+
+macro_rules! cfg_pub {
+    {
+        $(#[$attr:meta])*
+        pub(#[cfg($($cfg:tt)*)]) $($rest:tt)*
+    } => {
+        #[cfg($($cfg)*)]
+        $(#[$attr])*
+        pub $($rest)*
+
+        #[cfg(not($($cfg)*))]
+        $(#[$attr])*
+        pub(crate) $($rest)*
+    };
+}
+pub(crate) use cfg_pub;
+
+#[macro_export]
+macro_rules! impl_me {
+    {
+        $(
+            impl $([ $($generics:tt)* ])? Reader for $ty:ty as BufReader;
+        )*
+    } => {
+        $(
+            impl<$($($generics)*)?> ::byst::io::Reader for $ty {
+                #[inline]
+                fn read_into<
+                    D: ::byst::buf::BufMut
+                >(
+                    &mut self,
+                    mut dest: D,
+                    limit: impl Into<Option<usize>>
+                ) -> usize {
+                    ::byst::copy_io(dest.writer(), self, limit)
+                }
+            }
+
+            impl<$($($generics)*)?> ::byst::io::Read<$ty, ::byst::io::Length> for <$ty as ::byst::io::BufReader>::View {
+                type Error = ::byst::io::End;
+
+                #[inline]
+                fn read(reader: &mut $ty, length: ::byst::io::Length) -> Result<Self, Self::Error> {
+                    let view = ::byst::io::BufReader::view(reader, length.0)?;
+                    ::byst::io::BufReader::advance(reader, length.0)?;
+                    Ok(view)
+                }
+            }
+
+            impl<$($($generics)*)?> ::byst::io::Read<$ty, ()> for $ty {
+                type Error = ::byst::io::End;
+
+                #[inline]
+                fn read(reader: &mut $ty, _context: ()) -> Result<Self, Self::Error> {
+                    Ok(std::mem::take(reader))
+                }
+            }
+        )*
+    };
+}
+pub use impl_me;
 
 #[cfg(test)]
 mod tests {

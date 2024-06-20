@@ -2,7 +2,7 @@
 
 use byst::{
     endianness::NetworkEndian,
-    io::read::{
+    io::{
         read,
         Read,
     },

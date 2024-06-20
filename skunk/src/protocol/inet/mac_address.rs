@@ -4,8 +4,8 @@ use std::fmt::{
 };
 
 use byst::io::{
-    read::Read,
-    write::Write,
+    Read,
+    Write,
 };
 
 /// A MAC address[1]

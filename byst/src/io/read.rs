@@ -8,35 +8,69 @@ use std::{
 };
 
 use byst_macros::for_tuple;
-pub use byst_macros::Read;
 
 use crate::{
-    buf::{
-        copy::CopyError,
-        BufMut,
-    },
+    impl_me,
     Buf,
-    Bytes,
+    BufMut,
     RangeOutOfBounds,
 };
 
-/// TODO: move this somewhere else, since `Read` now has an assoociated type for
-/// the error.
-#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
+/// Something that can be read from a reader `R`, given the parameters `P`.
+pub trait Read<R: ?Sized, P>: Sized {
+    type Error;
+
+    fn read(reader: &mut R, parameters: P) -> Result<Self, Self::Error>;
+}
+
+pub trait Reader {
+    fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize;
+}
+
+pub trait ReaderExt: Reader {
+    #[inline]
+    fn read<T: Read<Self, ()>>(&mut self) -> Result<T, T::Error> {
+        self.read_with(())
+    }
+
+    #[inline]
+    fn read_with<T: Read<Self, C>, C>(&mut self, context: C) -> Result<T, T::Error> {
+        T::read(self, context)
+    }
+
+    #[inline]
+    fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
+        let mut buf = [0u8; N];
+        if self.read_into(&mut buf, None) == N {
+            Ok(buf)
+        }
+        else {
+            Err(End)
+        }
+    }
+}
+
+impl<R: Reader> ReaderExt for R {}
+
+pub trait BufReader: Reader {
+    type View: Buf;
+
+    fn view(&self, length: usize) -> Result<Self::View, End>;
+
+    fn chunk(&self) -> Result<&[u8], End>;
+
+    fn advance(&mut self, by: usize) -> Result<(), End>;
+
+    fn remaining(&self) -> usize;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, thiserror::Error)]
 #[error("End of reader")]
 pub struct End;
 
 impl End {
-    pub fn from_copy_error(e: CopyError) -> Self {
-        match e {
-            CopyError::SourceRangeOutOfBounds(_) => Self,
-            _ => {
-                panic!("Unexpected error while copying: {e}");
-            }
-        }
-    }
-
-    pub fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
+    #[inline]
+    pub(crate) fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
         // todo: we could do some checks here, if it's really an error that can be
         // interpreted as end of buffer.
         Self
@@ -44,12 +78,14 @@ impl End {
 }
 
 impl From<End> for std::io::ErrorKind {
+    #[inline]
     fn from(_: End) -> Self {
         std::io::ErrorKind::UnexpectedEof
     }
 }
 
 impl From<End> for std::io::Error {
+    #[inline]
     fn from(_: End) -> Self {
         std::io::ErrorKind::UnexpectedEof.into()
     }
@@ -61,33 +97,70 @@ impl From<Infallible> for End {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, thiserror::Error)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, thiserror::Error)]
 #[error("Invalid discriminant: {0}")]
 pub struct InvalidDiscriminant<D>(pub D);
 
-/// Something that can be read from a reader `R`, given the parameters `P`.
-pub trait Read<R, P>: Sized {
-    type Error;
-
-    fn read(reader: &mut R, parameters: P) -> Result<Self, Self::Error>;
+impl<'a, R: Reader> Reader for &'a mut R {
+    #[inline]
+    fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize {
+        Reader::read_into(*self, dest, limit)
+    }
 }
 
-/// A reader that can read into a buffer.
-///
-/// Implementing this will cause [`Read`] to be implemented for
-/// many common types.
-pub trait ReadIntoBuf {
-    type Error;
-
-    fn read_into_buf<B: BufMut>(&mut self, buf: B) -> Result<(), Self::Error>;
+impl_me! {
+    impl ['a] Reader for &'a [u8] as BufReader;
 }
 
-impl<'r, R: ReadIntoBuf> ReadIntoBuf for &'r mut R {
-    type Error = <R as ReadIntoBuf>::Error;
+impl<'a, R: BufReader> BufReader for &'a mut R {
+    type View = R::View;
 
     #[inline]
-    fn read_into_buf<B: BufMut>(&mut self, buf: B) -> Result<(), Self::Error> {
-        (*self).read_into_buf(buf)
+    fn view(&self, length: usize) -> Result<Self::View, End> {
+        R::view(self, length)
+    }
+
+    #[inline]
+    fn chunk(&self) -> Result<&[u8], End> {
+        R::chunk(self)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        R::advance(self, by)
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        R::remaining(self)
+    }
+}
+
+impl<'a> BufReader for &'a [u8] {
+    type View = &'a [u8];
+
+    #[inline]
+    fn view(&self, length: usize) -> Result<Self::View, End> {
+        (length <= self.len()).then_some(&self[..length]).ok_or(End)
+    }
+
+    #[inline]
+    fn chunk(&self) -> Result<&'a [u8], End> {
+        (!self.is_empty()).then_some(&self[..]).ok_or(End)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        (by <= self.len())
+            .then(|| {
+                *self = &self[by..];
+            })
+            .ok_or(End)
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.len()
     }
 }
 
@@ -108,59 +181,59 @@ impl<R, T> Read<R, ()> for PhantomData<T> {
         Ok(PhantomData)
     }
 }
+/*
+impl<R: Reader, C, T: Read<R, C>, const N: usize> Read<R, C> for [T; N] {
+    type Error = End;
 
-impl<R: ReadIntoBuf, const N: usize> Read<R, ()> for [u8; N] {
-    type Error = <R as ReadIntoBuf>::Error;
+    #[inline]
+    fn read(reader: &mut R, _parameters: C) -> Result<Self, Self::Error> {
+        todo!();
+    }
+}
+*/
+
+impl<R: Reader, const N: usize> Read<R, ()> for [u8; N] {
+    type Error = End;
 
     #[inline]
     fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        let mut buf = [0u8; N];
-        reader.read_into_buf(&mut buf)?;
-        Ok(buf)
+        reader.read_byte_array()
     }
 }
 
-impl<R: ReadIntoBuf> Read<R, ()> for u8 {
-    type Error = <R as ReadIntoBuf>::Error;
+impl<R: Reader> Read<R, ()> for u8 {
+    type Error = End;
 
     #[inline]
     fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        let mut buf = [0u8; 1];
-        reader.read_into_buf(&mut buf)?;
-        Ok(buf[0])
+        Ok(reader.read_byte_array::<1>()?[0])
     }
 }
 
-impl<R: ReadIntoBuf> Read<R, ()> for i8 {
-    type Error = <R as ReadIntoBuf>::Error;
+impl<R: Reader> Read<R, ()> for i8 {
+    type Error = End;
 
     #[inline]
     fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        let mut buf = [0u8; 1];
-        reader.read_into_buf(&mut buf)?;
-        Ok(buf[0] as i8)
+        Ok(reader.read::<u8>()? as i8)
     }
 }
 
-impl<R: ReadIntoBuf> Read<R, ()> for Ipv4Addr {
-    type Error = <R as ReadIntoBuf>::Error;
+impl<R: Reader> Read<R, ()> for Ipv4Addr {
+    type Error = End;
 
     #[inline]
     fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        let mut buf = [0u8; 4];
-        reader.read_into_buf(&mut buf)?;
-        Ok(Ipv4Addr::from(buf))
+        Ok(Ipv4Addr::from(reader.read::<[u8; 4]>()?))
     }
 }
 
-impl<R: ReadIntoBuf> Read<R, ()> for Ipv6Addr {
-    type Error = <R as ReadIntoBuf>::Error;
+impl<R: Reader> Read<R, ()> for Ipv6Addr {
+    type Error = End;
 
     #[inline]
     fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        let mut buf = [0u8; 16];
-        reader.read_into_buf(&mut buf)?;
-        Ok(Ipv6Addr::from(buf))
+        Ok(Ipv6Addr::from(reader.read::<[u8; 16]>()?))
     }
 }
 
@@ -205,11 +278,16 @@ macro_rules! impl_read_for_tuple {
 for_tuple!(impl_read_for_tuple! for 1..=8);
 
 /// Read macro
+///
+/// # TODO
+///
+/// - deprecate this. `reader.read::<T>()` and `reader.read_with::<T,
+///   _>(context)` are nicer.
 #[macro_export]
 macro_rules! read {
     ($reader:expr => $ty:ty; $params:expr) => {
         {
-            <$ty as ::byst::io::read::Read::<_, _>>::read($reader, $params)
+            <$ty as ::byst::io::Read::<_, _>>::read($reader, $params)
         }
     };
     ($reader:expr => $ty:ty) => {
@@ -223,53 +301,3 @@ macro_rules! read {
     };
 }
 pub use read;
-
-use super::cursor::Length;
-
-impl<'b> Read<&'b [u8], Length> for &'b [u8] {
-    type Error = End;
-
-    fn read(buf: &mut &'b [u8], parameters: Length) -> Result<Self, End> {
-        let view = buf
-            .view(..parameters.0)
-            .map_err(End::from_range_out_of_bounds)?;
-        *buf = buf
-            .view(parameters.0..)
-            .map_err(End::from_range_out_of_bounds)?;
-        Ok(view)
-    }
-}
-
-impl<'b> Read<&'b [u8], ()> for &'b [u8] {
-    type Error = End;
-
-    fn read(buf: &mut &'b [u8], _parameters: ()) -> Result<Self, End> {
-        let output = *buf;
-        *buf = Default::default();
-        Ok(output)
-    }
-}
-
-impl Read<Bytes, Length> for Bytes {
-    type Error = End;
-
-    fn read(buf: &mut Bytes, parameters: Length) -> Result<Self, End> {
-        let view = buf
-            .view(..parameters.0)
-            .map_err(End::from_range_out_of_bounds)?;
-        *buf = buf
-            .view(parameters.0..)
-            .map_err(End::from_range_out_of_bounds)?;
-        Ok(view)
-    }
-}
-
-impl Read<Bytes, ()> for Bytes {
-    type Error = End;
-
-    fn read(buf: &mut Bytes, _parameters: ()) -> Result<Self, End> {
-        let output = buf.clone();
-        *buf = Default::default();
-        Ok(output)
-    }
-}

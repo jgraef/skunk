@@ -1,13 +1,15 @@
 pub mod bytes;
 pub mod bytes_mut;
-mod spilled;
+//mod spilled;
+mod r#static;
+pub mod view;
 
-#[cfg(not(feature = "bytes-impl"))]
-pub(crate) mod r#impl;
-#[cfg(feature = "bytes-impl")]
-pub mod r#impl;
+cfg_pub! {
+    pub(#[cfg(feature = "bytes-impl")]) mod r#impl;
+}
 
 pub use self::{
     bytes::Bytes,
     bytes_mut::BytesMut,
 };
+use crate::util::cfg_pub;

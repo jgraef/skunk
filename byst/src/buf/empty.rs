@@ -5,6 +5,8 @@ use std::ops::{
 
 use super::{
     Buf,
+    BufReader,
+    BufWriter,
     Full,
     Length,
     SizeLimit,
@@ -13,9 +15,11 @@ use crate::{
     bytes::r#impl::{
         BytesImpl,
         BytesMutImpl,
-        BytesMutViewImpl,
-        BytesMutViewMutImpl,
-        ChunksIterImpl,
+        WriterImpl,
+    },
+    io::{
+        End,
+        Reader,
     },
     BufMut,
     Bytes,
@@ -40,20 +44,19 @@ impl Buf for Empty {
     where
         Self: 'a;
 
-    type Chunks<'a> = std::iter::Empty<&'a [u8]>
+    type Reader<'a> = Self
     where
         Self: 'a;
 
     #[inline]
-    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'static>, RangeOutOfBounds> {
-        range.into().indices_checked_in(0, 0)?;
+    fn view(&self, range: impl Into<Range>) -> Result<Self, RangeOutOfBounds> {
+        check_range(range.into())?;
         Ok(Self)
     }
 
     #[inline]
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'static>, RangeOutOfBounds> {
-        range.into().indices_checked_in(0, 0)?;
-        Ok(std::iter::empty())
+    fn reader(&self) -> Self {
+        Self
     }
 }
 
@@ -62,22 +65,19 @@ impl BufMut for Empty {
     where
         Self: 'a;
 
-    type ChunksMut<'a> = std::iter::Empty<&'a mut [u8]>
+    type Writer<'a> = Self
     where
         Self: 'a;
 
     #[inline]
-    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-        Buf::view(self, range)
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self, RangeOutOfBounds> {
+        check_range(range.into())?;
+        Ok(Self)
     }
 
     #[inline]
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        range.into().indices_checked_in(0, 0)?;
-        Ok(std::iter::empty())
+    fn writer(&mut self) -> Self {
+        Self
     }
 
     #[inline]
@@ -91,16 +91,6 @@ impl BufMut for Empty {
                 capacity: 0,
             })
         }
-    }
-
-    #[inline]
-    fn grow(&mut self, new_len: usize, _value: u8) -> Result<(), Full> {
-        BufMut::reserve(self, new_len)
-    }
-
-    #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        BufMut::reserve(self, with.len())
     }
 
     #[inline]
@@ -118,6 +108,85 @@ impl Length for Empty {
     #[inline]
     fn is_empty(&self) -> bool {
         true
+    }
+}
+
+impl BufReader for Empty {
+    type View = Self;
+
+    #[inline]
+    fn view(&self, length: usize) -> Result<Self::View, End> {
+        if length > 0 {
+            Err(End)
+        }
+        else {
+            Ok(Self)
+        }
+    }
+
+    #[inline]
+    fn chunk(&self) -> Result<&'static [u8], End> {
+        Err(End)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        if by > 0 {
+            Err(End)
+        }
+        else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        0
+    }
+}
+
+impl BufWriter for Empty {
+    #[inline]
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        Err(End)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        if by > 0 {
+            Err(Full {
+                required: by,
+                capacity: 0,
+            })
+        }
+        else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        if with.len() > 0 {
+            Err(Full {
+                required: with.len(),
+                capacity: 0,
+            })
+        }
+        else {
+            Ok(())
+        }
+    }
+}
+
+impl Reader for Empty {
+    #[inline]
+    fn read_into<D: BufMut>(&mut self, _dest: D, _limit: impl Into<Option<usize>>) -> usize {
+        0
     }
 }
 
@@ -154,65 +223,58 @@ impl AsMut<[u8]> for Empty {
     }
 }
 
-impl BytesImpl for Empty {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(self, range)?))
+impl<'b> BytesImpl<'b> for Empty {
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds> {
+        check_range(range.into())?;
+        Ok(Box::new(Self))
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
-    }
-
-    fn clone(&self) -> Box<dyn BytesImpl> {
+    fn clone(&self) -> Box<dyn BytesImpl<'b> + 'b> {
         Box::new(Self)
+    }
+
+    fn chunk(&self) -> Result<&'_ [u8], End> {
+        Err(End)
+    }
+
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        BufReader::advance(self, by)
     }
 }
 
 impl BytesMutImpl for Empty {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(self, range)?))
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'_> + '_>, RangeOutOfBounds> {
+        check_range(range.into())?;
+        Ok(Box::new(Self))
     }
 
     fn view_mut(
         &mut self,
         range: Range,
-    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds> {
-        Ok(Box::new(BufMut::view_mut(self, range)?))
+    ) -> Result<Box<dyn BytesMutImpl + 'static>, RangeOutOfBounds> {
+        check_range(range.into())?;
+        Ok(Box::new(Self))
     }
 
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
+    fn reader(&self) -> Box<dyn BytesImpl<'_> + '_> {
+        Box::new(Self)
     }
 
-    fn chunks_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn crate::bytes::r#impl::ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(BufMut::chunks_mut(self, range)?))
+    fn writer(&mut self) -> Box<dyn WriterImpl> {
+        Box::new(Self)
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
         BufMut::reserve(self, size)
     }
 
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        BufMut::grow(self, new_len, value)
-    }
-
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        BufMut::extend(self, with)
-    }
-
     fn size_limit(&self) -> SizeLimit {
         BufMut::size_limit(self)
     }
 
-    fn split_at(
-        self,
-        at: usize,
-    ) -> Result<(Box<dyn BytesMutImpl>, Box<dyn BytesMutImpl>), IndexOutOfBounds> {
+    fn split_at(&mut self, at: usize) -> Result<Box<dyn BytesMutImpl + '_>, IndexOutOfBounds> {
         if at == 0 {
-            Ok((Box::new(Self), Box::new(Self)))
+            Ok(Box::new(Self))
         }
         else {
             Err(IndexOutOfBounds {
@@ -223,76 +285,33 @@ impl BytesMutImpl for Empty {
     }
 }
 
-impl<'b> BytesMutViewImpl<'b> for Empty {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl<'b> + 'b>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(self, range)?))
+impl WriterImpl for Empty {
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        Err(End)
     }
 
-    fn chunks<'a>(
-        &'a self,
-        range: Range,
-    ) -> Result<Box<dyn ChunksIterImpl<'a> + 'a>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
-    }
-}
-
-impl<'b> BytesMutViewMutImpl<'b> for Empty {
-    fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(self, range)?))
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        BufWriter::advance(self, by)
     }
 
-    fn view_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn BytesMutViewMutImpl + '_>, RangeOutOfBounds> {
-        Ok(Box::new(BufMut::view_mut(self, range)?))
-    }
-
-    fn chunks(&self, range: Range) -> Result<Box<dyn ChunksIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::chunks(self, range)?))
-    }
-
-    fn chunks_mut(
-        &mut self,
-        range: Range,
-    ) -> Result<Box<dyn crate::bytes::r#impl::ChunksMutIterImpl<'_> + '_>, RangeOutOfBounds> {
-        Ok(Box::new(BufMut::chunks_mut(self, range)?))
-    }
-
-    fn reserve(&mut self, size: usize) -> Result<(), Full> {
-        BufMut::reserve(self, size)
-    }
-
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        BufMut::grow(self, new_len, value)
+    fn remaining(&self) -> usize {
+        0
     }
 
     fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        BufMut::extend(self, with)
+        BufWriter::extend(self, with)
     }
+}
 
-    fn size_limit(&self) -> SizeLimit {
-        BufMut::size_limit(self)
+#[inline]
+fn check_range(range: Range) -> Result<(), RangeOutOfBounds> {
+    if range.start.unwrap_or_default() == 0 && range.end.unwrap_or_default() == 0 {
+        Ok(())
     }
-
-    fn split_at(
-        self,
-        at: usize,
-    ) -> Result<
-        (
-            Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-            Box<dyn BytesMutViewMutImpl<'b> + 'b>,
-        ),
-        IndexOutOfBounds,
-    > {
-        if at == 0 {
-            Ok((Box::new(Self), Box::new(Self)))
-        }
-        else {
-            Err(IndexOutOfBounds {
-                required: at,
-                bounds: (0, 0),
-            })
-        }
+    else {
+        Err(RangeOutOfBounds {
+            required: range,
+            bounds: (0, 0),
+        })
     }
 }

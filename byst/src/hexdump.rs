@@ -4,11 +4,11 @@ use std::fmt::{
     Write as _,
 };
 
-use super::{
-    buf::Buf,
-    io::read::ReadIntoBuf,
+use super::buf::Buf;
+use crate::{
+    copy_io,
+    BufMut,
 };
-use crate::io::ChunksReader;
 
 #[inline]
 pub fn hexdump<B>(buf: B) -> Hexdump<B> {
@@ -91,9 +91,8 @@ impl Default for Config {
     }
 }
 
-pub struct Lines<'b, B: Buf> {
-    // todo: use a chunk reader instead.
-    reader: ChunksReader<'b, B>,
+pub struct Lines<'b, B: Buf + 'b> {
+    reader: B::Reader<'b>,
     pad_offset_to: usize,
     offset: usize,
     remaining: usize,
@@ -104,7 +103,7 @@ impl<'b, B: Buf> Lines<'b, B> {
     pub fn new(buf: &'b B, config: &Config) -> Self {
         let pad_offset_to = std::cmp::max(num_hex_digits(config.offset + buf.len()), 4);
         Self {
-            reader: ChunksReader::new(buf.chunks(..).unwrap()),
+            reader: buf.reader(),
             pad_offset_to,
             offset: config.offset,
             remaining: buf.len(),
@@ -119,12 +118,9 @@ impl<'b, B: Buf> Iterator for Lines<'b, B> {
     fn next(&mut self) -> Option<Self::Item> {
         (self.remaining > 0 || self.emit_empty_line).then(|| {
             self.emit_empty_line = false;
-            let num_bytes = std::cmp::min(self.remaining, 16);
-            let mut line = [0; 16];
 
-            self.reader
-                .read_into_buf(&mut line[..num_bytes])
-                .unwrap_or_else(|e| panic!("Expected at least {num_bytes} more bytes: {e}"));
+            let mut line = [0; 16];
+            let num_bytes = copy_io(line.writer(), &mut self.reader, 16);
 
             let offset = self.offset;
             self.offset += num_bytes;

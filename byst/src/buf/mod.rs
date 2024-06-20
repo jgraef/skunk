@@ -1,7 +1,6 @@
 pub mod arc_buf;
-mod array_buf;
+pub mod array_buf;
 pub mod chunks;
-pub mod copy;
 mod empty;
 mod partially_initialized;
 pub mod rope;
@@ -18,20 +17,19 @@ use std::{
     sync::Arc,
 };
 
-use self::chunks::{
-    BufIter,
-    BufIterMut,
-    SingleChunk,
-    SingleChunkMut,
-};
+use chunks::BufIter;
+
 pub use self::{
-    array_buf::ArrayBuf,
     empty::Empty,
     slab::Slab,
 };
 use super::range::{
     Range,
     RangeOutOfBounds,
+};
+use crate::io::{
+    BufReader,
+    End,
 };
 
 pub trait Length {
@@ -43,6 +41,115 @@ pub trait Length {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// Read access to a buffer of bytes.
+pub trait Buf: Length {
+    /// A view of a portion of the buffer.
+    type View<'a>: Buf + Sized + 'a
+    where
+        Self: 'a;
+
+    type Reader<'a>: BufReader<View = Self::View<'a>>
+    where
+        Self: 'a;
+
+    /// Returns a view of a portion of the buffer.
+    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds>;
+
+    /// Returns a [`BufReader`] for this buffer.
+    fn reader(&self) -> Self::Reader<'_>;
+
+    /// Returns whether this buffer contains bytes for the given range.
+    ///
+    /// # Default implementation
+    ///
+    /// The default implementation will check if the range is contained by
+    /// `..self.len()`.
+    #[inline]
+    fn contains(&self, range: impl Into<Range>) -> bool {
+        range.into().contained_by(..self.len())
+    }
+}
+
+pub trait BufExt: Buf {
+    #[inline]
+    fn bytes_iter(&self) -> BufIter<'_, Self> {
+        BufIter::new(self)
+    }
+
+    #[inline]
+    fn into_vec(&self) -> Vec<u8> {
+        let mut reader = self.reader();
+        let mut buf = Vec::with_capacity(reader.remaining());
+        while let Ok(chunk) = reader.chunk() {
+            buf.extend(chunk.iter().copied());
+            reader.advance(chunk.len()).unwrap();
+        }
+        buf
+    }
+}
+
+impl<B: Buf> BufExt for B {}
+
+/// Write access to a buffer of bytes.
+pub trait BufMut: Buf {
+    /// Mutable view of a portion of the buffer.
+    type ViewMut<'a>: BufMut + Sized
+    where
+        Self: 'a;
+
+    type Writer<'a>: BufWriter
+    where
+        Self: 'a;
+
+    /// Returns a mutable view of a portion of the buffer.
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds>;
+
+    fn writer(&mut self) -> Self::Writer<'_>;
+
+    fn reserve(&mut self, size: usize) -> Result<(), Full>;
+
+    fn size_limit(&self) -> SizeLimit;
+}
+
+pub trait BufWriter {
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End>;
+
+    fn advance(&mut self, by: usize) -> Result<(), Full>;
+
+    fn remaining(&self) -> usize;
+
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum SizeLimit {
+    /// The [`BufMut`] can grow, but might get full.
+    #[default]
+    Unknown,
+
+    /// The [`BufMut`] can grow limitless.
+    Unlimited,
+
+    /// The [`BufMut`] can grow to this exact length.
+    Exact(usize),
+}
+
+impl From<usize> for SizeLimit {
+    #[inline]
+    fn from(value: usize) -> Self {
+        Self::Exact(value)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "Buffer is full: data with length ({required}) can't fit into buffer with length {capacity}."
+)]
+pub struct Full {
+    pub required: usize,
+    pub capacity: usize,
 }
 
 impl Length for [u8] {
@@ -99,49 +206,6 @@ impl<'a> Length for Vec<u8> {
     }
 }
 
-/// Read access to a buffer of bytes.
-///
-/// # TODO
-///
-/// - Some methods have the same name as methods in `[u8]`, which is annoying
-///   when trying to use them in a `&[u8]`.
-pub trait Buf: Length {
-    /// A view of a portion of the buffer.
-    type View<'a>: Buf + Sized + 'a
-    where
-        Self: 'a;
-
-    /// Iterator over contiguous byte chunks that make up this buffer.
-    type Chunks<'a>: Iterator<Item = &'a [u8]>
-    where
-        Self: 'a;
-
-    /// Returns a view of a portion of the buffer.
-    fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds>;
-
-    /// Returns an iterator over contiguous byte chunks that make up this
-    /// buffer.
-    fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds>;
-
-    /// Returns whether this buffer contains bytes for the given range.
-    ///
-    /// # Default implementation
-    ///
-    /// The default implementation will check if the range is contained by
-    /// `..self.len()`.
-    #[inline]
-    fn contains(&self, range: impl Into<Range>) -> bool {
-        range.into().contained_by(..self.len())
-    }
-
-    #[inline]
-    fn iter(&self, range: impl Into<Range>) -> Result<BufIter<'_, Self>, RangeOutOfBounds> {
-        let range = range.into();
-        let len = range.len_in(0, self.len());
-        Ok(BufIter::new(self.chunks(range)?, len))
-    }
-}
-
 macro_rules! impl_buf_with_deref {
     {
         $(
@@ -151,7 +215,7 @@ macro_rules! impl_buf_with_deref {
         $(
             impl<$($generics)*> Buf for $ty {
                 type View<'a> = <B as Buf>::View<'a> where Self: 'a;
-                type Chunks<'a> = <B as Buf>::Chunks<'a> where Self: 'a;
+                type Reader<'a> = <B as Buf>::Reader<'a> where Self: 'a;
 
                 #[inline]
                 fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
@@ -159,8 +223,8 @@ macro_rules! impl_buf_with_deref {
                 }
 
                 #[inline]
-                fn chunks(&self, range: impl Into<Range>) -> Result<Self::Chunks<'_>, RangeOutOfBounds> {
-                    <B as Buf>::chunks(self.deref(), range)
+                fn reader(&self) -> Self::Reader<'_> {
+                    <B as Buf>::reader(self.deref())
                 }
             }
         )*
@@ -183,18 +247,17 @@ macro_rules! impl_buf_for_slice_like {
     } => {
         $(
             impl<$($generics)*> Buf for $ty {
-                type View<'a> = &$view_lt [u8] where Self: 'a;
-
-                type Chunks<'a> = SingleChunk<'a> where Self: 'a;
+                type View<'a> = & $view_lt [u8] where Self: 'a;
+                type Reader<'a> = & $view_lt [u8] where Self: 'a;
 
                 #[inline]
-                fn view<'a>(&'a self, range: impl Into<Range>) -> Result<Self::View<$view_lt>, RangeOutOfBounds> {
+                fn view<'a>(&'a self, range: impl Into<Range>) -> Result<& $view_lt [u8], RangeOutOfBounds> {
                     range.into().slice_get(self)
                 }
 
                 #[inline]
-                fn chunks<'a>(&'a self, range: impl Into<Range>) -> Result<Self::Chunks<$view_lt>, RangeOutOfBounds> {
-                    Ok(SingleChunk::new(range.into().slice_get(self)?))
+                fn reader(&self) -> Self::Reader<'_> {
+                    self
                 }
             }
         )*
@@ -215,193 +278,59 @@ impl_buf_for_slice_like! {
     ('b), Cow<'b, [u8]>, 'a;
 }
 
-/// Write access to a buffer of bytes.
-pub trait BufMut: Buf {
-    /// Mutable view of a portion of the buffer.
-    type ViewMut<'a>: BufMut + Sized
-    where
-        Self: 'a;
+impl<'b, B: BufMut + ?Sized> BufMut for &'b mut B {
+    type ViewMut<'a> = <B as BufMut>::ViewMut<'a> where Self: 'a;
+    type Writer<'a> = <B as BufMut>::Writer<'a> where Self: 'a;
 
-    /// Iterator over contiguous byte chunks that make up this buffer.
-    type ChunksMut<'a>: Iterator<Item = &'a mut [u8]>
-    where
-        Self: 'a;
-
-    /// Returns a mutable view of a portion of the buffer.
-    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds>;
-
-    /// Returns an iterator over contiguous mutable byte chunks that make up
-    /// this buffer.
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds>;
-
-    /// Returns a mutable iterator over the bytes of this buffer.
     #[inline]
-    fn iter_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<BufIterMut<'_, Self>, RangeOutOfBounds> {
-        let range = range.into();
-        let len = range.len_in(0, self.len());
-        Ok(BufIterMut::new(self.chunks_mut(range)?, len))
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        <B as BufMut>::view_mut(self.deref_mut(), range)
     }
 
-    fn reserve(&mut self, size: usize) -> Result<(), Full>;
+    #[inline]
+    fn writer(&mut self) -> Self::Writer<'_> {
+        <B as BufMut>::writer(self.deref_mut())
+    }
 
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full>;
+    #[inline]
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        <B as BufMut>::reserve(self.deref_mut(), size)
+    }
 
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
-
-    fn size_limit(&self) -> SizeLimit;
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        <B as BufMut>::size_limit(self)
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "buffer is full: data with length ({required}) can't fit into buffer with length {capacity}"
-)]
-pub struct Full {
-    pub required: usize,
-    pub capacity: usize,
+impl<B: BufMut + ?Sized> BufMut for Box<B> {
+    type ViewMut<'a> = <B as BufMut>::ViewMut<'a> where Self: 'a;
+    type Writer<'a> = <B as BufMut>::Writer<'a> where Self: 'a;
+
+    #[inline]
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        <B as BufMut>::view_mut(self.deref_mut(), range)
+    }
+
+    #[inline]
+    fn writer(&mut self) -> Self::Writer<'_> {
+        <B as BufMut>::writer(self.deref_mut())
+    }
+
+    #[inline]
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        <B as BufMut>::reserve(self.deref_mut(), size)
+    }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        <B as BufMut>::size_limit(self)
+    }
 }
 
-macro_rules! impl_buf_mut_with_deref {
-    {
-        $(
-            ($($generics:tt)*), $ty:ty;
-        )*
-    } => {
-        $(
-            impl<$($generics)*> BufMut for $ty {
-                type ViewMut<'a> = <B as BufMut>::ViewMut<'a> where Self: 'a;
-
-                type ChunksMut<'a> = <B as BufMut>::ChunksMut<'a> where Self: 'a;
-
-                #[inline]
-                fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-                    <B as BufMut>::view_mut(self.deref_mut(), range)
-                }
-
-                #[inline]
-                fn chunks_mut(
-                    &mut self,
-                    range: impl Into<Range>,
-                ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-                    <B as BufMut>::chunks_mut(self.deref_mut(), range)
-                }
-
-                #[inline]
-                fn reserve(&mut self, size: usize) -> Result<(), Full> {
-                    <B as BufMut>::reserve(self.deref_mut(), size)
-                }
-
-                #[inline]
-                #[allow(unused_variables)]
-                fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-                    <B as BufMut>::grow(self.deref_mut(), new_len, value)
-                }
-
-                #[inline]
-                #[allow(unused_variables)]
-                fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-                    <B as BufMut>::extend(self.deref_mut(), with)
-                }
-
-                #[inline]
-                fn size_limit(&self) -> SizeLimit {
-                    <B as BufMut>::size_limit(self.deref())
-                }
-            }
-        )*
-    };
-}
-
-impl_buf_mut_with_deref! {
-    ('b, B: BufMut + ?Sized), &'b mut B;
-    (B: BufMut + ?Sized), Box<B>;
-}
-
-macro_rules! impl_buf_mut_for_slice_like {
-    {
-        $(
-            ($($generics:tt)*), $ty:ty;
-        )*
-    } => {
-        $(
-            impl<$($generics)*> BufMut for $ty {
-                type ViewMut<'a> = &'a mut [u8] where Self: 'a;
-
-                type ChunksMut<'a> = SingleChunkMut<'a> where Self: 'a;
-
-                #[inline]
-                fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-                    range.into().slice_get_mut(self)
-                }
-
-                #[inline]
-                fn chunks_mut(
-                    &mut self,
-                    range: impl Into<Range>,
-                ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-                    Ok(SingleChunkMut::new(range.into().slice_get_mut(self)?))
-                }
-
-                #[inline]
-                fn reserve(&mut self, size: usize) -> Result<(), Full> {
-                    if size > self.len() {
-                        Err(Full {
-                            required: size,
-                            capacity: self.len(),
-                        })
-                    }
-                    else {
-                        Ok(())
-                    }
-                }
-
-                #[inline]
-                #[allow(unused_variables)]
-                fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-                    if new_len > self.len() {
-                        Err(Full {
-                            required: new_len,
-                            capacity: self.len(),
-                        })
-                    }
-                    else {
-                        Ok(())
-                    }
-                }
-
-                #[inline]
-                #[allow(unused_variables)]
-                fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-                    Err(Full {
-                        required: with.len(),
-                        capacity: self.len(),
-                    })
-                }
-
-                #[inline]
-                fn size_limit(&self) -> SizeLimit {
-                    self.len().into()
-                }
-            }
-        )*
-    };
-}
-
-impl_buf_mut_for_slice_like! {
-    ('b), &'b mut [u8];
-    (const N: usize), [u8; N];
-    (), Box<[u8]>;
-}
-
-impl BufMut for Vec<u8> {
+impl<'b> BufMut for &'b mut [u8] {
     type ViewMut<'a> = &'a mut [u8] where Self: 'a;
-
-    type ChunksMut<'a> = SingleChunkMut<'a> where Self: 'a;
+    type Writer<'a> = &'a mut [u8] where Self: 'a;
 
     #[inline]
     fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
@@ -409,11 +338,107 @@ impl BufMut for Vec<u8> {
     }
 
     #[inline]
-    fn chunks_mut(
-        &mut self,
-        range: impl Into<Range>,
-    ) -> Result<Self::ChunksMut<'_>, RangeOutOfBounds> {
-        Ok(SingleChunkMut::new(range.into().slice_get_mut(self)?))
+    fn writer(&mut self) -> Self::Writer<'_> {
+        self
+    }
+
+    #[inline]
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        if size > self.len() {
+            Err(Full {
+                required: size,
+                capacity: self.len(),
+            })
+        }
+        else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        self.len().into()
+    }
+}
+
+impl<const N: usize> BufMut for [u8; N] {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+    type Writer<'a> = &'a mut [u8] where Self: 'a;
+
+    #[inline]
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        range.into().slice_get_mut(self)
+    }
+
+    #[inline]
+    fn writer(&mut self) -> Self::Writer<'_> {
+        self
+    }
+
+    #[inline]
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        if size > N {
+            Err(Full {
+                required: size,
+                capacity: self.len(),
+            })
+        }
+        else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        self.len().into()
+    }
+}
+
+impl BufMut for Box<[u8]> {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+    type Writer<'a> = &'a mut [u8] where Self: 'a;
+
+    #[inline]
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        range.into().slice_get_mut(self)
+    }
+
+    #[inline]
+    fn writer(&mut self) -> Self::Writer<'_> {
+        self
+    }
+
+    #[inline]
+    fn reserve(&mut self, size: usize) -> Result<(), Full> {
+        if size > self.len() {
+            Err(Full {
+                required: size,
+                capacity: self.len(),
+            })
+        }
+        else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn size_limit(&self) -> SizeLimit {
+        self.len().into()
+    }
+}
+
+impl BufMut for Vec<u8> {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+    type Writer<'a> = VecWriter<'a> where Self: 'a;
+
+    #[inline]
+    fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
+        range.into().slice_get_mut(self)
+    }
+
+    #[inline]
+    fn writer(&mut self) -> Self::Writer<'_> {
+        VecWriter::new(self)
     }
 
     #[inline]
@@ -425,77 +450,167 @@ impl BufMut for Vec<u8> {
     }
 
     #[inline]
-    fn grow(&mut self, new_len: usize, value: u8) -> Result<(), Full> {
-        if new_len > self.len() {
-            self.resize(new_len, value);
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        Extend::extend(self, with);
-        Ok(())
-    }
-
-    #[inline]
     fn size_limit(&self) -> SizeLimit {
         SizeLimit::Unlimited
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub enum SizeLimit {
-    /// The [`BufMut`] can grow, but might get full.
-    #[default]
-    Unknown,
+impl<'a, W: BufWriter> BufWriter for &'a mut W {
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        W::chunk_mut(self)
+    }
 
-    /// The [`BufMut`] can grow limitless.
-    Unlimited,
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        W::advance(self, by)
+    }
 
-    /// The [`BufMut`] can grow to this exact length.
-    Exact(usize),
+    fn remaining(&self) -> usize {
+        W::remaining(self)
+    }
+
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        W::extend(self, with)
+    }
 }
 
-impl From<usize> for SizeLimit {
+impl<'a> BufWriter for &'a mut [u8] {
     #[inline]
-    fn from(value: usize) -> Self {
-        Self::Exact(value)
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        (!self.is_empty()).then_some(&mut **self).ok_or(End)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        if by <= self.len() {
+            let (_, rest) = std::mem::take(self).split_at_mut(by);
+            *self = rest;
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: by,
+                capacity: self.len(),
+            })
+        }
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        if with.len() <= self.len() {
+            let (dest, rest) = std::mem::take(self).split_at_mut(with.len());
+            dest.copy_from_slice(with);
+            *self = rest;
+            Ok(())
+        }
+        else {
+            Err(Full {
+                required: with.len(),
+                capacity: self.len(),
+            })
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct VecWriter<'a> {
+    vec: &'a mut Vec<u8>,
+    position: usize,
+}
+
+impl<'a> VecWriter<'a> {
+    #[inline]
+    fn new(vec: &'a mut Vec<u8>) -> Self {
+        Self { vec, position: 0 }
+    }
+}
+
+impl<'a> BufWriter for VecWriter<'a> {
+    #[inline]
+    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+        (self.position < self.vec.len())
+            .then(|| &mut self.vec[self.position..])
+            .ok_or(End)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), Full> {
+        let n = (self.position + by).saturating_sub(self.vec.len());
+        self.vec.extend((0..n).into_iter().map(|_| 0));
+        self.position += by;
+        Ok(())
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.vec.len()
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+        let n_overwrite = std::cmp::min(self.vec.len() - self.position, with.len());
+        self.vec[self.position..][..n_overwrite].copy_from_slice(&with[..n_overwrite]);
+        self.vec.extend(with[n_overwrite..].iter().copied());
+        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    mod vec {
-        use crate::buf::{
-            copy::copy,
-            Buf,
+pub(crate) mod tests {
+    macro_rules! buf_mut_tests {
+        ($new:expr) => {
+            #[test]
+            fn copy_with_fill() {
+                use ::byst::{
+                    buf::{
+                        Buf as _,
+                        BufReader as _,
+                    },
+                    copy_range,
+                };
+                let mut bytes_mut = $new;
+                copy_range(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
+                assert_eq!(bytes_mut.reader().chunk().unwrap(), b"\x00\x00\x00\x00abcd");
+            }
+
+            #[test]
+            fn copy_over_buf_end() {
+                use ::byst::{
+                    buf::{
+                        Buf as _,
+                        BufReader as _,
+                    },
+                    copy_range,
+                };
+                let mut bytes_mut = $new;
+                copy_range(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+                copy_range(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
+                assert_eq!(bytes_mut.reader().chunk().unwrap(), b"abefgh");
+            }
+
+            #[test]
+            fn copy_extend_with_unbounded_destination_slice() {
+                use ::byst::{
+                    buf::{
+                        Buf as _,
+                        BufReader as _,
+                    },
+                    copy_range,
+                };
+                let mut bytes_mut = $new;
+                copy_range(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
+                copy_range(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
+                assert_eq!(bytes_mut.reader().chunk().unwrap(), b"abefgh");
+            }
         };
+    }
+    pub(crate) use buf_mut_tests;
 
-        #[test]
-        fn copy_with_fill() {
-            let mut bytes_mut = Vec::<u8>::new();
-            copy(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
-            assert_eq!(
-                bytes_mut.chunks(..).unwrap().next().unwrap(),
-                b"\x00\x00\x00\x00abcd"
-            );
-        }
-
-        #[test]
-        fn copy_over_buf_end() {
-            let mut bytes_mut = Vec::<u8>::new();
-            copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
-            copy(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
-            assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
-        }
-
-        #[test]
-        fn copy_extend_with_unbounded_destination_slice() {
-            let mut bytes_mut = Vec::<u8>::new();
-            copy(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
-            copy(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
-            assert_eq!(bytes_mut.chunks(..).unwrap().next().unwrap(), b"abefgh");
-        }
+    mod vec {
+        buf_mut_tests!(Vec::<u8>::new());
     }
 }

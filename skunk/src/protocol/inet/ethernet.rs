@@ -5,11 +5,11 @@ use std::{
 
 use byst::{
     endianness::NetworkEndian,
-    io::read::{
+    io::{
+        read,
         End,
         Read,
     },
-    read,
 };
 use smallvec::SmallVec;
 

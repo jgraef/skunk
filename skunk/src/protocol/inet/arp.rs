@@ -10,11 +10,9 @@ use std::{
 };
 
 use byst::io::{
-    read::{
-        read,
-        End,
-        ReadIntoBuf,
-    },
+    read,
+    BufReader,
+    End,
     Read,
 };
 
@@ -40,7 +38,7 @@ pub struct Packet {
 
 impl<R> Read<R, ()> for Packet
 where
-    R: ReadIntoBuf<Error = End>,
+    R: BufReader,
 {
     type Error = InvalidPacket;
 

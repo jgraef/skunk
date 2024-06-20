@@ -65,7 +65,7 @@ fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStr
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
+        impl #impl_generics ::byst::io::Read<__R, #params_ty> for #ident #type_generics #where_clause {
             type Error = #error_ty;
 
             fn read(mut __reader: &mut __R, #params_name: #params_ty) -> ::std::result::Result<Self, Self::Error> {
@@ -110,7 +110,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
     if !options.no_wild {
         match_arms.push(quote! {
             _ => {
-                return ::std::result::Result::Err(::byst::io::read::InvalidDiscriminant(__discriminant).into());
+                return ::std::result::Result::Err(::byst::io::InvalidDiscriminant(__discriminant).into());
             },
         });
 
@@ -120,12 +120,12 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
 
         if let Some(error_ty) = &track.error_ty {
             track.where_clause.predicates.push(
-                parse_quote! { #error_ty: ::std::convert::From<::byst::io::read::InvalidDiscriminant<#discriminant_ty>> },
+                parse_quote! { #error_ty: ::std::convert::From<::byst::io::InvalidDiscriminant<#discriminant_ty>> },
             );
         }
         else {
             track.error_ty = Some(parse_quote! {
-                ::byst::io::read::InvalidDiscriminant<#discriminant_ty>
+                ::byst::io::InvalidDiscriminant<#discriminant_ty>
             });
         }
     }
@@ -135,7 +135,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
     Ok(quote! {
         #[automatically_derived]
         #[allow(unreachable_code)]
-        impl #impl_generics ::byst::io::read::Read<__R, #params_ty> for #ident #type_generics #where_clause {
+        impl #impl_generics ::byst::io::Read<__R, #params_ty> for #ident #type_generics #where_clause {
             type Error = #error_ty;
 
             fn read(mut __reader: &mut __R, #params_name: #params_ty) -> ::std::result::Result<Self, Self::Error> {
@@ -180,7 +180,7 @@ fn make_struct_init(
             track.reads(field_ty, &params_ty);
 
             read_fields.push(quote!{
-                let #field_var = <#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr).map_err(#map_err)?;
+                let #field_var = <#field_ty as ::byst::io::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr).map_err(#map_err)?;
             });
         }
 
@@ -225,16 +225,16 @@ impl TrackTypes {
     pub fn reads(&mut self, field_ty: &Type, params_ty: &Type) {
         self.where_clause
             .predicates
-            .push(parse_quote! { #field_ty: ::byst::io::read::Read::<__R, #params_ty> });
+            .push(parse_quote! { #field_ty: ::byst::io::Read::<__R, #params_ty> });
 
         if let Some(error_ty) = &self.error_ty {
             self.where_clause.predicates.push(
-                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::Error> },
+                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::Read::<__R, #params_ty>>::Error> },
             );
         }
         else {
             self.error_ty = Some(parse_quote! {
-                <#field_ty as ::byst::io::read::Read<__R, #params_ty>>::Error
+                <#field_ty as ::byst::io::Read<__R, #params_ty>>::Error
             });
         }
     }
@@ -265,7 +265,7 @@ fn derive_read_for_struct_bitfield(
 
     let read_value = if let Some(endianness) = bitfield.endianness.ty() {
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: for<'r> ::byst::io::read::ReadXe::<&'r mut __R, #endianness>
+            #bitfield_ty: for<'r> ::byst::io::ReadXe::<&'r mut __R, #endianness>
         });
         quote! {
             ::byst::rw::ReadXe::<_, #endianness>::read(&mut reader)?
@@ -273,7 +273,7 @@ fn derive_read_for_struct_bitfield(
     }
     else {
         where_clause.predicates.push(parse_quote! {
-            #bitfield_ty: for<'r> ::byst::io::read::Read::<&'r mut __R>
+            #bitfield_ty: for<'r> ::byst::io::Read::<&'r mut __R>
         });
         quote! {
             ::byst::rw::Read::<_>::read(&mut reader)?

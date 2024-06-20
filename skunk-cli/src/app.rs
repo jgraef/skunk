@@ -7,10 +7,7 @@ use std::{
 
 use byst::{
     hexdump::hexdump,
-    io::{
-        read,
-        Cursor,
-    },
+    io::read,
     Bytes,
 };
 use color_eyre::eyre::{
@@ -441,11 +438,10 @@ fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
 }
 
 async fn pcap_run(interface: Interface, shutdown: CancellationToken) -> Result<(), Error> {
-    async fn handle_packet(packet: Bytes) -> Result<(), Error> {
+    async fn handle_packet(mut packet: Bytes) -> Result<(), Error> {
         println!("{}", hexdump(&packet));
 
-        let mut cursor = Cursor::new(&packet);
-        let frame = read!(&mut cursor => ethernet::Packet)?;
+        let frame = read!(&mut packet => ethernet::Packet)?;
 
         tracing::debug!(?frame);
 
@@ -462,6 +458,7 @@ async fn pcap_run(interface: Interface, shutdown: CancellationToken) -> Result<(
                 handle_packet(packet).await?;
             }
         }
+        todo!();
     }
 
     Ok(())

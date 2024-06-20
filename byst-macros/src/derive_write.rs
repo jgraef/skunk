@@ -55,19 +55,19 @@ fn derive_write_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenSt
 
         if let Some(endianness) = field_options.endianness.ty() {
             write_fields.push(quote! {
-                ::byst::io::write::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
+                ::byst::io::WriteXe::<_, #endianness>::write(&self.#field_name, &mut writer)?;
             });
             where_clause.predicates.push(
-                parse_quote! { #field_ty: for<'w> ::byst::io::write::WriteXe::<&'w mut __W, #endianness> },
+                parse_quote! { #field_ty: for<'w> ::byst::io::WriteXe::<&'w mut __W, #endianness> },
             );
         }
         else {
             write_fields.push(quote! {
-                ::byst::io::write::Write::<_>::write(&self.#field_name, &mut writer)?;
+                ::byst::io::Write::<_>::write(&self.#field_name, &mut writer)?;
             });
             where_clause
                 .predicates
-                .push(parse_quote! { #field_ty: for<'w> ::byst::io::write::Write::<&'w mut __W> });
+                .push(parse_quote! { #field_ty: for<'w> ::byst::io::Write::<&'w mut __W> });
         }
     }
 
@@ -75,8 +75,8 @@ fn derive_write_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenSt
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::byst::io::write::Write<__W> for #ident #type_generics #where_clause {
-            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::byst::io::write::Full> {
+        impl #impl_generics ::byst::io::Write<__W> for #ident #type_generics #where_clause {
+            fn write(&self, mut writer: __W) -> ::std::result::Result<(), ::byst::io::Full> {
                 #(#write_fields)*
                 ::std::result::Result::Ok(())
             }

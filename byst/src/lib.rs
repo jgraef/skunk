@@ -2,9 +2,14 @@
 //!
 //! Read and write bytes on steriods!
 
+// enabled nightly features
+// todo: we might get around these by just copying their source code.
+
 // required by `crate::buf::partially_initialized`.
 #![feature(maybe_uninit_slice, maybe_uninit_write_slice, maybe_uninit_fill)]
-// required by `crate::util::bytes::endianness::{Encode, Decode}`.
+// required by `crate::buf::array_vec`
+#![feature(maybe_uninit_array_assume_init)]
+// required by `crate::endianness::{Encode, Decode}`.
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 // required by `crate::buf::slab`
@@ -13,6 +18,7 @@
 mod bits;
 pub mod buf;
 pub mod bytes;
+mod copy;
 pub mod endianness;
 pub mod hexdump;
 pub mod io;
@@ -27,6 +33,11 @@ pub use self::{
     bytes::{
         Bytes,
         BytesMut,
+    },
+    copy::{
+        copy,
+        copy_io,
+        copy_range,
     },
     range::{
         Range,
