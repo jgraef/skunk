@@ -10,6 +10,11 @@ use super::{
 };
 use crate::io::ChunksReader;
 
+#[inline]
+pub fn hexdump<B>(buf: B) -> Hexdump<B> {
+    Hexdump::new(buf)
+}
+
 pub struct Hexdump<B> {
     buf: B,
     config: Config,

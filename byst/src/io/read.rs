@@ -15,6 +15,8 @@ use crate::{
         copy::CopyError,
         BufMut,
     },
+    Buf,
+    Bytes,
     RangeOutOfBounds,
 };
 
@@ -202,21 +204,6 @@ macro_rules! impl_read_for_tuple {
 }
 for_tuple!(impl_read_for_tuple! for 1..=8);
 
-// for testing
-/*impl<R, A, B> Read<R, ()> for (A, B)
-where
-    A: Read<R, ()>,
-    B: Read<R, (), Error = <A as Read<R, ()>>::Error>,
-{
-    type Error = <A as Read<R, ()>>::Error;
-
-    fn read(mut reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        let a = <A as Read<R, ()>>::read(&mut reader, ())?;
-        let b = <B as Read<R, ()>>::read(&mut reader, ())?;
-        Ok((a, b))
-    }
-}*/
-
 /// Read macro
 #[macro_export]
 macro_rules! read {
@@ -236,3 +223,53 @@ macro_rules! read {
     };
 }
 pub use read;
+
+use super::cursor::Length;
+
+impl<'b> Read<&'b [u8], Length> for &'b [u8] {
+    type Error = End;
+
+    fn read(buf: &mut &'b [u8], parameters: Length) -> Result<Self, End> {
+        let view = buf
+            .view(..parameters.0)
+            .map_err(End::from_range_out_of_bounds)?;
+        *buf = buf
+            .view(parameters.0..)
+            .map_err(End::from_range_out_of_bounds)?;
+        Ok(view)
+    }
+}
+
+impl<'b> Read<&'b [u8], ()> for &'b [u8] {
+    type Error = End;
+
+    fn read(buf: &mut &'b [u8], _parameters: ()) -> Result<Self, End> {
+        let output = *buf;
+        *buf = Default::default();
+        Ok(output)
+    }
+}
+
+impl Read<Bytes, Length> for Bytes {
+    type Error = End;
+
+    fn read(buf: &mut Bytes, parameters: Length) -> Result<Self, End> {
+        let view = buf
+            .view(..parameters.0)
+            .map_err(End::from_range_out_of_bounds)?;
+        *buf = buf
+            .view(parameters.0..)
+            .map_err(End::from_range_out_of_bounds)?;
+        Ok(view)
+    }
+}
+
+impl Read<Bytes, ()> for Bytes {
+    type Error = End;
+
+    fn read(buf: &mut Bytes, _parameters: ()) -> Result<Self, End> {
+        let output = buf.clone();
+        *buf = Default::default();
+        Ok(output)
+    }
+}

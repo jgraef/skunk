@@ -17,8 +17,10 @@ use crate::{
         copy::copy,
         Buf,
         BufMut,
+        Length as _,
     },
     range::Range,
+    Bytes,
 };
 
 /// A reader and writer that reads and writes from and to a [`Buf`].
@@ -90,6 +92,50 @@ impl<'b> Read<Cursor<&'b [u8]>, Length> for &'b [u8] {
             .view(range)
             .map_err(End::from_range_out_of_bounds)?;
         reader.offset += parameters.0;
+        Ok(view)
+    }
+}
+
+impl<'b> Read<Cursor<&'b [u8]>, ()> for &'b [u8] {
+    type Error = End;
+
+    fn read(reader: &mut Cursor<&'b [u8]>, _parameters: ()) -> Result<Self, End> {
+        let range = Range::default().with_start(reader.offset);
+        let view = reader
+            .buf
+            .view(range)
+            .map_err(End::from_range_out_of_bounds)?;
+        reader.offset += view.len();
+        Ok(view)
+    }
+}
+
+impl Read<Cursor<Bytes>, Length> for Bytes {
+    type Error = End;
+
+    fn read(reader: &mut Cursor<Bytes>, parameters: Length) -> Result<Self, End> {
+        let range = Range::default()
+            .with_start(reader.offset)
+            .with_length(parameters.0);
+        let view = reader
+            .buf
+            .view(range)
+            .map_err(End::from_range_out_of_bounds)?;
+        reader.offset += parameters.0;
+        Ok(view)
+    }
+}
+
+impl Read<Cursor<Bytes>, ()> for Bytes {
+    type Error = End;
+
+    fn read(reader: &mut Cursor<Bytes>, _parameters: ()) -> Result<Self, End> {
+        let range = Range::default().with_start(reader.offset);
+        let view = reader
+            .buf
+            .view(range)
+            .map_err(End::from_range_out_of_bounds)?;
+        reader.offset += view.len();
         Ok(view)
     }
 }

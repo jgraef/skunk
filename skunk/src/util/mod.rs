@@ -5,7 +5,10 @@ pub(crate) mod error;
 pub mod io;
 
 use std::{
-    fmt::Debug,
+    fmt::{
+        Debug,
+        Display,
+    },
     num::NonZeroUsize,
     sync::{
         atomic::{
@@ -97,3 +100,73 @@ macro_rules! unique_ids {
 }
 
 pub(crate) use unique_ids;
+
+macro_rules! network_enum {
+    {
+        for $ty:ident
+        $(
+            $(#[doc = $doc:expr])?
+            $name:ident => $num:expr;
+        )*
+    } => {
+        impl $ty {
+            $(
+                $(#[doc = $doc])?
+                pub const $name: Self = Self($num);
+            )*
+
+            pub fn name(&self) -> Option<&'static str> {
+                match self.0 {
+                    $(
+                        $num => Some(stringify!($name)),
+                    )*
+                    _ => None,
+                }
+            }
+
+            pub fn description(&self) -> Option<&'static str> {
+                match self.0 {
+                    $(
+                        $($num => Some($doc),)?
+                    )*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+pub(crate) use network_enum;
+
+pub fn punctuated<'a, T>(items: &'a [T], separator: &'a str) -> Punctuated<'a, T> {
+    Punctuated { items, separator }
+}
+
+pub struct Punctuated<'a, T> {
+    items: &'a [T],
+    separator: &'a str,
+}
+
+impl<'a, T: Debug> Debug for Punctuated<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, item) in self.items.iter().enumerate() {
+            if i > 0 {
+                write!(f, "{}", self.separator)?;
+            }
+            write!(f, "{item:?}")?;
+        }
+        Ok(())
+    }
+}
+
+impl<'a, T: Display> Display for Punctuated<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, item) in self.items.iter().enumerate() {
+            if i > 0 {
+                write!(f, "{}", self.separator)?;
+            }
+            write!(f, "{item}")?;
+        }
+        Ok(())
+    }
+}

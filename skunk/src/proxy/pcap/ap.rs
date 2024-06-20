@@ -18,7 +18,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
-use super::Interface;
+use super::interface::Interface;
 
 #[derive(Debug, thiserror::Error)]
 #[error("hostapd error")]
@@ -165,7 +165,7 @@ impl<'a> Builder<'a> {
                 let _cfg_file = cfg_file;
 
                 tokio::select! {
-                    result = log_output(&span, &mut process.stdout, ready_tx) => {
+                    result = handle_stdout(&span, &mut process.stdout, ready_tx) => {
                         result?;
                     },
                     _ = self.shutdown.cancelled() => {},
@@ -215,7 +215,7 @@ impl HostApd {
     }
 }
 
-async fn log_output<S: AsyncRead + Unpin>(
+async fn handle_stdout<S: AsyncRead + Unpin>(
     span: &Span,
     stream_opt: &mut Option<S>,
     ready_tx: watch::Sender<bool>,

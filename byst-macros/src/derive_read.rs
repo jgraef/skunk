@@ -175,11 +175,12 @@ fn make_struct_init(
         }
         else {
             let (params_ty, params_expr) = field_options.params();
+            let map_err = field_options.map_err();
 
             track.reads(field_ty, &params_ty);
 
             read_fields.push(quote!{
-                let #field_var = <#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr)?;
+                let #field_var = <#field_ty as ::byst::io::read::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr).map_err(#map_err)?;
             });
         }
 

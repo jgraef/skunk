@@ -5,25 +5,32 @@ use std::{
     sync::Arc,
 };
 
-use byst::io::{
-    read::read,
-    Cursor,
+use byst::{
+    hexdump::hexdump,
+    io::{
+        read,
+        Cursor,
+    },
+    Bytes,
 };
 use color_eyre::eyre::{
     bail,
-    eyre,
     Error,
 };
 use skunk::{
     address::TcpAddress,
     protocol::{
         http,
-        inet::ethernet::EthernetFrame,
+        inet::ethernet,
         tls,
     },
     proxy::{
         fn_proxy,
-        pcap,
+        pcap::{
+            self,
+            interface::Interface,
+            socket::Mode,
+        },
         socks::server as socks,
         DestinationAddress,
         Passthrough,
@@ -69,9 +76,6 @@ pub enum Command {
 
         #[structopt(short, long)]
         rule: Vec<PathBuf>,
-    },
-    Pcap {
-        interface: String,
     },
 }
 
@@ -171,7 +175,6 @@ impl App {
             Command::Proxy { socks, rule } => {
                 self.proxy(socks, rule).await?;
             }
-            Command::Pcap { interface } => test_pcap(&interface).await?,
         }
 
         Ok(())
@@ -212,15 +215,14 @@ impl App {
         let pcap_interface = if pcap.enabled {
             fn print_interfaces() -> Result<(), Error> {
                 println!("available interfaces:");
-                for interface in pcap::Interface::enumerate()? {
-                    println!("{}", interface.name());
+                for interface in Interface::list()? {
                     println!("{interface:#?}\n");
                 }
                 Ok(())
             }
 
             if let Some(interface) = pcap.interface {
-                let interface_opt = pcap::Interface::from_name(&interface);
+                let interface_opt = Interface::from_name(&interface);
                 if interface_opt.is_none() {
                     eprintln!("interface '{interface}' not found");
                     print_interfaces()?;
@@ -300,17 +302,17 @@ impl App {
                         tracing::info!("hostapd ready");
                     }
 
-                    pcap::run(interface, shutdown).await?;
+                    pcap_run(interface, shutdown).await?;
                     Ok::<(), Error>(())
                 }
             });
 
             if pcap.enabled {
                 join_set.spawn({
-                    let shutdown = shutdown.clone();
-                    let interface = interface.clone();
+                    let _shutdown = shutdown.clone();
+                    let _interface = interface.clone();
                     async move {
-                        pcap::dhcp::run(&interface, shutdown, Default::default()).await?;
+                        //pcap::dhcp::run(&interface, shutdown, Default::default()).await?;
                         Ok::<(), Error>(())
                     }
                 });
@@ -438,19 +440,29 @@ fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
     token
 }
 
-async fn test_pcap(interface: &str) -> Result<(), Error> {
-    let interface = pcap::Interface::from_name(interface)
-        .ok_or_else(|| eyre!("No such interface {interface}"))?;
+async fn pcap_run(interface: Interface, shutdown: CancellationToken) -> Result<(), Error> {
+    async fn handle_packet(packet: Bytes) -> Result<(), Error> {
+        println!("{}", hexdump(&packet));
 
-    let socket = interface.socket()?;
-    let mut buf = vec![0; 2048];
+        let mut cursor = Cursor::new(&packet);
+        let frame = read!(&mut cursor => ethernet::Packet)?;
 
-    loop {
-        let n = socket.receive(&mut buf).await?;
-        let mut reader = Cursor::new(&buf[..n]);
+        tracing::debug!(?frame);
 
-        let packet = read!(&mut reader => EthernetFrame)?;
+        Ok(())
     }
 
-    todo!();
+    let (_sender, mut receiver) = interface.channel(Mode::Raw)?;
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => break,
+            result = receiver.receive::<Bytes>() => {
+                let packet = result?;
+                handle_packet(packet).await?;
+            }
+        }
+    }
+
+    Ok(())
 }

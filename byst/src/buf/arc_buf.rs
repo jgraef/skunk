@@ -36,6 +36,8 @@ use crate::{
     },
     Buf,
     BufMut,
+    Bytes,
+    BytesMut,
     IndexOutOfBounds,
     Range,
     RangeOutOfBounds,
@@ -604,6 +606,13 @@ impl Debug for Reclaim {
     }
 }
 
+// SAFETY:
+//
+// This is safe to impl `Send` and `Sync`, because all it ever does is access
+// the meta data / ref count through a `*const MetaData`
+unsafe impl Send for Reclaim {}
+unsafe impl Sync for Reclaim {}
+
 #[derive(Clone, Default)]
 pub struct ArcBuf {
     inner: BufferRef,
@@ -704,6 +713,13 @@ impl<T: Buf> PartialEq<T> for ArcBuf {
         buf_eq(self, other)
     }
 }
+
+// SAFETY:
+//
+// This is safe to impl `Send` and `Sync`, because it only does immutable access
+// to overlapping ranges.
+unsafe impl Send for ArcBuf {}
+unsafe impl Sync for ArcBuf {}
 
 #[derive(Default)]
 pub struct ArcBufMut {
@@ -1135,6 +1151,34 @@ impl BytesMutImpl for ArcBufMut {
         Ok((Box::new(self), Box::new(other)))
     }
 }
+
+impl From<ArcBuf> for Bytes {
+    #[inline]
+    fn from(value: ArcBuf) -> Self {
+        Bytes::from_impl(Box::new(value))
+    }
+}
+
+impl From<ArcBufMut> for BytesMut {
+    #[inline]
+    fn from(value: ArcBufMut) -> Self {
+        BytesMut::from_impl(Box::new(value))
+    }
+}
+
+impl From<ArcBufMut> for Bytes {
+    #[inline]
+    fn from(value: ArcBufMut) -> Self {
+        value.freeze().into()
+    }
+}
+
+// SAFETY:
+//
+// This is safe to impl `Send` and `Sync`, because it only does mutable access
+// to non-overlapping ranges and ensures only unique references to these exist.
+unsafe impl Send for ArcBufMut {}
+unsafe impl Sync for ArcBufMut {}
 
 #[cfg(test)]
 mod tests {

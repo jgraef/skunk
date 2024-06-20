@@ -20,7 +20,7 @@ use crate::{
 ///
 /// [`Bytes`]: super::Bytes
 /// [`Bytes::from_impl`]: super::Bytes::from_impl
-pub trait BytesImpl: Length {
+pub trait BytesImpl: Length + Send + Sync {
     fn view(&self, range: Range) -> Result<Box<dyn BytesImpl>, RangeOutOfBounds>;
     fn chunks<'a>(
         &'a self,
@@ -37,7 +37,7 @@ pub trait BytesImpl: Length {
 ///
 /// [`BytesMut`]: super::BytesMut
 /// [`BytesMut::from_impl`]: super::BytesMut::from_impl
-pub trait BytesMutImpl: Length {
+pub trait BytesMutImpl: Length + Send + Sync {
     fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds>;
     fn view_mut(
         &mut self,
@@ -66,7 +66,7 @@ pub trait ChunksMutIterImpl<'a>: Iterator<Item = &'a mut [u8]> + DoubleEndedIter
 
 impl<'a, T: Iterator<Item = &'a mut [u8]> + DoubleEndedIterator> ChunksMutIterImpl<'a> for T {}
 
-pub trait BytesMutViewImpl<'b>: Length {
+pub trait BytesMutViewImpl<'b>: Length + Send + Sync {
     fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl<'b> + 'b>, RangeOutOfBounds>;
     fn chunks<'a>(
         &'a self,
@@ -74,7 +74,7 @@ pub trait BytesMutViewImpl<'b>: Length {
     ) -> Result<Box<dyn ChunksIterImpl<'a> + 'a>, RangeOutOfBounds>;
 }
 
-pub trait BytesMutViewMutImpl<'b>: Length {
+pub trait BytesMutViewMutImpl<'b>: Length + Send + Sync {
     fn view(&self, range: Range) -> Result<Box<dyn BytesMutViewImpl + '_>, RangeOutOfBounds>;
     fn view_mut(
         &mut self,

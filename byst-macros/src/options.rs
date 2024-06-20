@@ -135,7 +135,7 @@ pub struct FieldOptions {
     pub endianness: Endianness,
 
     pub params: Option<ParamsFieldOptions>,
-    pub map_err: Option<Expr>,
+    pub map_err: Option<Path>,
 }
 
 impl FieldOptions {
@@ -162,6 +162,12 @@ impl FieldOptions {
 
     pub fn params(&self) -> (Type, Expr) {
         params(&self.endianness, self.params.as_ref())
+    }
+
+    pub fn map_err(&self) -> Path {
+        self.map_err
+            .clone()
+            .unwrap_or_else(|| parse_quote! { std::convert::identity })
     }
 }
 

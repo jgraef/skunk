@@ -4,6 +4,7 @@ use crate::buf::arc_buf::{
 };
 
 /// Efficient allocation of equally-sized buffers.
+#[derive(Debug)]
 pub struct Slab {
     buf_size: usize,
     reuse_count: usize,
@@ -67,10 +68,11 @@ impl Slab {
                     // get all other buffers that are reclaimable from `in_use` and put them into
                     // `available`, or drop them.
 
-                    if let Some(buf) = reclaim.try_reclaim() {
+                    if let Some(mut buf) = reclaim.try_reclaim() {
                         let reclaim = self.in_use.swap_remove(i);
                         if self.available.len() < self.reuse_count {
                             // put buffer into available list
+                            buf.clear();
                             self.available.push((reclaim, buf));
                         }
                     }

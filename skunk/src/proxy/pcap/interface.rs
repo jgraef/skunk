@@ -4,47 +4,43 @@ use std::{
         Ipv4Addr,
         Ipv6Addr,
     },
-    os::fd::{
-        AsRawFd,
-        OwnedFd,
-    },
     sync::Arc,
 };
 
+use ip_network::{
+    Ipv4Network,
+    Ipv6Network,
+};
 pub use nix::net::if_::InterfaceFlags as Flags;
-use nix::sys::socket::{
-    AddressFamily,
-    LinkAddr,
-    MsgFlags,
-    SockFlag,
-    SockProtocol,
-    SockType,
+use nix::{
+    ifaddrs::InterfaceAddress,
+    sys::socket::LinkAddr,
 };
 use smallvec::SmallVec;
-use tokio::io::{
-    unix::AsyncFd,
-    Interest,
-};
 
-use super::{
-    packet::{
-        PacketListener,
-        PacketSender,
-    },
-    MacAddress,
+use super::socket::{
+    Mode,
+    Receiver,
+    Sender,
+    Socket,
 };
+use crate::protocol::inet::MacAddress;
 
-/// A network interface.
-#[derive(Clone)]
-pub struct Interface {
-    first: Arc<nix::ifaddrs::InterfaceAddress>,
+struct Inner {
+    first: nix::ifaddrs::InterfaceAddress,
     link: Link,
     ipv4: SmallVec<[Ipv4; 1]>,
     ipv6: SmallVec<[Ipv6; 1]>,
 }
 
+/// A network interface.
+#[derive(Clone)]
+pub struct Interface {
+    inner: Arc<Inner>,
+}
+
 impl Interface {
-    fn new(addresses: &[Arc<nix::ifaddrs::InterfaceAddress>]) -> Self {
+    fn new(addresses: Vec<nix::ifaddrs::InterfaceAddress>) -> Self {
         let first = addresses
             .first()
             .expect("trying to create an interface with no addresses")
@@ -111,41 +107,60 @@ impl Interface {
                                 link.is_none(),
                                 "interface with multiple link layer addresses"
                             );
+
+                            let net_mask = addr
+                                .netmask
+                                .and_then(|a| a.as_link_addr().unwrap().addr())
+                                .map(Into::into);
+
+                            let broadcast = addr
+                                .broadcast
+                                .and_then(|a| a.as_link_addr().unwrap().addr())
+                                .map(Into::into);
+
+                            let destination = addr
+                                .destination
+                                .and_then(|a| a.as_link_addr().unwrap().addr())
+                                .map(Into::into);
+
                             link = Some(Link {
-                                interface: addr.clone(),
+                                interface: addr,
                                 link_addr,
-                                net_mask: addr
-                                    .netmask
-                                    .and_then(|a| a.as_link_addr().unwrap().addr())
-                                    .map(Into::into),
-                                broadcast: addr
-                                    .broadcast
-                                    .and_then(|a| a.as_link_addr().unwrap().addr())
-                                    .map(Into::into),
-                                destination: addr
-                                    .destination
-                                    .and_then(|a| a.as_link_addr().unwrap().addr())
-                                    .map(Into::into),
+                                net_mask,
+                                broadcast,
+                                destination,
                             });
                         }
                     }
                 }
                 Some(Kind::Ipv4) => {
+                    let address = addr.address.map(|a| a.as_sockaddr_in().unwrap().ip());
+                    let net_mask = addr
+                        .netmask
+                        .map(|a| a.as_sockaddr_in().unwrap().ip().into());
+                    let broadcast = addr.broadcast.map(|a| a.as_sockaddr_in().unwrap().ip());
+                    let destination = addr.destination.map(|a| a.as_sockaddr_in().unwrap().ip());
                     ipv4.push(Ipv4 {
-                        interface: addr.clone(),
-                        address: addr.address.map(|a| *a.as_sockaddr_in().unwrap()),
-                        net_mask: addr.netmask.map(|a| *a.as_sockaddr_in().unwrap()),
-                        broadcast: addr.broadcast.map(|a| *a.as_sockaddr_in().unwrap()),
-                        destination: addr.destination.map(|a| *a.as_sockaddr_in().unwrap()),
+                        interface: addr,
+                        address,
+                        net_mask,
+                        broadcast,
+                        destination,
                     });
                 }
                 Some(Kind::Ipv6) => {
+                    let address = addr.address.map(|a| a.as_sockaddr_in6().unwrap().ip());
+                    let net_mask = addr
+                        .netmask
+                        .map(|a| a.as_sockaddr_in6().unwrap().ip().into());
+                    let broadcast = addr.broadcast.map(|a| a.as_sockaddr_in6().unwrap().ip());
+                    let destination = addr.destination.map(|a| a.as_sockaddr_in6().unwrap().ip());
                     ipv6.push(Ipv6 {
-                        interface: addr.clone(),
-                        address: addr.address.map(|a| *a.as_sockaddr_in6().unwrap()),
-                        net_mask: addr.netmask.map(|a| *a.as_sockaddr_in6().unwrap()),
-                        broadcast: addr.broadcast.map(|a| *a.as_sockaddr_in6().unwrap()),
-                        destination: addr.destination.map(|a| *a.as_sockaddr_in6().unwrap()),
+                        interface: addr,
+                        address,
+                        net_mask,
+                        broadcast,
+                        destination,
                     });
                 }
                 None => todo!(),
@@ -153,17 +168,17 @@ impl Interface {
         }
 
         Self {
-            first,
-            link: link.expect("interface with no link layer address"),
-            ipv4,
-            ipv6,
+            inner: Arc::new(Inner {
+                first,
+                link: link.expect("interface with no link layer address"),
+                ipv4,
+                ipv6,
+            }),
         }
     }
 
-    pub fn enumerate() -> Result<Vec<Interface>, std::io::Error> {
-        let mut addresses = nix::ifaddrs::getifaddrs()?
-            .map(Arc::new)
-            .collect::<Vec<_>>();
+    pub fn list() -> Result<Vec<Interface>, std::io::Error> {
+        let mut addresses = nix::ifaddrs::getifaddrs()?.collect::<Vec<_>>();
         addresses.sort_by(|a, b| a.interface_name.cmp(&b.interface_name));
         let n = addresses.len();
         let mut it = addresses.into_iter();
@@ -179,8 +194,7 @@ impl Interface {
 
         while let Some(next) = it.next() {
             if next.interface_name != prev.interface_name {
-                interfaces.push(Self::new(&buf));
-                buf.clear();
+                interfaces.push(Self::new(std::mem::take(&mut buf)));
                 prev = next.clone();
             }
             buf.push(next);
@@ -188,7 +202,7 @@ impl Interface {
 
         if !buf.is_empty() {
             // buf is empty if there was only 1 interface to begin with.
-            interfaces.push(Self::new(&buf));
+            interfaces.push(Self::new(buf));
         }
 
         interfaces.shrink_to_fit();
@@ -199,82 +213,87 @@ impl Interface {
         let mut buf = vec![];
         for address in nix::ifaddrs::getifaddrs().ok()? {
             if address.interface_name == name {
-                buf.push(Arc::new(address))
+                buf.push(address)
             }
         }
         if buf.is_empty() {
             None
         }
         else {
-            Some(Self::new(&buf))
+            Some(Self::new(buf))
         }
     }
 
     pub fn link(&self) -> &Link {
-        &self.link
+        &self.inner.link
     }
 
     pub fn ipv4(&self) -> ConfigIter<'_, Ipv4> {
         ConfigIter {
-            inner: self.ipv4.iter(),
+            inner: self.inner.ipv4.iter(),
         }
     }
 
     pub fn ipv6(&self) -> ConfigIter<'_, Ipv6> {
         ConfigIter {
-            inner: self.ipv6.iter(),
+            inner: self.inner.ipv6.iter(),
         }
     }
 
     #[inline]
     pub fn name(&self) -> &str {
-        &self.first.interface_name
+        &self.inner.first.interface_name
     }
 
     #[inline]
     pub fn flags(&self) -> Flags {
-        self.first.flags
+        self.inner.first.flags
     }
 
     #[inline]
     pub fn hardware_address(&self) -> MacAddress {
-        self.link.address()
+        self.inner.link.address()
     }
 
     pub fn if_index(&self) -> usize {
-        self.link.link_addr.ifindex()
+        self.inner.link.link_addr.ifindex()
     }
 
     /// A LinkAddr we can use to bind a raw socket with
     #[inline]
-    fn raw_bind_address(&self) -> Option<nix::sys::socket::LinkAddr> {
-        self.link.interface.address?.as_link_addr().copied()
+    pub(super) fn raw_bind_address(&self) -> Option<nix::sys::socket::LinkAddr> {
+        self.inner.link.interface.address?.as_link_addr().copied()
     }
 
-    pub fn socket(&self) -> Result<Socket, std::io::Error> {
-        Socket::open(self.clone())
+    #[inline]
+    pub fn socket(&self, mode: Mode) -> Result<Socket, std::io::Error> {
+        Socket::open(self.clone(), mode)
+    }
+
+    #[inline]
+    pub fn channel(&self, mode: Mode) -> Result<(Sender, Receiver), std::io::Error> {
+        Ok(self.socket(mode)?.into_channel())
     }
 }
 
 impl Debug for Interface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Interface")
-            .field("link", &self.link)
-            .field("ipv4", &self.ipv4)
-            .field("ipv6", &self.ipv6)
-            .finish()
+        let mut s = f.debug_struct("Interface");
+        s.field("name", &self.name())
+            .field("link", &self.inner.link);
+        if !self.inner.ipv4.is_empty() {
+            s.field("ipv4", &self.inner.ipv4);
+        }
+        if !self.inner.ipv6.is_empty() {
+            s.field("ipv6", &self.inner.ipv6);
+        }
+        s.finish()
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IpVersion {
-    V4,
-    V6,
 }
 
 #[derive(Clone)]
 pub struct Link {
-    interface: Arc<nix::ifaddrs::InterfaceAddress>,
+    interface: InterfaceAddress,
     link_addr: LinkAddr,
     net_mask: Option<MacAddress>,
     broadcast: Option<MacAddress>,
@@ -320,104 +339,121 @@ impl Link {
 
 impl Debug for Link {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Config")
-            .field("protocol", &self.protocol())
+        let mut s = f.debug_struct("Link");
+        s.field("protocol", &self.protocol())
             .field("hardware_type", &self.hardware_type())
             .field("packet_type", &self.packet_type())
-            .field("address", &self.address())
-            .field("net_mask", &self.net_mask)
-            .field("broadcast", &self.broadcast)
-            .field("destination", &self.destination)
-            .finish()
+            .field("address", &self.address());
+        if let Some(net_mask) = &self.net_mask {
+            s.field("net_mask", net_mask);
+        }
+        if let Some(broadcast) = &self.broadcast {
+            s.field("broadcast", broadcast);
+        }
+        if let Some(destination) = &self.destination {
+            s.field("destination", destination);
+        }
+        s.finish()
     }
 }
 
 #[derive(Clone)]
 pub struct Ipv4 {
-    interface: Arc<nix::ifaddrs::InterfaceAddress>,
-    address: Option<nix::sys::socket::SockaddrIn>,
-    net_mask: Option<nix::sys::socket::SockaddrIn>,
-    broadcast: Option<nix::sys::socket::SockaddrIn>,
-    destination: Option<nix::sys::socket::SockaddrIn>,
+    interface: InterfaceAddress,
+    address: Option<Ipv4Addr>,
+    net_mask: Option<Ipv4Network>,
+    broadcast: Option<Ipv4Addr>,
+    destination: Option<Ipv4Addr>,
 }
 
 impl Ipv4 {
     #[inline]
     pub fn address(&self) -> Option<Ipv4Addr> {
-        self.address.map(|a| a.ip())
+        self.address
     }
 
     #[inline]
-    pub fn net_mask(&self) -> Option<Ipv4Addr> {
-        self.net_mask.map(|a| a.ip())
+    pub fn net_mask(&self) -> Option<Ipv4Network> {
+        self.net_mask
     }
 
     #[inline]
     pub fn broadcast(&self) -> Option<Ipv4Addr> {
-        self.broadcast.map(|a| a.ip())
+        self.broadcast
     }
 
     #[inline]
     pub fn destination(&self) -> Option<Ipv4Addr> {
-        self.destination.map(|a| a.ip())
-    }
-
-    #[inline]
-    pub(crate) fn interface(&self) -> &nix::ifaddrs::InterfaceAddress {
-        &self.interface
+        self.destination
     }
 }
 
 impl Debug for Ipv4 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Ip")
-            .field("address", &self.address())
-            .field("net_mask", &self.net_mask())
-            .field("broadcast", &self.broadcast())
-            .field("destination", &self.destination())
-            .finish()
+        let mut s = f.debug_struct("Ipv4");
+        if let Some(address) = &self.address {
+            s.field("address", address);
+        }
+        if let Some(net_mask) = &self.net_mask {
+            s.field("net_mask", net_mask);
+        }
+        if let Some(broadcast) = &self.broadcast {
+            s.field("broadcast", broadcast);
+        }
+        if let Some(destination) = &self.destination {
+            s.field("destination", destination);
+        }
+        s.finish()
     }
 }
 
 #[derive(Clone)]
 pub struct Ipv6 {
-    interface: Arc<nix::ifaddrs::InterfaceAddress>,
-    address: Option<nix::sys::socket::SockaddrIn6>,
-    net_mask: Option<nix::sys::socket::SockaddrIn6>,
-    broadcast: Option<nix::sys::socket::SockaddrIn6>,
-    destination: Option<nix::sys::socket::SockaddrIn6>,
+    interface: InterfaceAddress,
+    address: Option<Ipv6Addr>,
+    net_mask: Option<Ipv6Network>,
+    broadcast: Option<Ipv6Addr>,
+    destination: Option<Ipv6Addr>,
 }
 
 impl Ipv6 {
+    #[inline]
     pub fn address(&self) -> Option<Ipv6Addr> {
-        self.address.map(|a| a.ip())
+        self.address
     }
 
-    pub fn net_mask(&self) -> Option<Ipv6Addr> {
-        self.net_mask.map(|a| a.ip())
+    #[inline]
+    pub fn net_mask(&self) -> Option<Ipv6Network> {
+        self.net_mask
     }
 
+    #[inline]
     pub fn broadcast(&self) -> Option<Ipv6Addr> {
-        self.broadcast.map(|a| a.ip())
+        self.broadcast
     }
 
+    #[inline]
     pub fn destination(&self) -> Option<Ipv6Addr> {
-        self.destination.map(|a| a.ip())
-    }
-
-    pub(crate) fn interface(&self) -> &nix::ifaddrs::InterfaceAddress {
-        &self.interface
+        self.destination
     }
 }
 
 impl Debug for Ipv6 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Ip")
-            .field("address", &self.address())
-            .field("net_mask", &self.net_mask())
-            .field("broadcast", &self.broadcast())
-            .field("destination", &self.destination())
-            .finish()
+        let mut s = f.debug_struct("Ipv6");
+        if let Some(address) = &self.address {
+            s.field("address", address);
+        }
+        if let Some(net_mask) = &self.net_mask {
+            s.field("net_mask", net_mask);
+        }
+        if let Some(broadcast) = &self.broadcast {
+            s.field("broadcast", broadcast);
+        }
+        if let Some(destination) = &self.destination {
+            s.field("destination", destination);
+        }
+        s.finish()
     }
 }
 
@@ -440,84 +476,3 @@ impl<'a, T> DoubleEndedIterator for ConfigIter<'a, T> {
 }
 
 impl<'a, T> ExactSizeIterator for ConfigIter<'a, T> {}
-
-/// A "raw" socket. This can be used to send and receive ethernet frames.[1]
-///
-/// This can be created with [`Interface::socket`].
-///
-/// [1]: https://www.man7.org/linux/man-pages/man7/packet.7.html
-#[derive(Debug)]
-pub struct Socket {
-    socket: AsyncFd<OwnedFd>,
-    interface: Interface,
-}
-
-impl Socket {
-    fn open(interface: Interface) -> Result<Self, std::io::Error> {
-        // note: the returned OwnedFd will close the socket on drop.
-        let socket = nix::sys::socket::socket(
-            AddressFamily::Packet,
-            SockType::Raw,
-            SockFlag::SOCK_NONBLOCK,
-            SockProtocol::EthAll,
-        )?;
-
-        let bind_address = interface
-            .raw_bind_address()
-            .expect("interface has no address we can bind to");
-        // note: we might need to set the protocol field in `bind_addr`, but this is
-        // currently not possible. see https://github.com/nix-rust/nix/issues/2059
-        nix::sys::socket::bind(socket.as_raw_fd(), &bind_address)?;
-
-        let socket = AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?;
-
-        Ok(Self { socket, interface })
-    }
-
-    /// Receives a packet from the interface.
-    ///
-    /// The real packet size is returned, even if the buffer wasn't large
-    /// enough.
-    pub async fn receive(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.socket
-            .async_io(Interest::READABLE, |socket| {
-                // MsgFlags::MSG_TRUNC tells the kernel to return the real packet length, even
-                // if the buffer is not large enough.
-                Ok(nix::sys::socket::recv(
-                    socket.as_raw_fd(),
-                    buf,
-                    MsgFlags::MSG_TRUNC,
-                )?)
-            })
-            .await
-    }
-
-    pub async fn send(&self, buf: &[u8]) -> Result<(), std::io::Error> {
-        // can we send one packet with multiple `send` calls? then we can send `impl
-        // Buf`.
-        let bytes_sent = self
-            .socket
-            .async_io(Interest::WRITABLE, |socket| {
-                Ok(nix::sys::socket::send(
-                    socket.as_raw_fd(),
-                    buf,
-                    MsgFlags::empty(),
-                )?)
-            })
-            .await?;
-        if bytes_sent < buf.len() {
-            tracing::warn!(buf_len = buf.len(), bytes_sent, "sent truncated packet");
-        }
-        Ok(())
-    }
-
-    pub fn interface(&self) -> &Interface {
-        &self.interface
-    }
-
-    // todo: remove this
-    pub fn into_pair(self) -> (PacketListener, PacketSender) {
-        let this = Arc::new(self);
-        (PacketListener::new(this.clone()), PacketSender::new(this))
-    }
-}
