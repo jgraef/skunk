@@ -1,28 +1,21 @@
+use std::net::Ipv4Addr;
+
 use bitflags::bitflags;
 use byst::{
     endianness::NetworkEndian,
     io::{
         read,
         End,
+        Limit,
         Read,
+        Reader,
+        ReaderExt,
     },
+    Bytes,
 };
 
-use crate::proxy::pcap::interface::Ipv4;
-
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid IPv4 packet")]
-pub enum InvalidPacket {
-    #[error("Packet is incomplete")]
-    Incomplete(#[from] End),
-
-    Payload(#[from] PayloadError),
-
-    #[error("Invalid internet header length: {value}")]
-    InvalidInternetHeaderLength {
-        value: u8,
-    },
-}
+use super::udp;
+use crate::util::network_enum;
 
 #[derive(Clone, Debug)]
 pub struct Header {
@@ -35,23 +28,15 @@ pub struct Header {
     pub flags: Flags,
     pub fragment_offset: u16,
     pub time_to_live: u8,
-    pub protocol: u8,
+    pub protocol: Protocol,
     pub header_checksum: u16,
-    pub source_address: Ipv4,
-    pub destination_address: Ipv4,
+    pub source_address: Ipv4Addr,
+    pub destination_address: Ipv4Addr,
     //pub options: Options,
 }
 
-impl<R> Read<R, ()> for Header
-where
-    u8: Read<R, ()>,
-    InvalidPacket: From<<u8 as Read<R, ()>>::Error>,
-    u16: Read<R, NetworkEndian>,
-    InvalidPacket: From<<u16 as Read<R, NetworkEndian>>::Error>,
-    Ipv4: Read<R, ()>,
-    InvalidPacket: From<<Ipv4 as Read<R, ()>>::Error>,
-{
-    type Error = InvalidPacket;
+impl<R: Reader> Read<R, ()> for Header {
+    type Error = InvalidHeader;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let version_ihl = read!(reader => u8)?;
@@ -59,7 +44,7 @@ where
         let internet_header_length = version_ihl & 0xf;
         if internet_header_length != 5 {
             // todo: support options
-            return Err(InvalidPacket::InvalidInternetHeaderLength {
+            return Err(InvalidHeader::InvalidInternetHeaderLength {
                 value: internet_header_length,
             });
         }
@@ -116,33 +101,88 @@ bitflags! {
 
 #[derive(Clone, Debug)]
 pub struct Packet<P = AnyPayload> {
+    header: Header,
     payload: P,
 }
 
-impl<R, P> Read<R, ()> for Packet<P>
+impl<R: Reader, P, E> Read<R, ()> for Packet<P>
 where
-    P: Read<R, (), Error = PayloadError>,
+    P: for<'r> Read<Limit<&'r mut R>, Protocol, Error = E>,
 {
-    type Error = InvalidPacket;
+    type Error = InvalidPacket<E>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
-        let _payload = read!(reader => P)?;
+        let header: Header = reader.read()?;
 
-        todo!();
-    }
-}
+        let payload_length =
+            usize::from(header.total_length) - usize::from(header.internet_header_length);
+        let mut limit = reader.limit(payload_length);
+        let payload = limit
+            .read_with(header.protocol)
+            .map_err(InvalidPacket::Payload)?;
+        limit.skip_remaining()?;
 
-#[derive(Clone, Debug)]
-pub enum AnyPayload {}
-
-impl<R> Read<R, ()> for AnyPayload {
-    type Error = PayloadError;
-
-    fn read(_reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
-        todo!();
+        Ok(Self { header, payload })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("IPv4 payload layer error")]
-pub enum PayloadError {}
+#[error("Invalid IPv4 packet")]
+pub enum InvalidPacket<P> {
+    Incomplete(#[from] End),
+    Header(#[from] InvalidHeader),
+    Payload(#[source] P),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid IPv4 header")]
+pub enum InvalidHeader {
+    #[error("Header is incomplete")]
+    Incomplete(#[from] End),
+
+    #[error("Invalid internet header length: {value}")]
+    InvalidInternetHeaderLength { value: u8 },
+}
+
+#[derive(Clone, Debug)]
+pub enum AnyPayload<P = Bytes> {
+    Udp(udp::Packet<P>),
+    Unknown(P),
+}
+
+impl<R: Reader, P, E> Read<R, Protocol> for AnyPayload<P>
+where
+    P: Read<R, (), Error = E>,
+{
+    type Error = AnyPayloadError<E>;
+
+    fn read(_reader: &mut R, protocol: Protocol) -> Result<Self, Self::Error> {
+        match protocol {
+            //Protocol::UDP => Ok(Self::Udp(reader.read()?)),
+            //_ => Ok(Self::Unknown(reader.read()?))
+            _ => todo!(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("IPv4 payload error")]
+pub enum AnyPayloadError<P> {
+    Udp(#[from] udp::InvalidPacket<P>),
+}
+
+#[derive(Clone, Copy, Debug, Read)]
+pub struct Protocol(pub u8);
+
+network_enum! {
+    for Protocol
+
+    /// Internet Control Message Protocol
+    ICMP => 0x01;
+
+    /// Transmission Control Protocol
+    TCP => 0x06;
+
+    /// User Datagram Protocol
+    UDP => 0x11;
+}

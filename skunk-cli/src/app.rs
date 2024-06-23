@@ -441,7 +441,7 @@ async fn pcap_run(interface: Interface, shutdown: CancellationToken) -> Result<(
     async fn handle_packet(mut packet: Bytes) -> Result<(), Error> {
         println!("{}", hexdump(&packet));
 
-        let frame = read!(&mut packet => ethernet::Packet)?;
+        let frame = read!(&mut packet => ethernet::Frame)?;
 
         tracing::debug!(?frame);
 

@@ -668,7 +668,7 @@ impl Buf for ArcBuf {
 }
 
 impl_me! {
-    impl Reader for ArcBuf as BufReader;
+    impl[] Reader for ArcBuf as BufReader;
 }
 
 impl BufReader for ArcBuf {
@@ -702,8 +702,14 @@ impl BufReader for ArcBuf {
         }
     }
 
+    #[inline]
     fn remaining(&self) -> usize {
         self.len()
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
     }
 }
 

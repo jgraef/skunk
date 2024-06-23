@@ -131,6 +131,11 @@ impl BufReader for Bytes {
     fn remaining(&self) -> usize {
         <View as BufReader>::remaining(&self.inner)
     }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
+    }
 }
 
 impl Length for Bytes {
@@ -142,4 +147,5 @@ impl Length for Bytes {
 
 impl_me! {
     impl Reader for Bytes as BufReader;
+    impl Read<_, ()> for Bytes as BufReader;
 }

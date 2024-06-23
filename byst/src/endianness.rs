@@ -13,7 +13,7 @@ use super::io::{
     WriteXe,
 };
 use crate::io::{
-    BufReader,
+    Reader,
     ReaderExt,
 };
 
@@ -122,7 +122,7 @@ macro_rules! impl_endianness {
             }
         }
 
-        impl<R: BufReader> Read<R, $endianness> for $ty {
+        impl<R: Reader> Read<R, $endianness> for $ty {
             type Error = End;
 
             #[inline]

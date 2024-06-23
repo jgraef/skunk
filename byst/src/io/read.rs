@@ -16,15 +16,18 @@ use crate::{
     RangeOutOfBounds,
 };
 
-/// Something that can be read from a reader `R`, given the parameters `P`.
-pub trait Read<R: ?Sized, P>: Sized {
+/// Something that can be read from a reader `R`, given the context `C`.
+pub trait Read<R: ?Sized, C>: Sized {
     type Error;
 
-    fn read(reader: &mut R, parameters: P) -> Result<Self, Self::Error>;
+    fn read(reader: &mut R, context: C) -> Result<Self, Self::Error>;
 }
 
 pub trait Reader {
+    // todo: remove `limit` argument. `dest` could be an `impl Writer`
     fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize;
+
+    fn skip(&mut self, amount: usize) -> usize;
 }
 
 pub trait ReaderExt: Reader {
@@ -48,6 +51,11 @@ pub trait ReaderExt: Reader {
             Err(End)
         }
     }
+
+    #[inline]
+    fn limit(&mut self, limit: usize) -> Limit<&mut Self> {
+        Limit::new(self, limit)
+    }
 }
 
 impl<R: Reader> ReaderExt for R {}
@@ -62,6 +70,8 @@ pub trait BufReader: Reader {
     fn advance(&mut self, by: usize) -> Result<(), End>;
 
     fn remaining(&self) -> usize;
+
+    fn rest(&mut self) -> Self::View;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, thiserror::Error)]
@@ -106,10 +116,16 @@ impl<'a, R: Reader> Reader for &'a mut R {
     fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize {
         Reader::read_into(*self, dest, limit)
     }
+
+    #[inline]
+    fn skip(&mut self, amount: usize) -> usize {
+        Reader::skip(*self, amount)
+    }
 }
 
 impl_me! {
-    impl ['a] Reader for &'a [u8] as BufReader;
+    impl['a] Reader for &'a [u8] as BufReader;
+    impl['a] Read<Self, ()> for &'a [u8] as BufReader;
 }
 
 impl<'a, R: BufReader> BufReader for &'a mut R {
@@ -133,6 +149,11 @@ impl<'a, R: BufReader> BufReader for &'a mut R {
     #[inline]
     fn remaining(&self) -> usize {
         R::remaining(self)
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        R::rest(self)
     }
 }
 
@@ -162,13 +183,18 @@ impl<'a> BufReader for &'a [u8] {
     fn remaining(&self) -> usize {
         self.len()
     }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
+    }
 }
 
 impl<R> Read<R, ()> for () {
     type Error = Infallible;
 
     #[inline]
-    fn read(_reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(_reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         Ok(())
     }
 }
@@ -177,7 +203,7 @@ impl<R, T> Read<R, ()> for PhantomData<T> {
     type Error = Infallible;
 
     #[inline]
-    fn read(_reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(_reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         Ok(PhantomData)
     }
 }
@@ -186,7 +212,7 @@ impl<R: Reader, C, T: Read<R, C>, const N: usize> Read<R, C> for [T; N] {
     type Error = End;
 
     #[inline]
-    fn read(reader: &mut R, _parameters: C) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: C) -> Result<Self, Self::Error> {
         todo!();
     }
 }
@@ -196,7 +222,7 @@ impl<R: Reader, const N: usize> Read<R, ()> for [u8; N] {
     type Error = End;
 
     #[inline]
-    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         reader.read_byte_array()
     }
 }
@@ -205,7 +231,7 @@ impl<R: Reader> Read<R, ()> for u8 {
     type Error = End;
 
     #[inline]
-    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         Ok(reader.read_byte_array::<1>()?[0])
     }
 }
@@ -214,7 +240,7 @@ impl<R: Reader> Read<R, ()> for i8 {
     type Error = End;
 
     #[inline]
-    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         Ok(reader.read::<u8>()? as i8)
     }
 }
@@ -223,7 +249,7 @@ impl<R: Reader> Read<R, ()> for Ipv4Addr {
     type Error = End;
 
     #[inline]
-    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         Ok(Ipv4Addr::from(reader.read::<[u8; 4]>()?))
     }
 }
@@ -232,7 +258,7 @@ impl<R: Reader> Read<R, ()> for Ipv6Addr {
     type Error = End;
 
     #[inline]
-    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         Ok(Ipv6Addr::from(reader.read::<[u8; 16]>()?))
     }
 }
@@ -262,7 +288,7 @@ macro_rules! impl_read_for_tuple {
         {
             type Error = <$first_ty as Read<R, ()>>::Error;
 
-            fn read(mut reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
+            fn read(mut reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
                 let $first_name = <$first_ty as Read<R, ()>>::read(&mut reader, ())?;
                 $(
                     let $tail_name = <$tail_ty as Read<R, ()>>::read(&mut reader, ())?;
@@ -301,3 +327,5 @@ macro_rules! read {
     };
 }
 pub use read;
+
+use super::Limit;

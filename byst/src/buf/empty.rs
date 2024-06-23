@@ -143,6 +143,11 @@ impl BufReader for Empty {
     fn remaining(&self) -> usize {
         0
     }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        Self
+    }
 }
 
 impl BufWriter for Empty {
@@ -186,6 +191,11 @@ impl BufWriter for Empty {
 impl Reader for Empty {
     #[inline]
     fn read_into<D: BufMut>(&mut self, _dest: D, _limit: impl Into<Option<usize>>) -> usize {
+        0
+    }
+
+    #[inline]
+    fn skip(&mut self, _amount: usize) -> usize {
         0
     }
 }

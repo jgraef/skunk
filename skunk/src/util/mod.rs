@@ -20,6 +20,10 @@ use std::{
 };
 
 pub use byst::util::for_tuple;
+use byst::{
+    io::BufReader,
+    Buf,
+};
 use parking_lot::Mutex;
 pub use tokio_util::sync::CancellationToken;
 
@@ -115,21 +119,30 @@ macro_rules! network_enum {
                 pub const $name: Self = Self($num);
             )*
 
-            pub fn name(&self) -> Option<&'static str> {
+            pub fn name(&self) -> ::std::option::Option<&'static str> {
                 match self.0 {
                     $(
-                        $num => Some(stringify!($name)),
+                        $num => ::std::option::Option::Some(stringify!($name)),
                     )*
-                    _ => None,
+                    _ => ::std::option::Option::None,
                 }
             }
 
-            pub fn description(&self) -> Option<&'static str> {
+            pub fn description(&self) -> ::std::option::Option<&'static str> {
                 match self.0 {
                     $(
-                        $($num => Some($doc),)?
+                        $($num => ::std::option::Option::Some($doc),)?
                     )*
-                    _ => None,
+                    _ => ::std::option::Option::None,
+                }
+            }
+
+            pub fn is_known_value(&self) -> ::std::primitive::bool {
+                match self.0 {
+                    $(
+                        $num => true,
+                    )*
+                    _ => false,
                 }
             }
         }
@@ -170,3 +183,36 @@ impl<'a, T: Display> Display for Punctuated<'a, T> {
         Ok(())
     }
 }
+
+pub trait CrcExt {
+    type Output;
+
+    fn for_reader(&'static self, reader: impl BufReader) -> Self::Output;
+
+    #[inline]
+    fn for_buf(&'static self, buf: impl Buf) -> Self::Output {
+        self.for_reader(buf.reader())
+    }
+}
+
+macro_rules! impl_crc_ext {
+    ($($ty:ty)*) => {
+        $(
+            impl CrcExt for crc::Algorithm<$ty> {
+                type Output = $ty;
+
+                fn for_reader(&'static self, mut reader: impl BufReader) -> Self::Output {
+                    let crc = crc::Crc::<$ty>::new(self);
+                    let mut digest = crc.digest();
+                    while let Ok(chunk) = reader.chunk() {
+                        digest.update(chunk);
+                        reader.advance(chunk.len()).unwrap();
+                    }
+                    digest.finalize()
+                }
+            }
+        )*
+    };
+}
+
+impl_crc_ext!(u32);

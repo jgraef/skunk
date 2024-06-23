@@ -7,8 +7,12 @@ use byst::{
     endianness::NetworkEndian,
     io::{
         read,
+        BufReader,
         End,
+        Limit,
         Read,
+        Reader,
+        ReaderExt,
     },
 };
 use smallvec::SmallVec;
@@ -17,30 +21,17 @@ use super::{
     arp,
     ipv4,
     mac_address::MacAddress,
-    vlan::VlanTag,
 };
-use crate::util::network_enum;
+use crate::util::{
+    network_enum,
+    CrcExt,
+};
 
 /// Max payload size for ethernet frames.
 pub const MTU: usize = 1500;
 
 /// Max frame size for ethernet frames.
 pub const MAX_FRAME_SIZE: usize = 1522;
-
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid ethernet packet")]
-pub enum InvalidPacket {
-    #[error("Frame is incomplete")]
-    Incomplete(#[from] End),
-
-    Payload(#[from] PayloadError),
-}
-
-impl From<Infallible> for InvalidPacket {
-    fn from(value: Infallible) -> Self {
-        match value {}
-    }
-}
 
 /// An Ethernet II header.
 #[derive(Clone, Debug)]
@@ -51,24 +42,35 @@ pub struct Header {
     pub ether_type: EtherType,
 }
 
-impl<R> Read<R, ()> for Header
-where
-    MacAddress: Read<R, (), Error = End>,
-    VlanTag: Read<R, (), Error = End>,
-    EtherType: Read<R, (), Error = End>,
-{
-    type Error = InvalidPacket;
+impl<R: Reader> Read<R, ()> for Header {
+    type Error = InvalidHeader;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
-        let destination = read!(reader)?;
-        let source = read!(reader)?;
+        let destination = reader.read()?;
+        let source = reader.read()?;
 
         let mut vlan_tags = SmallVec::new();
-        let mut ether_type = read!(reader)?;
+        let mut ether_type = reader.read()?;
 
-        while ether_type == EtherType::VLAN_TAGGED {
-            ether_type = read!(reader)?;
-            vlan_tags.push(read!(reader)?);
+        // If we find at least one IEEE 802.1ad VLAN tag, we also expect a final VLAN
+        // tag according to IEEE 802.1Q
+        let expect_vlan_tag_q = ether_type == EtherType::VLAN_TAGGED_QINQ;
+
+        // First we read VLAN tags according to IEEE 802.1ad
+        while ether_type == EtherType::VLAN_TAGGED_QINQ {
+            vlan_tags.push(reader.read()?);
+            ether_type = reader.read()?;
+        }
+
+        // Then we read the final IEEE 802.1Q VLAN tag
+        if expect_vlan_tag_q {
+            if ether_type == EtherType::VLAN_TAGGED {
+                vlan_tags.push(reader.read()?);
+                ether_type = reader.read()?;
+            }
+            else {
+                return Err(InvalidHeader::Expected8021QTag);
+            }
         }
 
         Ok(Self {
@@ -91,34 +93,56 @@ where
 ///
 /// [1]: https://en.wikipedia.org/wiki/Ethernet_frame
 #[derive(Clone, Debug)]
-pub struct Packet<P = AnyProtocol> {
+pub struct Frame<P = AnyProtocol> {
     pub header: Header,
     pub payload: P,
     pub frame_check_sequence: FrameCheckSequence,
 }
 
-impl<R, P> Read<R, ()> for Packet<P>
+impl<R: BufReader, P, E> Read<R, ()> for Frame<P>
 where
-    Header: Read<R, (), Error = InvalidPacket>,
-    P: Read<R, EtherType, Error = PayloadError>,
-    FrameCheckSequence: Read<R, (), Error = Infallible>,
+    P: for<'r> Read<Limit<&'r mut R>, EtherType, Error = E>,
 {
-    type Error = InvalidPacket;
+    type Error = InvalidFrame<E>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
-        let header = read!(reader => Header)?;
+        let fcs_present = {
+            // Compute CRC32 for this frame. if it's the expected value, the FCS is present.
+            let view = reader.view(reader.remaining()).unwrap();
+            FCS_CRC32.for_buf(view) == FCS_CRC32.residue
+        };
 
-        let payload = read!(reader => P; header.ether_type)?;
+        // Read the header
+        let header: Header = reader.read()?;
 
-        /*let remaining = reader.remaining();
-        let frame_check_sequence = if remaining > 4 {
-            reader.set_position(reader.position() + remaining - 4);
-            FrameCheckSequence::Present(read!(reader => u32; NetworkEndian)?)
+        // We currently support only Ethernet II
+        if !header.ether_type.is_ethernet2() {
+            return Err(InvalidFrame::NotEthernet2 {
+                ether_type: header.ether_type,
+            });
+        }
+
+        // Read the payload, with at most `payload_size` bytes.
+        let payload_size = if fcs_present {
+            reader.remaining().checked_sub(4).ok_or(End)?
+        }
+        else {
+            reader.remaining()
+        };
+        let mut limit = reader.limit(payload_size);
+        let payload = limit
+            .read_with(header.ether_type)
+            .map_err(InvalidFrame::Payload)?;
+
+        // Skip over padding
+        limit.skip_remaining()?;
+
+        let frame_check_sequence = if fcs_present {
+            FrameCheckSequence::Present(reader.read_with(NetworkEndian)?)
         }
         else {
             FrameCheckSequence::Absent
-        };*/
-        let frame_check_sequence = read!(reader)?;
+        };
 
         Ok(Self {
             header,
@@ -128,15 +152,42 @@ where
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid Ethernet II header")]
+pub enum InvalidHeader {
+    #[error("Header is incomplete")]
+    Incomplete(#[from] End),
+
+    #[error("Expected a final IEEE 802.1Q VLAN tag")]
+    Expected8021QTag,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid ethernet packet")]
+pub enum InvalidFrame<P> {
+    Header(#[from] InvalidHeader),
+    Payload(#[source] P),
+    #[error("Frame is not an Ethernet II frame: {ether_type:?}")]
+    NotEthernet2 {
+        ether_type: EtherType,
+    },
+    #[error("Ethernet frame is incomplete")]
+    Incomplete(#[from] End),
+}
+
+impl<P> From<Infallible> for InvalidFrame<P> {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
+}
+
 /// Payload type for an [`EthernetFrame`].
 ///
 /// > EtherType is a two-octet field in an Ethernet frame. It is used to
-/// > indicate
-/// > which protocol is encapsulated in the payload of the frame and is used at
-/// > the receiving end by the data link layer to determine how the payload is
-/// > processed. The same field is also used to indicate the size of some
-/// > Ethernet
-/// > frames.[1]
+/// > indicate which protocol is encapsulated in the payload of the frame and
+/// > is used at the receiving end by the data link layer to determine how the
+/// > payload is processed. The same field is also used to indicate the size of
+/// > some Ethernet frames.[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/EtherType
 #[derive(Clone, Copy, PartialEq, Eq, Read)]
@@ -159,6 +210,21 @@ network_enum! {
 
     /// Internet protocol version 6
     IPV6 => 0x86dd;
+
+    /// VLAN-tagged frame (IEEE 802.1ad)
+    VLAN_TAGGED_QINQ => 0x88a8;
+}
+
+impl EtherType {
+    #[inline]
+    pub fn as_frame_length(&self) -> Option<u16> {
+        (self.0 <= 1500).then_some(self.0)
+    }
+
+    #[inline]
+    pub fn is_ethernet2(&self) -> bool {
+        self.0 >= 0x0600
+    }
 }
 
 impl Debug for EtherType {
@@ -179,24 +245,6 @@ pub enum FrameCheckSequence {
     Calculate,
 }
 
-impl<R> Read<R, ()> for FrameCheckSequence
-where
-    u32: Read<R, NetworkEndian>,
-{
-    type Error = Infallible;
-
-    fn read(reader: &mut R, _parameters: ()) -> Result<Self, Self::Error> {
-        // todo: ideally we would want to know from the error if it happened because
-        // we're at the end of the reader
-        if let Ok(value) = read!(reader => u32; NetworkEndian) {
-            Ok(Self::Present(value))
-        }
-        else {
-            Ok(Self::Absent)
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum AnyProtocol {
     Arp(arp::Packet),
@@ -204,14 +252,12 @@ pub enum AnyProtocol {
     Unknown,
 }
 
-impl<R> Read<R, EtherType> for AnyProtocol
+impl<R, E> Read<R, EtherType> for AnyProtocol
 where
-    arp::Packet: Read<R, ()>,
-    PayloadError: From<<arp::Packet as Read<R, ()>>::Error>,
-    ipv4::Packet: Read<R, (), Error = ipv4::InvalidPacket>,
-    PayloadError: From<<ipv4::Packet as Read<R, ()>>::Error>,
+    arp::Packet: Read<R, (), Error = arp::InvalidPacket>,
+    ipv4::Packet: Read<R, (), Error = ipv4::InvalidPacket<E>>,
 {
-    type Error = PayloadError;
+    type Error = AnyPayloadError<E>;
 
     fn read(reader: &mut R, ether_type: EtherType) -> Result<Self, Self::Error> {
         Ok(match ether_type {
@@ -224,7 +270,60 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Payload error")]
-pub enum PayloadError {
+pub enum AnyPayloadError<E> {
     Arp(#[from] arp::InvalidPacket),
-    Ipv4(#[from] ipv4::InvalidPacket),
+    Ipv4(#[from] ipv4::InvalidPacket<E>),
 }
+
+/// Vlan tag for ethernet frames[1]
+///
+/// [1]: https://en.wikipedia.org/wiki/IEEE_802.1Q
+#[derive(Clone, Copy, Debug, Read, Default)]
+pub struct VlanTag(#[byst(network)] pub u16);
+
+impl VlanTag {
+    #[inline]
+    pub fn pcp(&self) -> u8 {
+        (self.0 >> 13) as u8
+    }
+
+    pub fn with_pcp(mut self, pcp: u8) -> Self {
+        self.0 = (self.0 & 0x1fff) | ((pcp as u16) << 13);
+        self
+    }
+
+    #[inline]
+    pub fn drop_eligible(&self) -> bool {
+        self.0 & 0x1000 != 0
+    }
+
+    pub fn with_drop_eligible(mut self, drop_eligible: bool) -> Self {
+        if drop_eligible {
+            self.0 |= 0x1000;
+        }
+        else {
+            self.0 &= !0xefff;
+        }
+        self
+    }
+
+    pub fn vlan_identifier(&self) -> u16 {
+        self.0 & 0xfff
+    }
+
+    pub fn with_vlan_identifier(mut self, vlan_identifier: u16) -> Self {
+        self.0 |= vlan_identifier & 0xfff;
+        self
+    }
+}
+
+pub const FCS_CRC32: crc::Algorithm<u32> = crc::Algorithm {
+    width: 32,
+    poly: 0x04c11db7,
+    init: 0xffffffff,
+    refin: true,
+    refout: true,
+    xorout: 0xffffffff,
+    check: 0xcbf43926,
+    residue: 0xdebb20e3,
+};

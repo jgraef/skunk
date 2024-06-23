@@ -404,47 +404,101 @@ macro_rules! cfg_pub {
 }
 pub(crate) use cfg_pub;
 
+// todo: make this a proc-macro
 #[macro_export]
 macro_rules! impl_me {
+    {} => {};
     {
-        $(
-            impl $([ $($generics:tt)* ])? Reader for $ty:ty as BufReader;
-        )*
+        impl $([ $($generics:tt)* ])? Reader for $ty:ty as BufReader;
+        $($rest:tt)*
     } => {
-        $(
-            impl<$($($generics)*)?> ::byst::io::Reader for $ty {
-                #[inline]
-                fn read_into<
-                    D: ::byst::buf::BufMut
-                >(
-                    &mut self,
-                    mut dest: D,
-                    limit: impl Into<Option<usize>>
-                ) -> usize {
-                    ::byst::copy_io(dest.writer(), self, limit)
-                }
+        impl<$($($generics)*)?> ::byst::io::Reader for $ty {
+            #[inline]
+            fn read_into<
+                D: ::byst::buf::BufMut
+            >(
+                &mut self,
+                mut dest: D,
+                limit: impl Into<Option<usize>>
+            ) -> usize {
+                ::byst::copy_io(dest.writer(), self, limit)
             }
 
-            impl<$($($generics)*)?> ::byst::io::Read<$ty, ::byst::io::Length> for <$ty as ::byst::io::BufReader>::View {
-                type Error = ::byst::io::End;
+            #[inline]
+            fn skip(&mut self, amount: usize) -> usize {
+                if let Err(::byst::io::End) = ::byst::io::BufReader::advance(self, amount) {
+                    let remaining = ::byst::io::BufReader::remaining(self);
+                    *self = Default::default();
+                    remaining
+                }
+                else {
+                    amount
+                }
+            }
+        }
 
-                #[inline]
-                fn read(reader: &mut $ty, length: ::byst::io::Length) -> Result<Self, Self::Error> {
-                    let view = ::byst::io::BufReader::view(reader, length.0)?;
-                    ::byst::io::BufReader::advance(reader, length.0)?;
+        impl<$($($generics)*)?> ::byst::io::Remaining for $ty {
+            #[inline]
+            fn remaining(&self) -> usize {
+                ::byst::io::BufReader::remaining(self)
+            }
+        }
+
+        /* fixme: this causes conflicting impls. we can let the macro caller specify the view type
+        impl<$($($generics)*)?> ::byst::io::Read<$ty, ::byst::io::Length> for <$ty as ::byst::io::BufReader>::View {
+            type Error = ::byst::io::End;
+
+            #[inline]
+            fn read(reader: &mut $ty, length: ::byst::io::Length) -> Result<Self, Self::Error> {
+                let view = ::byst::io::BufReader::view(reader, length.0)?;
+                ::byst::io::BufReader::advance(reader, length.0)?;
+                Ok(view)
+            }
+        }
+        */
+
+        impl_me!{ $($rest)* }
+    };
+    {
+        impl $([ $($generics:tt)* ])? Read<Self, ()> for $ty:ty as BufReader;
+        $($rest:tt)*
+    } => {
+        impl<$($($generics)*)?> ::byst::io::Read<$ty, ()> for $ty {
+            // todo: this should be Infallible
+            type Error = ::byst::io::End;
+
+            #[inline]
+            fn read(reader: &mut $ty, _context: ()) -> Result<Self, Self::Error> {
+                Ok(std::mem::take(reader))
+            }
+        }
+
+        impl_me!{ $($rest)* }
+    };
+    {
+        impl $([ $($generics:tt)* ])? Read<_, ()> for $ty:ty as BufReader;
+        $($rest:tt)*
+    } => {
+        impl<$($($generics)*,)? __R> ::byst::io::Read<__R, ()> for $ty
+        where
+            __R: ::byst::io::BufReader<View = $ty>,
+        {
+            // todo: this should be Infallible
+            type Error = ::byst::io::End;
+
+            #[inline]
+            fn read(reader: &mut __R, _context: ()) -> Result<Self, Self::Error> {
+                let view = reader.rest();
+                if view.is_empty() {
+                    Err(byst::io::End)
+                }
+                else {
                     Ok(view)
                 }
             }
+        }
 
-            impl<$($($generics)*)?> ::byst::io::Read<$ty, ()> for $ty {
-                type Error = ::byst::io::End;
-
-                #[inline]
-                fn read(reader: &mut $ty, _context: ()) -> Result<Self, Self::Error> {
-                    Ok(std::mem::take(reader))
-                }
-            }
-        )*
+        impl_me!{ $($rest)* }
     };
 }
 pub use impl_me;

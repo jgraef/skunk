@@ -162,13 +162,13 @@ impl<'b, B: Length> Length for View<'b, B> {
 }
 
 pub struct Reader<'a, B> {
-    segments: std::slice::Iter<'a, Segment<B>>,
+    _segments: std::slice::Iter<'a, Segment<B>>,
 }
 
 impl<'a, B> Default for Reader<'a, B> {
     fn default() -> Self {
         Self {
-            segments: [].iter(),
+            _segments: [].iter(),
         }
     }
 }
@@ -176,7 +176,7 @@ impl<'a, B> Default for Reader<'a, B> {
 impl<'a, B: Buf> BufReader for Reader<'a, B> {
     type View = View<'a, B>;
 
-    fn view(&self, length: usize) -> Result<Self::View, crate::io::End> {
+    fn view(&self, _length: usize) -> Result<Self::View, crate::io::End> {
         todo!()
     }
 
@@ -184,12 +184,17 @@ impl<'a, B: Buf> BufReader for Reader<'a, B> {
         todo!()
     }
 
-    fn advance(&mut self, by: usize) -> Result<(), crate::io::End> {
+    fn advance(&mut self, _by: usize) -> Result<(), crate::io::End> {
         todo!()
     }
 
     fn remaining(&self) -> usize {
         todo!()
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        todo!();
     }
 }
 

@@ -4,7 +4,7 @@
 //! skunk - 🦨 A person-in-the-middle proxy
 //!
 //! This is the library, which can be used to program applications using skunk.
-//! If you just want to run a program, take a look at `skunk-cli`.
+//! If you just want to run the program, take a look at `skunk-cli`.
 //!
 //! # Example
 //!

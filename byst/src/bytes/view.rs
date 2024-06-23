@@ -118,6 +118,11 @@ impl<'b> BufReader for View<'b> {
     fn remaining(&self) -> usize {
         self.inner.len()
     }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
+    }
 }
 
 pub struct ViewMut<'b> {
@@ -237,4 +242,5 @@ impl<'b> BufWriter for ViewMutWriter<'b> {
 
 impl_me! {
     impl['a] Reader for View<'a> as BufReader;
+    impl['a] Read<_, ()> for View<'a> as BufReader;
 }

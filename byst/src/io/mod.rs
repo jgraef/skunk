@@ -1,3 +1,4 @@
+mod limit;
 mod read;
 mod write;
 
@@ -7,6 +8,7 @@ pub use byst_macros::{
 };
 
 pub use self::{
+    limit::Limit,
     read::{
         read,
         BufReader,
@@ -58,20 +60,6 @@ pub trait Remaining {
     #[inline]
     fn is_at_end(&self) -> bool {
         self.remaining() == 0
-    }
-}
-
-/// A reader or writer that can skip bytes.
-pub trait Skip {
-    fn skip(&mut self, n: usize) -> Result<(), End>;
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Length(pub usize);
-
-impl From<usize> for Length {
-    fn from(value: usize) -> Self {
-        Self(value)
     }
 }
 
