@@ -506,6 +506,7 @@ impl<'a> BufWriter for VecWriter<'a> {
         let n_overwrite = std::cmp::min(self.vec.len() - self.position, with.len());
         self.vec[self.position..][..n_overwrite].copy_from_slice(&with[..n_overwrite]);
         self.vec.extend(with[n_overwrite..].iter().copied());
+        self.position += with.len();
         Ok(())
     }
 }

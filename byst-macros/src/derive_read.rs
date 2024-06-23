@@ -17,8 +17,6 @@ use syn::{
     DataStruct,
     DeriveInput,
     Fields,
-    Type,
-    WhereClause,
 };
 
 use crate::{
@@ -32,6 +30,7 @@ use crate::{
         VariantOptions,
     },
     util::{
+        DeriveBounds,
         FieldName,
         SplitGenerics,
     },
@@ -49,7 +48,7 @@ pub fn derive_read(item: DeriveInput) -> Result<TokenStream, Error> {
 fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStream, Error> {
     let options = StructDeriveOptions::from_derive_input(&item)?;
     let ident = &item.ident;
-    let (params_name, params_ty) = options.params();
+    let (context_name, context_ty) = options.context();
 
     let SplitGenerics {
         mut impl_generics,
@@ -57,18 +56,18 @@ fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStr
         where_clause,
     } = SplitGenerics::from_generics(&item.generics);
     impl_generics.type_params.push(parse_quote! { __R });
-    let mut track = TrackTypes::new(where_clause, options.error.clone());
+    let mut bounds = DeriveBounds::new(where_clause, options.error.clone());
 
-    let (read_fields, struct_init) = make_struct_init(&s.fields, &mut track)?;
+    let (read_fields, struct_init) = make_struct_init(&s.fields, &mut bounds)?;
 
-    let (where_clause, error_ty) = track.finish();
+    let (where_clause, error_ty) = bounds.finish();
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics ::byst::io::Read<__R, #params_ty> for #ident #type_generics #where_clause {
+        impl #impl_generics ::byst::io::Read<__R, #context_ty> for #ident #type_generics #where_clause {
             type Error = #error_ty;
 
-            fn read(mut __reader: &mut __R, #params_name: #params_ty) -> ::std::result::Result<Self, Self::Error> {
+            fn read(mut __reader: &mut __R, #context_name: #context_ty) -> ::std::result::Result<Self, Self::Error> {
                 #read_fields
                 ::std::result::Result::Ok(Self #struct_init)
             }
@@ -79,7 +78,7 @@ fn derive_read_for_struct(s: &DataStruct, item: &DeriveInput) -> Result<TokenStr
 fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream, Error> {
     let options = EnumDeriveOptions::from_derive_input(&item)?;
     let ident = &item.ident;
-    let (params_name, params_ty) = options.params();
+    let (context_name, context_ty) = options.context();
 
     let SplitGenerics {
         mut impl_generics,
@@ -87,9 +86,9 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
         where_clause,
     } = SplitGenerics::from_generics(&item.generics);
     impl_generics.type_params.push(parse_quote! { __R });
-    let mut track = TrackTypes::new(where_clause, options.error.clone());
+    let mut bounds = DeriveBounds::new(where_clause, options.error.clone());
 
-    let discriminant_expr = options.discriminant_expr(&mut track);
+    let discriminant_expr = options.discriminant_expr(&mut bounds);
     let mut match_arms = Vec::with_capacity(e.variants.len());
 
     for variant in &e.variants {
@@ -97,7 +96,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
         let variant_name = &variant.ident;
         let pat = variant_options.pat();
 
-        let (read_fields, struct_init) = make_struct_init(&variant.fields, &mut track)?;
+        let (read_fields, struct_init) = make_struct_init(&variant.fields, &mut bounds)?;
 
         match_arms.push(quote! {
             #pat => {
@@ -118,27 +117,27 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
             abort_call_site!("Can't derive `Read::Error` without knowing the discriminant type.")
         });
 
-        if let Some(error_ty) = &track.error_ty {
-            track.where_clause.predicates.push(
+        if let Some(error_ty) = &bounds.error_ty {
+            bounds.where_clause.predicates.push(
                 parse_quote! { #error_ty: ::std::convert::From<::byst::io::InvalidDiscriminant<#discriminant_ty>> },
             );
         }
         else {
-            track.error_ty = Some(parse_quote! {
+            bounds.error_ty = Some(parse_quote! {
                 ::byst::io::InvalidDiscriminant<#discriminant_ty>
             });
         }
     }
 
-    let (where_clause, error_ty) = track.finish();
+    let (where_clause, error_ty) = bounds.finish();
 
     Ok(quote! {
         #[automatically_derived]
         #[allow(unreachable_code)]
-        impl #impl_generics ::byst::io::Read<__R, #params_ty> for #ident #type_generics #where_clause {
+        impl #impl_generics ::byst::io::Read<__R, #context_ty> for #ident #type_generics #where_clause {
             type Error = #error_ty;
 
-            fn read(mut __reader: &mut __R, #params_name: #params_ty) -> ::std::result::Result<Self, Self::Error> {
+            fn read(mut __reader: &mut __R, #context_name: #context_ty) -> ::std::result::Result<Self, Self::Error> {
                 let __discriminant = #discriminant_expr;
                 ::std::result::Result::Ok(
                     match __discriminant {
@@ -152,7 +151,7 @@ fn derive_read_for_enum(e: &DataEnum, item: &DeriveInput) -> Result<TokenStream,
 
 fn make_struct_init(
     fields: &Fields,
-    track: &mut TrackTypes,
+    bounds: &mut DeriveBounds,
 ) -> Result<(TokenStream, TokenStream), Error> {
     let mut read_fields = Vec::with_capacity(fields.len());
     let mut struct_init = Vec::with_capacity(fields.len());
@@ -174,13 +173,13 @@ fn make_struct_init(
             });
         }
         else {
-            let (params_ty, params_expr) = field_options.params();
+            let (context_ty, context_expr) = field_options.context();
             let map_err = field_options.map_err();
 
-            track.reads(field_ty, &params_ty);
+            bounds.reads(field_ty, &context_ty);
 
             read_fields.push(quote!{
-                let #field_var = <#field_ty as ::byst::io::Read::<__R, #params_ty>>::read(&mut __reader, #params_expr).map_err(#map_err)?;
+                let #field_var = <#field_ty as ::byst::io::Read::<__R, #context_ty>>::read(&mut __reader, #context_expr).map_err(#map_err)?;
             });
         }
 
@@ -206,45 +205,6 @@ fn make_struct_init(
     let read_fields = quote! { #(#read_fields)* };
 
     Ok((read_fields, struct_init))
-}
-
-// better name, and move to util (this can probably be used for Write too)
-pub struct TrackTypes {
-    where_clause: WhereClause,
-    error_ty: Option<Type>,
-}
-
-impl TrackTypes {
-    pub fn new(where_clause: WhereClause, error_ty: Option<Type>) -> Self {
-        Self {
-            where_clause,
-            error_ty,
-        }
-    }
-
-    pub fn reads(&mut self, field_ty: &Type, params_ty: &Type) {
-        self.where_clause
-            .predicates
-            .push(parse_quote! { #field_ty: ::byst::io::Read::<__R, #params_ty> });
-
-        if let Some(error_ty) = &self.error_ty {
-            self.where_clause.predicates.push(
-                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::Read::<__R, #params_ty>>::Error> },
-            );
-        }
-        else {
-            self.error_ty = Some(parse_quote! {
-                <#field_ty as ::byst::io::Read<__R, #params_ty>>::Error
-            });
-        }
-    }
-
-    pub fn finish(self) -> (WhereClause, Type) {
-        let error_ty = self
-            .error_ty
-            .unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
-        (self.where_clause, error_ty)
-    }
 }
 
 fn derive_read_for_struct_bitfield(

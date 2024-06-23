@@ -12,6 +12,7 @@ use quote::{
 };
 use syn::{
     parse_macro_input,
+    parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
     token::Where,
@@ -26,6 +27,7 @@ use syn::{
     Lifetime,
     LifetimeParam,
     Member,
+    Type,
     TypeParam,
     WhereClause,
 };
@@ -196,5 +198,58 @@ impl<'a> ToTokens for TypeGenericParam<'a> {
             TypeGenericParam::Lifetime(lt) => lt.to_tokens(tokens),
             TypeGenericParam::Const(con) => con.to_tokens(tokens),
         }
+    }
+}
+
+// better name, and move to util (this can probably be used for Write too)
+pub struct DeriveBounds {
+    pub where_clause: WhereClause,
+    pub error_ty: Option<Type>,
+}
+
+impl DeriveBounds {
+    pub fn new(where_clause: WhereClause, error_ty: Option<Type>) -> Self {
+        Self {
+            where_clause,
+            error_ty,
+        }
+    }
+
+    pub fn reads(&mut self, field_ty: &Type, context_ty: &Type) {
+        self.add_bounds(field_ty, context_ty, quote! { __R }, quote! { Read })
+    }
+
+    pub fn writes(&mut self, field_ty: &Type, context_ty: &Type) {
+        self.add_bounds(field_ty, context_ty, quote! { __W }, quote! { Write })
+    }
+
+    fn add_bounds(
+        &mut self,
+        field_ty: &Type,
+        context_ty: &Type,
+        io_ty: TokenStream,
+        io_trait: TokenStream,
+    ) {
+        self.where_clause
+            .predicates
+            .push(parse_quote! { #field_ty: ::byst::io::#io_trait::<#io_ty, #context_ty> });
+
+        if let Some(error_ty) = &self.error_ty {
+            self.where_clause.predicates.push(
+                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::#io_trait::<#io_ty, #context_ty>>::Error> },
+            );
+        }
+        else {
+            self.error_ty = Some(parse_quote! {
+                <#field_ty as ::byst::io::#io_trait::<#io_ty, #context_ty>>::Error
+            });
+        }
+    }
+
+    pub fn finish(self) -> (WhereClause, Type) {
+        let error_ty = self
+            .error_ty
+            .unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
+        (self.where_clause, error_ty)
     }
 }

@@ -67,6 +67,12 @@ pub struct Full {
     pub remaining: usize,
 }
 
+impl From<Infallible> for Full {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
+}
+
 impl From<crate::buf::Full> for Full {
     fn from(value: crate::buf::Full) -> Self {
         Self {
@@ -235,3 +241,133 @@ macro_rules! impl_read_for_tuple {
     };
 }
 for_tuple!(impl_read_for_tuple! for 1..=8);
+
+#[cfg(test)]
+mod tests {
+    use std::marker::PhantomData;
+
+    use crate::{
+        buf::BufMut,
+        io::{
+            Write,
+            WriterExt,
+        },
+    };
+
+    macro_rules! assert_derive_write {
+        ($($ty:ty),*) => {
+            {
+                let mut buf = vec![];
+                let mut writer = buf.writer();
+                $(
+                    let _ = writer.write::<$ty>(&Default::default());
+                )*
+            }
+        };
+    }
+
+    macro_rules! assert_write {
+        ($input:expr, $expected:expr $(, $($arg:tt)+)?) => {
+            {
+                let mut buf = vec![];
+                let mut writer = buf.writer();
+                writer.write(&$input).expect("Expected write to be successful");
+                assert_eq!(buf, $expected $(, $($arg)+)?);
+            }
+        };
+    }
+
+    #[test]
+    fn derive_write_for_unit_struct() {
+        #[derive(Write, Default)]
+        struct Foo;
+        #[derive(Write, Default)]
+        struct Bar();
+        #[derive(Write, Default)]
+        struct Nya {}
+        assert_derive_write!(Foo, Bar, Nya);
+    }
+
+    #[test]
+    fn derive_write_for_struct_of_basic_types() {
+        #[derive(Write, Default)]
+        #[allow(dead_code)]
+        struct Foo {
+            x1: u8,
+            x2: i8,
+
+            #[byst(big)]
+            x3: u16,
+            #[byst(little)]
+            x4: u16,
+            #[byst(big)]
+            x5: i16,
+            #[byst(little)]
+            x6: i16,
+
+            #[byst(big)]
+            x7: u32,
+            #[byst(little)]
+            x8: u32,
+            #[byst(big)]
+            x9: i32,
+            #[byst(little)]
+            x10: i32,
+
+            #[byst(big)]
+            x11: u64,
+            #[byst(little)]
+            x12: u64,
+            #[byst(big)]
+            x13: i64,
+            #[byst(little)]
+            x14: i64,
+
+            #[byst(big)]
+            x15: u128,
+            #[byst(little)]
+            x16: u128,
+            #[byst(big)]
+            x17: i128,
+            #[byst(little)]
+            x18: i128,
+
+            x19: (),
+            x20: PhantomData<()>,
+            x21: [u8; 4],
+        }
+        assert_derive_write!(Foo);
+    }
+
+    #[test]
+    fn derive_write_for_nested_struct() {
+        #[derive(Write, Default)]
+        #[allow(dead_code)]
+        struct Bar(u8);
+        #[derive(Write, Default)]
+        #[allow(dead_code)]
+        struct Foo(Bar);
+        assert_derive_write!(Foo);
+    }
+
+    #[test]
+    fn derive_write_uses_specified_endianness() {
+        #[derive(Write, Default, Debug, PartialEq)]
+        struct Foo {
+            #[byst(big)]
+            x: u16,
+            #[byst(little)]
+            y: u16,
+            #[byst(network)]
+            z: u16,
+        }
+        assert_write!(
+            Foo {
+                x: 0x1234,
+                y: 0x3412,
+                z: 0x1234
+            },
+            b"\x12\x34\x12\x34\x12\x34"
+        );
+    }
+}

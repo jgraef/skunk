@@ -23,26 +23,26 @@ use syn::{
     Type,
 };
 
-use crate::derive_read::TrackTypes;
+use crate::util::DeriveBounds;
 
 #[derive(FromDeriveInput)]
 #[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
 pub struct StructDeriveOptions {
     pub bitfield: Option<Bitfield>,
-    pub params: Option<ParamDeriveOptions>,
+    pub context: Option<ParamDeriveOptions>,
     pub error: Option<Type>,
 }
 
 impl StructDeriveOptions {
-    pub fn params(&self) -> (Ident, Type) {
-        let (ident, ty) = if let Some(params) = &self.params {
-            (params.name.clone(), Some(params.ty.clone()))
+    pub fn context(&self) -> (Ident, Type) {
+        let (ident, ty) = if let Some(context) = &self.context {
+            (context.name.clone(), Some(context.ty.clone()))
         }
         else {
             (None, None)
         };
         (
-            ident.unwrap_or_else(|| parse_quote! { __params }),
+            ident.unwrap_or_else(|| parse_quote! { __context }),
             ty.unwrap_or_else(|| parse_quote! { () }),
         )
     }
@@ -61,7 +61,7 @@ pub struct EnumDeriveOptions {
 
     /// This can be used to implement parsing an enum without it reading the
     /// discriminant. The discriminant is supplied as parameter.
-    pub params: Option<ParamDeriveOptions>,
+    pub context: Option<ParamDeriveOptions>,
     pub error: Option<Type>,
     pub match_expr: Option<Expr>,
     #[darling(default)]
@@ -69,34 +69,34 @@ pub struct EnumDeriveOptions {
 }
 
 impl EnumDeriveOptions {
-    pub fn params(&self) -> (Ident, Type) {
-        let (ident, ty) = if let Some(params) = &self.params {
-            (params.name.clone(), Some(params.ty.clone()))
+    pub fn context(&self) -> (Ident, Type) {
+        let (ident, ty) = if let Some(context) = &self.context {
+            (context.name.clone(), Some(context.ty.clone()))
         }
         else {
             if self.discriminant.is_none() {
-                emit_call_site_error!("You either need to specify `discriminant` or `params`. Otherwise the enum has no way to determine its discriminant.");
+                emit_call_site_error!("You either need to specify `discriminant` or `context`. Otherwise the enum has no way to determine its discriminant.");
             }
             (None, None)
         };
         (
-            ident.unwrap_or_else(|| parse_quote! { __params }),
+            ident.unwrap_or_else(|| parse_quote! { __context }),
             ty.unwrap_or_else(|| parse_quote! { () }),
         )
     }
 
-    pub fn discriminant_expr(&self, track: &mut TrackTypes) -> Expr {
+    pub fn discriminant_expr(&self, track: &mut DeriveBounds) -> Expr {
         if let Some(expr) = &self.match_expr {
             expr.clone()
         }
         else if let Some(discriminant) = &self.discriminant {
             let discriminant_ty = &discriminant.ty;
-            let (params_ty, params_expr) = discriminant.params();
+            let (context_ty, context_expr) = discriminant.context();
 
-            track.reads(discriminant_ty, &params_ty);
+            track.reads(discriminant_ty, &context_ty);
 
             parse_quote! {
-                <#discriminant_ty as ::byst::io::Read::<_, #params_ty>>::read(&mut __reader, #params_expr)?
+                <#discriminant_ty as ::byst::io::Read::<_, #context_ty>>::read(&mut __reader, #context_expr)?
             }
         }
         else {
@@ -114,12 +114,12 @@ pub struct DiscriminantDeriveOptions {
     ty: Type,
     #[darling(flatten)]
     pub endianness: Endianness,
-    pub params: Option<ParamsFieldOptions>,
+    pub context: Option<ContextFieldOptions>,
 }
 
 impl DiscriminantDeriveOptions {
-    pub fn params(&self) -> (Type, Expr) {
-        params(&self.endianness, self.params.as_ref())
+    pub fn context(&self) -> (Type, Expr) {
+        context(&self.endianness, self.context.as_ref())
     }
 }
 
@@ -134,7 +134,7 @@ pub struct FieldOptions {
     #[darling(flatten)]
     pub endianness: Endianness,
 
-    pub params: Option<ParamsFieldOptions>,
+    pub context: Option<ContextFieldOptions>,
     pub map_err: Option<Path>,
 }
 
@@ -160,8 +160,8 @@ impl FieldOptions {
         })
     }
 
-    pub fn params(&self) -> (Type, Expr) {
-        params(&self.endianness, self.params.as_ref())
+    pub fn context(&self) -> (Type, Expr) {
+        context(&self.endianness, self.context.as_ref())
     }
 
     pub fn map_err(&self) -> Path {
@@ -171,20 +171,20 @@ impl FieldOptions {
     }
 }
 
-fn params(endianness: &Endianness, params: Option<&ParamsFieldOptions>) -> (Type, Expr) {
-    match (endianness.ty(), params) {
+fn context(endianness: &Endianness, context: Option<&ContextFieldOptions>) -> (Type, Expr) {
+    match (endianness.ty(), context) {
         (None, None) => (parse_quote! { () }, parse_quote! { () }),
         (Some(endianness), None) => (endianness.clone(), parse_quote! { #endianness }),
-        (None, Some(params)) => {
+        (None, Some(context)) => {
             (
-                params.ty.clone(),
-                params
+                context.ty.clone(),
+                context
                     .with
                     .clone()
                     .unwrap_or_else(|| parse_quote! { ::std::default::Default::default() }),
             )
         }
-        _ => abort_call_site!("endianness can not be specified, when also specifying params."),
+        _ => abort_call_site!("endianness can not be specified, when also specifying context."),
     }
 }
 
@@ -245,7 +245,7 @@ pub struct SkipFieldOptions {
 }
 
 #[derive(FromMeta)]
-pub struct ParamsFieldOptions {
+pub struct ContextFieldOptions {
     pub ty: Type,
     pub with: Option<Expr>,
 }
