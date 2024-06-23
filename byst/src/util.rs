@@ -427,7 +427,7 @@ macro_rules! impl_me {
             #[inline]
             fn skip(&mut self, amount: usize) -> usize {
                 if let Err(::byst::io::End) = ::byst::io::BufReader::advance(self, amount) {
-                    let remaining = ::byst::io::BufReader::remaining(self);
+                    let remaining = <$ty as ::byst::io::BufReader>::remaining(self);
                     *self = Default::default();
                     remaining
                 }
@@ -440,22 +440,9 @@ macro_rules! impl_me {
         impl<$($($generics)*)?> ::byst::io::Remaining for $ty {
             #[inline]
             fn remaining(&self) -> usize {
-                ::byst::io::BufReader::remaining(self)
+                <$ty as ::byst::io::BufReader>::remaining(self)
             }
         }
-
-        /* fixme: this causes conflicting impls. we can let the macro caller specify the view type
-        impl<$($($generics)*)?> ::byst::io::Read<$ty, ::byst::io::Length> for <$ty as ::byst::io::BufReader>::View {
-            type Error = ::byst::io::End;
-
-            #[inline]
-            fn read(reader: &mut $ty, length: ::byst::io::Length) -> Result<Self, Self::Error> {
-                let view = ::byst::io::BufReader::view(reader, length.0)?;
-                ::byst::io::BufReader::advance(reader, length.0)?;
-                Ok(view)
-            }
-        }
-        */
 
         impl_me!{ $($rest)* }
     };
@@ -476,7 +463,7 @@ macro_rules! impl_me {
         impl_me!{ $($rest)* }
     };
     {
-        impl $([ $($generics:tt)* ])? Read<_, ()> for $ty:ty as BufReader;
+        impl $([ $($generics:tt)* ])? Read<_, ()> for $ty:ty as BufReader::View;
         $($rest:tt)*
     } => {
         impl<$($($generics)*,)? __R> ::byst::io::Read<__R, ()> for $ty
@@ -497,6 +484,61 @@ macro_rules! impl_me {
                 }
             }
         }
+
+        impl_me!{ $($rest)* }
+    };
+    {
+        impl $([ $($generics:tt)* ])? Writer for $ty:ty as BufWriter;
+        $($rest:tt)*
+    } => {
+        impl<$($($generics)*)?> ::byst::io::Writer for $ty {
+            type Error = ::byst::io::Full;
+
+            fn write_buf<__B: ::byst::buf::Buf>(&mut self, buf: __B) -> Result<(), ::byst::io::Full> {
+                let n_copied = ::byst::copy_io(self, buf.reader(), None);
+                if n_copied < buf.len() {
+                    Err(::byst::io::Full {
+                        written: n_copied,
+                        requested: buf.len(),
+                        remaining: buf.len() - n_copied,
+                    })
+                }
+                else {
+                    Ok(())
+                }
+            }
+
+            #[inline]
+            fn skip(&mut self, amount: usize) -> Result<(), ::byst::io::Full> {
+                <$ty as ::byst::io::BufWriter>::advance(self, amount)
+            }
+        }
+
+        impl<$($($generics)*)?> ::byst::io::Remaining for $ty {
+            #[inline]
+            fn remaining(&self) -> usize {
+                <$ty as ::byst::io::BufWriter>::remaining(self)
+            }
+        }
+
+        impl_me!{ $($rest)* }
+    };
+    {
+        impl $([ $($generics:tt)* ])? Write<_, ()> for $ty:ty as Writer::write_buf;
+        $($rest:tt)*
+    } => {
+        impl<$($($generics)*,)? __W> ::byst::io::Write<__W, ()> for $ty
+        where
+            __W: ::byst::io::Writer,
+        {
+            type Error = ::byst::io::Full;
+
+            #[inline]
+            fn write(&self, writer: &mut __W, _context: ()) -> Result<(), Self::Error> {
+                writer.write_buf(self)
+            }
+        }
+
 
         impl_me!{ $($rest)* }
     };

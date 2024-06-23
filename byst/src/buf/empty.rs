@@ -17,6 +17,7 @@ use crate::{
         BytesMutImpl,
         WriterImpl,
     },
+    impl_me,
     io::{
         End,
         Reader,
@@ -157,16 +158,8 @@ impl BufWriter for Empty {
     }
 
     #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
-        if by > 0 {
-            Err(Full {
-                required: by,
-                capacity: 0,
-            })
-        }
-        else {
-            Ok(())
-        }
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
+        check_length(by)
     }
 
     #[inline]
@@ -175,16 +168,8 @@ impl BufWriter for Empty {
     }
 
     #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        if with.len() > 0 {
-            Err(Full {
-                required: with.len(),
-                capacity: 0,
-            })
-        }
-        else {
-            Ok(())
-        }
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
+        check_length(with.len())
     }
 }
 
@@ -300,7 +285,7 @@ impl WriterImpl for Empty {
         Err(End)
     }
 
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         BufWriter::advance(self, by)
     }
 
@@ -308,9 +293,13 @@ impl WriterImpl for Empty {
         0
     }
 
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         BufWriter::extend(self, with)
     }
+}
+
+impl_me! {
+    impl Writer for Empty as BufWriter;
 }
 
 #[inline]
@@ -322,6 +311,20 @@ fn check_range(range: Range) -> Result<(), RangeOutOfBounds> {
         Err(RangeOutOfBounds {
             required: range,
             bounds: (0, 0),
+        })
+    }
+}
+
+#[inline]
+fn check_length(length: usize) -> Result<(), crate::io::Full> {
+    if length == 0 {
+        Ok(())
+    }
+    else {
+        Err(crate::io::Full {
+            written: 0,
+            requested: length,
+            remaining: 0,
         })
     }
 }

@@ -224,7 +224,7 @@ pub struct Sender {
 impl Sender {
     pub async fn send<T>(&mut self, _packet: T) -> Result<(), SendError<()>>
     where
-        T: Write<ArcBufMut>,
+        T: Write<ArcBufMut, ()>,
     {
         //let mut buf = self.shared.get_buf();
 

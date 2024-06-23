@@ -44,7 +44,8 @@ pub trait ReaderExt: Reader {
     #[inline]
     fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
         let mut buf = [0u8; N];
-        if self.read_into(&mut buf, None) == N {
+        let n = self.read_into(&mut buf, None);
+        if n == N {
             Ok(buf)
         }
         else {
@@ -114,18 +115,18 @@ pub struct InvalidDiscriminant<D>(pub D);
 impl<'a, R: Reader> Reader for &'a mut R {
     #[inline]
     fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize {
-        Reader::read_into(*self, dest, limit)
+        <R as Reader>::read_into(*self, dest, limit)
     }
 
     #[inline]
     fn skip(&mut self, amount: usize) -> usize {
-        Reader::skip(*self, amount)
+        <R as Reader>::skip(*self, amount)
     }
 }
 
 impl_me! {
     impl['a] Reader for &'a [u8] as BufReader;
-    impl['a] Read<Self, ()> for &'a [u8] as BufReader;
+    impl['a] Read<_, ()> for &'a [u8] as BufReader::View;
 }
 
 impl<'a, R: BufReader> BufReader for &'a mut R {
@@ -162,12 +163,22 @@ impl<'a> BufReader for &'a [u8] {
 
     #[inline]
     fn view(&self, length: usize) -> Result<Self::View, End> {
-        (length <= self.len()).then_some(&self[..length]).ok_or(End)
+        if length <= self.len() {
+            Ok(&self[..length])
+        }
+        else {
+            Err(End)
+        }
     }
 
     #[inline]
     fn chunk(&self) -> Result<&'a [u8], End> {
-        (!self.is_empty()).then_some(&self[..]).ok_or(End)
+        if self.is_empty() {
+            Err(End)
+        }
+        else {
+            Ok(*self)
+        }
     }
 
     #[inline]
@@ -282,7 +293,6 @@ macro_rules! impl_read_for_tuple {
     ) => {
         impl<R, $first_ty, $($tail_ty),*> Read<R, ()> for ($first_ty, $($tail_ty,)*)
         where
-
             $first_ty: Read<R, ()>,
             $($tail_ty: Read<R, (), Error = <$first_ty as Read<R, ()>>::Error>,)*
         {

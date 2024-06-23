@@ -2,12 +2,11 @@
 
 use crate::{
     buf::{
-        BufWriter,
         Full,
         Length,
         SizeLimit,
     },
-    io::{End, BufReader},
+    io::{End, BufReader, BufWriter,},
     Buf,
     BufMut,
     IndexOutOfBounds,
@@ -52,9 +51,9 @@ pub trait BytesMutImpl: Length + Send + Sync {
 
 pub trait WriterImpl {
     fn chunk_mut(&mut self) -> Result<&mut [u8], End>;
-    fn advance(&mut self, by: usize) -> Result<(), Full>;
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full>;
     fn remaining(&self) -> usize;
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full>;
 }
 
 impl<'b> BytesImpl<'b> for &'b [u8] {
@@ -115,7 +114,7 @@ impl<'b> WriterImpl for &'b mut [u8] {
         Ok(BufWriter::chunk_mut(self)?)
     }
 
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         BufWriter::advance(self, by)
     }
 
@@ -123,7 +122,7 @@ impl<'b> WriterImpl for &'b mut [u8] {
         <[u8]>::len(self)
     }
 
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         BufWriter::extend(self, with)
     }
 }

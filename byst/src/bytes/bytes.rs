@@ -147,5 +147,5 @@ impl Length for Bytes {
 
 impl_me! {
     impl Reader for Bytes as BufReader;
-    impl Read<_, ()> for Bytes as BufReader;
+    impl Read<_, ()> for Bytes as BufReader::View;
 }

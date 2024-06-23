@@ -18,7 +18,10 @@ use crate::{
         BufMut,
         SizeLimit,
     },
-    io::End,
+    io::{
+        End,
+        Writer,
+    },
     range::{
         Range,
         RangeOutOfBounds,
@@ -220,7 +223,7 @@ impl<'a, const N: usize> BufWriter for ArrayBufWriter<'a, N> {
     }
 
     #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         self.inner.advance(by)
     }
 
@@ -230,8 +233,22 @@ impl<'a, const N: usize> BufWriter for ArrayBufWriter<'a, N> {
     }
 
     #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         self.inner.extend(with)
+    }
+}
+
+impl<'a, const N: usize> Writer for ArrayBufWriter<'a, N> {
+    type Error = <PartiallyInitializedWriter<'a, [MaybeUninit<u8>; N]> as Writer>::Error;
+
+    #[inline]
+    fn write_buf<B: Buf>(&mut self, buf: B) -> Result<(), crate::io::Full> {
+        self.inner.write_buf(buf)
+    }
+
+    #[inline]
+    fn skip(&mut self, amount: usize) -> Result<(), crate::io::Full> {
+        self.inner.skip(amount)
     }
 }
 

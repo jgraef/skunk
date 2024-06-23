@@ -10,7 +10,6 @@ use std::{
 };
 
 use super::{
-    BufWriter,
     Full,
     Length,
 };
@@ -20,7 +19,11 @@ use crate::{
         BufMut,
         SizeLimit,
     },
-    io::End,
+    impl_me,
+    io::{
+        BufWriter,
+        End,
+    },
     range::{
         Range,
         RangeOutOfBounds,
@@ -270,7 +273,7 @@ impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
     }
 
     #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         // note: The cursor position can't be greater than `self.filled`, and both point
         // into the initialized portion, so it's safe to assume that the buffer has been
         // initialized upto `already_filled`.
@@ -284,6 +287,7 @@ impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
                     MaybeUninit::fill(&mut buf[already_filled..], 0);
                 })
             }
+            .map_err(Into::into)
         }
         else {
             self.position += by;
@@ -297,12 +301,17 @@ impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
     }
 
     #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         unsafe {
             // SAFETY: The closure initializes the whole slice.
             self.fill_with(with.len(), |buf| {
                 MaybeUninit::copy_from_slice(buf, with);
             })
         }
+        .map_err(Into::into)
     }
+}
+
+impl_me! {
+    impl['a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>] Writer for PartiallyInitializedWriter<'a, B> as BufWriter;
 }

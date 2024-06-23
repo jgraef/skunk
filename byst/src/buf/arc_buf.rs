@@ -663,10 +663,6 @@ impl Buf for ArcBuf {
     }
 }
 
-impl_me! {
-    impl[] Reader for ArcBuf as BufReader;
-}
-
 impl BufReader for ArcBuf {
     type View = Self;
 
@@ -1245,7 +1241,7 @@ impl<'a> BufWriter for Writer<'a> {
     }
 
     #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         // note: The cursor position can't be greater than `self.filled`, and both point
         // into the initialized portion, so it's safe to assume that the buffer has been
         // initialized upto `already_filled`.
@@ -1259,6 +1255,7 @@ impl<'a> BufWriter for Writer<'a> {
                     MaybeUninit::fill(&mut buf[already_filled..], 0);
                 })
             }
+            .map_err(Into::into)
         }
         else {
             self.position += by;
@@ -1272,12 +1269,13 @@ impl<'a> BufWriter for Writer<'a> {
     }
 
     #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         unsafe {
             // SAFETY: The closure initializes the whole slice.
             self.fill_with(with.len(), |buf| {
                 MaybeUninit::copy_from_slice(buf, with);
             })
+            .map_err(Into::into)
         }
     }
 }
@@ -1288,6 +1286,11 @@ impl<'a> BufWriter for Writer<'a> {
 // to non-overlapping ranges and ensures only unique references to these exist.
 unsafe impl Send for ArcBufMut {}
 unsafe impl Sync for ArcBufMut {}
+
+impl_me! {
+    impl[] Reader for ArcBuf as BufReader;
+    impl['a] Writer for Writer<'a> as BufWriter;
+}
 
 #[cfg(test)]
 mod tests {

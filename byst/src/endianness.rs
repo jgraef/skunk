@@ -5,16 +5,14 @@
 //! - Remove `Size`, `Encode` and `Decode` traits as they require unstable
 //!   features, and we don't really need them.
 
-use super::io::{
+use crate::io::{
     End,
     Full,
     Read,
-    WriteFromBuf,
-    WriteXe,
-};
-use crate::io::{
     Reader,
     ReaderExt,
+    Write,
+    Writer,
 };
 
 mod sealed {
@@ -126,16 +124,18 @@ macro_rules! impl_endianness {
             type Error = End;
 
             #[inline]
-            fn read(reader: &mut R, _parameters: $endianness) -> Result<Self, Self::Error> {
+            fn read(reader: &mut R, _context: $endianness) -> Result<Self, Self::Error> {
                 Ok(<$ty>::$from_bytes(reader.read_byte_array()?))
             }
         }
 
-        impl<W: WriteFromBuf> WriteXe<W, $endianness> for $ty {
+        impl<W: Writer> Write<W, $endianness> for $ty {
+            type Error = Full;
+
             #[inline]
-            fn write(&self, mut writer: W) -> Result<(), Full> {
+            fn write(&self, writer: &mut W, _context: $endianness) -> Result<(), Full> {
                 let buf = <$ty>::$to_bytes(*self);
-                writer.write_from_buf(&buf)
+                writer.write_buf(&buf)
             }
         }
     };

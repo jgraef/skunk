@@ -7,7 +7,6 @@ use super::r#impl::{
 };
 use crate::{
     buf::{
-        BufWriter,
         Empty,
         Full,
         Length,
@@ -16,6 +15,7 @@ use crate::{
     impl_me,
     io::{
         BufReader,
+        BufWriter,
         End,
     },
     util::{
@@ -227,7 +227,7 @@ impl<'b> BufWriter for ViewMutWriter<'b> {
         self.inner.chunk_mut()
     }
 
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         self.inner.advance(by)
     }
 
@@ -235,12 +235,13 @@ impl<'b> BufWriter for ViewMutWriter<'b> {
         self.inner.remaining()
     }
 
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         self.inner.extend(with)
     }
 }
 
 impl_me! {
     impl['a] Reader for View<'a> as BufReader;
-    impl['a] Read<_, ()> for View<'a> as BufReader;
+    impl['a] Read<_, ()> for View<'a> as BufReader::View;
+    impl['a] Writer for ViewMutWriter<'a> as BufWriter;
 }

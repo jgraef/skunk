@@ -3,15 +3,12 @@ use std::fmt::{
     Display,
 };
 
-use byst::io::{
-    Read,
-    Write,
-};
+use byst::io::Read;
 
 /// A MAC address[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/MAC_address
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Read, Write)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Read)]
 pub struct MacAddress(pub [u8; 6]);
 
 impl MacAddress {

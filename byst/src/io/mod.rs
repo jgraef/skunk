@@ -19,10 +19,11 @@ pub use self::{
         ReaderExt,
     },
     write::{
+        BufWriter,
         Full,
         Write,
-        WriteFromBuf,
-        WriteXe,
+        Writer,
+        WriterExt,
     },
 };
 

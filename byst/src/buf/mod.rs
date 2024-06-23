@@ -27,9 +27,13 @@ use super::range::{
     Range,
     RangeOutOfBounds,
 };
-use crate::io::{
-    BufReader,
-    End,
+use crate::{
+    impl_me,
+    io::{
+        BufReader,
+        BufWriter,
+        End,
+    },
 };
 
 pub trait Length {
@@ -113,16 +117,6 @@ pub trait BufMut: Buf {
     fn size_limit(&self) -> SizeLimit;
 }
 
-pub trait BufWriter {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End>;
-
-    fn advance(&mut self, by: usize) -> Result<(), Full>;
-
-    fn remaining(&self) -> usize;
-
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full>;
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SizeLimit {
     /// The [`BufMut`] can grow, but might get full.
@@ -152,55 +146,73 @@ pub struct Full {
     pub capacity: usize,
 }
 
+impl From<crate::io::Full> for Full {
+    fn from(value: crate::io::Full) -> Self {
+        Self {
+            required: value.requested,
+            capacity: value.remaining + value.written,
+        }
+    }
+}
+
 impl Length for [u8] {
+    #[inline]
     fn len(&self) -> usize {
         <[u8]>::len(self)
     }
 }
 
 impl<const N: usize> Length for [u8; N] {
+    #[inline]
     fn len(&self) -> usize {
         N
     }
 }
 
 impl<'a, T: Length + ?Sized> Length for &'a T {
+    #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
 impl<'a, T: Length + ?Sized> Length for &'a mut T {
+    #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
 impl<'a, T: Length + ?Sized> Length for Box<T> {
+    #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
 impl<'a, T: Length + ?Sized> Length for Arc<T> {
+    #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
 impl<'a, T: Length + ?Sized> Length for Rc<T> {
+    #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
 impl<'a, T: Length + ToOwned + ?Sized> Length for Cow<'a, T> {
+    #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
 impl<'a> Length for Vec<u8> {
+    #[inline]
     fn len(&self) -> usize {
         Vec::len(self)
     }
@@ -455,67 +467,6 @@ impl BufMut for Vec<u8> {
     }
 }
 
-impl<'a, W: BufWriter> BufWriter for &'a mut W {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        W::chunk_mut(self)
-    }
-
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
-        W::advance(self, by)
-    }
-
-    fn remaining(&self) -> usize {
-        W::remaining(self)
-    }
-
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        W::extend(self, with)
-    }
-}
-
-impl<'a> BufWriter for &'a mut [u8] {
-    #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        (!self.is_empty()).then_some(&mut **self).ok_or(End)
-    }
-
-    #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
-        if by <= self.len() {
-            let (_, rest) = std::mem::take(self).split_at_mut(by);
-            *self = rest;
-            Ok(())
-        }
-        else {
-            Err(Full {
-                required: by,
-                capacity: self.len(),
-            })
-        }
-    }
-
-    #[inline]
-    fn remaining(&self) -> usize {
-        self.len()
-    }
-
-    #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        if with.len() <= self.len() {
-            let (dest, rest) = std::mem::take(self).split_at_mut(with.len());
-            dest.copy_from_slice(with);
-            *self = rest;
-            Ok(())
-        }
-        else {
-            Err(Full {
-                required: with.len(),
-                capacity: self.len(),
-            })
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct VecWriter<'a> {
     vec: &'a mut Vec<u8>,
@@ -538,7 +489,7 @@ impl<'a> BufWriter for VecWriter<'a> {
     }
 
     #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), Full> {
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         let n = (self.position + by).saturating_sub(self.vec.len());
         self.vec.extend((0..n).into_iter().map(|_| 0));
         self.position += by;
@@ -551,12 +502,16 @@ impl<'a> BufWriter for VecWriter<'a> {
     }
 
     #[inline]
-    fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
         let n_overwrite = std::cmp::min(self.vec.len() - self.position, with.len());
         self.vec[self.position..][..n_overwrite].copy_from_slice(&with[..n_overwrite]);
         self.vec.extend(with[n_overwrite..].iter().copied());
         Ok(())
     }
+}
+
+impl_me! {
+    impl['a] Writer for VecWriter<'a> as BufWriter;
 }
 
 #[cfg(test)]

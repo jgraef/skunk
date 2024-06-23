@@ -1,12 +1,14 @@
+use std::cmp::Ordering;
+
 use crate::{
     buf::{
         Buf,
         BufMut,
-        BufWriter,
         Full,
     },
     io::{
         BufReader,
+        BufWriter,
         End,
     },
     Range,
@@ -14,12 +16,26 @@ use crate::{
 };
 
 /// Copies bytes from `source` to `destination`.
-pub fn copy(mut destination: impl BufMut, source: impl Buf) -> Result<usize, Full> {
-    destination.reserve(source.len())?;
+pub fn copy(mut destination: impl BufMut, source: impl Buf) -> Result<(), Full> {
+    let source_len = source.len();
+    destination.reserve(source_len)?;
+
     let writer = destination.writer();
     let reader = source.reader();
+
     let total_copied = copy_io(writer, reader, None);
-    Ok(total_copied)
+
+    match total_copied.cmp(&source_len) {
+        Ordering::Equal => {}
+        Ordering::Less => {
+            panic!("Reserved {source_len} bytes, but only {total_copied} bytes could be written.");
+        }
+        Ordering::Greater => {
+            panic!("Copied buffer with length {source_len}, but {total_copied} bytes were copied.");
+        }
+    }
+
+    Ok(())
 }
 
 /// Error while copying from a [`Buf`] to a [`BufMut`].
@@ -31,7 +47,7 @@ pub enum CopyRangeError {
 
     LengthMismatch(#[from] LengthMismatch),
 
-    Full(#[from] Full),
+    DestinationFull(#[source] Full),
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -85,7 +101,9 @@ pub fn copy_range(
 
     let mut destination_writer = destination.writer();
     if destination_start != 0 {
-        destination_writer.advance(destination_start)?;
+        destination_writer
+            .advance(destination_start)
+            .map_err(|e| CopyRangeError::DestinationFull(e.into()))?;
     }
 
     let mut source_reader = source.reader();
@@ -135,7 +153,9 @@ pub fn copy_io(
                     .expect("Expected at least {n} more bytes in BufReader");
             }
             (Err(End), Ok(src_chunk)) => {
-                if let Err(Full { .. }) = destination.extend(src_chunk) {
+                if let Err(crate::io::Full { written, .. }) = destination.extend(src_chunk) {
+                    // todo: we could try to fill any remaining bytes in the destination.
+                    total_copied += written;
                     break;
                 }
 
@@ -183,8 +203,7 @@ mod tests {
 
         match copy(&mut destination, source) {
             Err(e) => panic!("copy failed: {e:?}"),
-            Ok(total_copied) => {
-                assert_eq!(total_copied, 16);
+            Ok(()) => {
                 assert_eq!(expected, destination);
             }
         }
