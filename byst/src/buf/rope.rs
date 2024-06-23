@@ -180,7 +180,7 @@ impl<'a, B: Buf> BufReader for Reader<'a, B> {
         todo!()
     }
 
-    fn chunk(&self) -> Result<&[u8], crate::io::End> {
+    fn chunk(&self) -> Option<&[u8]> {
         todo!()
     }
 
@@ -297,7 +297,7 @@ mod tests {
         // uggh... fix this when we solved the BufReader lifetime issue.
         let mut reader = buf.reader();
         let mut chunks = vec![];
-        while let Ok(chunk) = reader.chunk() {
+        while let Some(chunk) = reader.chunk() {
             chunks.push(chunk.to_owned());
             reader.advance(chunk.len()).unwrap();
         }

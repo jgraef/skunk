@@ -668,18 +668,24 @@ impl BufReader for ArcBuf {
 
     #[inline]
     fn view(&self, length: usize) -> Result<Self::View, End> {
-        let mut view = Buf::view(self, 0..length).map_err(|RangeOutOfBounds { .. }| End)?;
+        let mut view = Buf::view(self, 0..length).map_err(|RangeOutOfBounds { .. }| {
+            End {
+                requested: length,
+                read: 0,
+                remaining: self.len(),
+            }
+        })?;
         view.inner.shrink(length, self.len());
         Ok(view)
     }
 
     #[inline]
-    fn chunk(&self) -> Result<&[u8], End> {
+    fn chunk(&self) -> Option<&[u8]> {
         if self.is_empty() {
-            Err(End)
+            None
         }
         else {
-            Ok(self.bytes())
+            Some(self.bytes())
         }
     }
 
@@ -690,7 +696,11 @@ impl BufReader for ArcBuf {
             Ok(())
         }
         else {
-            Err(End)
+            Err(End {
+                requested: by,
+                read: 0,
+                remaining: self.len(),
+            })
         }
     }
 
@@ -714,8 +724,8 @@ impl<'b> BytesImpl<'b> for ArcBuf {
         Box::new(Clone::clone(self))
     }
 
-    fn chunk(&self) -> Result<&[u8], End> {
-        Ok(BufReader::chunk(self)?)
+    fn chunk(&self) -> Option<&[u8]> {
+        BufReader::chunk(self)
     }
 
     fn advance(&mut self, by: usize) -> Result<(), End> {
@@ -1231,12 +1241,12 @@ impl<'a> Writer<'a> {
 
 impl<'a> BufWriter for Writer<'a> {
     #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
         if self.position < self.buf.filled {
-            Ok(&mut self.buf.filled_mut()[self.position..])
+            Some(&mut self.buf.filled_mut()[self.position..])
         }
         else {
-            Err(End)
+            None
         }
     }
 

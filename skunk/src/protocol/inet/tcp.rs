@@ -3,7 +3,6 @@ use byst::{
     endianness::NetworkEndian,
     io::{
         BufReader,
-        End,
         Read,
         Reader,
         ReaderExt,
@@ -27,7 +26,7 @@ pub struct Header {
 }
 
 impl<R: Reader> Read<R, ()> for Header {
-    type Error = InvalidHeader;
+    type Error = InvalidHeader<R::Error>;
 
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         let source_port = reader.read_with(NetworkEndian)?;
@@ -130,10 +129,11 @@ pub enum InvalidOption {}
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid TCP header")]
-pub enum InvalidHeader {
-    #[error("TCP header incomplete")]
-    Incomplete(#[from] End),
+pub enum InvalidHeader<R> {
+    Read(#[from] R),
 
     #[error("Invalid data offset: {data_offset}")]
-    InvalidDataOffset { data_offset: u8 },
+    InvalidDataOffset {
+        data_offset: u8,
+    },
 }

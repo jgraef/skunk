@@ -8,12 +8,14 @@ use byst::{
     io::{
         read,
         BufReader,
-        End,
+        FailedPartially,
         Limit,
+        LimitError,
         Read,
         Reader,
         ReaderExt,
     },
+    Bytes,
 };
 use smallvec::SmallVec;
 
@@ -43,7 +45,7 @@ pub struct Header {
 }
 
 impl<R: Reader> Read<R, ()> for Header {
-    type Error = InvalidHeader;
+    type Error = InvalidHeader<R::Error>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let destination = reader.read()?;
@@ -93,7 +95,7 @@ impl<R: Reader> Read<R, ()> for Header {
 ///
 /// [1]: https://en.wikipedia.org/wiki/Ethernet_frame
 #[derive(Clone, Debug)]
-pub struct Frame<P = AnyProtocol> {
+pub struct Frame<P = Bytes> {
     pub header: Header,
     pub payload: P,
     pub frame_check_sequence: FrameCheckSequence,
@@ -102,8 +104,9 @@ pub struct Frame<P = AnyProtocol> {
 impl<R: BufReader, P, E> Read<R, ()> for Frame<P>
 where
     P: for<'r> Read<Limit<&'r mut R>, EtherType, Error = E>,
+    R::Error: FailedPartially,
 {
-    type Error = InvalidFrame<E>;
+    type Error = InvalidFrame<R::Error, E>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let fcs_present = {
@@ -124,7 +127,7 @@ where
 
         // Read the payload, with at most `payload_size` bytes.
         let payload_size = if fcs_present {
-            reader.remaining().checked_sub(4).ok_or(End)?
+            reader.remaining().saturating_sub(4)
         }
         else {
             reader.remaining()
@@ -135,14 +138,12 @@ where
             .map_err(InvalidFrame::Payload)?;
 
         // Skip over padding
-        limit.skip_remaining()?;
+        let _ = limit.skip_remaining();
 
-        let frame_check_sequence = if fcs_present {
-            FrameCheckSequence::Present(reader.read_with(NetworkEndian)?)
-        }
-        else {
-            FrameCheckSequence::Absent
-        };
+        let frame_check_sequence = fcs_present
+            .then(|| reader.read_with(NetworkEndian).ok())
+            .flatten()
+            .into();
 
         Ok(Self {
             header,
@@ -154,9 +155,8 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid Ethernet II header")]
-pub enum InvalidHeader {
-    #[error("Header is incomplete")]
-    Incomplete(#[from] End),
+pub enum InvalidHeader<R> {
+    Read(#[from] R),
 
     #[error("Expected a final IEEE 802.1Q VLAN tag")]
     Expected8021QTag,
@@ -164,15 +164,13 @@ pub enum InvalidHeader {
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid ethernet packet")]
-pub enum InvalidFrame<P> {
-    Header(#[from] InvalidHeader),
+pub enum InvalidFrame<R, P = AnyPayloadError<LimitError<R>>> {
+    Header(#[from] InvalidHeader<R>),
     Payload(#[source] P),
     #[error("Frame is not an Ethernet II frame: {ether_type:?}")]
     NotEthernet2 {
         ether_type: EtherType,
     },
-    #[error("Ethernet frame is incomplete")]
-    Incomplete(#[from] End),
 }
 
 impl<P> From<Infallible> for InvalidFrame<P> {
@@ -245,6 +243,13 @@ pub enum FrameCheckSequence {
     Calculate,
 }
 
+impl From<Option<u32>> for FrameCheckSequence {
+    #[inline]
+    fn from(value: Option<u32>) -> Self {
+        value.map_or(Self::Absent, Self::Present)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum AnyProtocol {
     Arp(arp::Packet),
@@ -252,12 +257,12 @@ pub enum AnyProtocol {
     Unknown,
 }
 
-impl<R, E> Read<R, EtherType> for AnyProtocol
+impl<R: Reader> Read<R, EtherType> for AnyProtocol
 where
-    arp::Packet: Read<R, (), Error = arp::InvalidPacket>,
-    ipv4::Packet: Read<R, (), Error = ipv4::InvalidPacket<E>>,
+    arp::Packet: Read<R, (), Error = arp::InvalidPacket<R::Error>>,
+    ipv4::Packet: Read<R, (), Error = ipv4::InvalidPacket<R::Error>>,
 {
-    type Error = AnyPayloadError<E>;
+    type Error = AnyPayloadError<R::Error>;
 
     fn read(reader: &mut R, ether_type: EtherType) -> Result<Self, Self::Error> {
         Ok(match ether_type {
@@ -270,9 +275,9 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Payload error")]
-pub enum AnyPayloadError<E> {
-    Arp(#[from] arp::InvalidPacket),
-    Ipv4(#[from] ipv4::InvalidPacket<E>),
+pub enum AnyPayloadError<R> {
+    Arp(#[from] arp::InvalidPacket<R>),
+    Ipv4(#[from] ipv4::InvalidPacket<R>),
 }
 
 /// Vlan tag for ethernet frames[1]

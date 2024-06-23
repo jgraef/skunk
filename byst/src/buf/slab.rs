@@ -223,4 +223,14 @@ mod tests {
 
         //assert_eq!(buf_ptr, buf2_ptr);
     }
+
+    #[test]
+    fn it_doesnt_reuse_in_use_buffer() {
+        let mut slab = Slab::new(128, 32);
+
+        let bytes_mut = slab.get();
+        let bytes_mut2 = slab.get();
+        assert_eq!(bytes_mut.ref_count().ref_count(), Some(1));
+        assert_eq!(bytes_mut2.ref_count().ref_count(), Some(1));
+    }
 }

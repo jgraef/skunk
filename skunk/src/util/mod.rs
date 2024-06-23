@@ -204,7 +204,7 @@ macro_rules! impl_crc_ext {
                 fn for_reader(&'static self, mut reader: impl BufReader) -> Self::Output {
                     let crc = crc::Crc::<$ty>::new(self);
                     let mut digest = crc.digest();
-                    while let Ok(chunk) = reader.chunk() {
+                    while let Some(chunk) = reader.chunk() {
                         digest.update(chunk);
                         reader.advance(chunk.len()).unwrap();
                     }

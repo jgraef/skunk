@@ -5,11 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use byst::{
-    hexdump::hexdump,
-    io::read,
-    Bytes,
-};
 use color_eyre::eyre::{
     bail,
     Error,
@@ -18,7 +13,6 @@ use skunk::{
     address::TcpAddress,
     protocol::{
         http,
-        inet::ethernet,
         tls,
     },
     proxy::{
@@ -26,7 +20,6 @@ use skunk::{
         pcap::{
             self,
             interface::Interface,
-            socket::Mode,
         },
         socks::server as socks,
         DestinationAddress,
@@ -299,7 +292,7 @@ impl App {
                         tracing::info!("hostapd ready");
                     }
 
-                    pcap_run(interface, shutdown).await?;
+                    pcap::run(&interface, shutdown).await?;
                     Ok::<(), Error>(())
                 }
             });
@@ -435,31 +428,4 @@ fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
     });
 
     token
-}
-
-async fn pcap_run(interface: Interface, shutdown: CancellationToken) -> Result<(), Error> {
-    async fn handle_packet(mut packet: Bytes) -> Result<(), Error> {
-        println!("{}", hexdump(&packet));
-
-        let frame = read!(&mut packet => ethernet::Frame)?;
-
-        tracing::debug!(?frame);
-
-        Ok(())
-    }
-
-    let (_sender, mut receiver) = interface.channel(Mode::Raw)?;
-
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => break,
-            result = receiver.receive::<Bytes>() => {
-                let packet = result?;
-                handle_packet(packet).await?;
-            }
-        }
-        todo!();
-    }
-
-    Ok(())
 }

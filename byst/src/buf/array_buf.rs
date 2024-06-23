@@ -18,10 +18,7 @@ use crate::{
         BufMut,
         SizeLimit,
     },
-    io::{
-        End,
-        Writer,
-    },
+    io::Writer,
     range::{
         Range,
         RangeOutOfBounds,
@@ -218,7 +215,7 @@ pub struct ArrayBufWriter<'a, const N: usize> {
 
 impl<'a, const N: usize> BufWriter for ArrayBufWriter<'a, N> {
     #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
         self.inner.chunk_mut()
     }
 

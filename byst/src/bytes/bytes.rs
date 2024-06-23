@@ -118,7 +118,7 @@ impl BufReader for Bytes {
     }
 
     #[inline]
-    fn chunk(&self) -> Result<&[u8], End> {
+    fn chunk(&self) -> Option<&[u8]> {
         <View as BufReader>::chunk(&self.inner)
     }
 

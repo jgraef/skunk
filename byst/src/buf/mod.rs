@@ -32,7 +32,6 @@ use crate::{
     io::{
         BufReader,
         BufWriter,
-        End,
     },
 };
 
@@ -86,7 +85,7 @@ pub trait BufExt: Buf {
     fn into_vec(&self) -> Vec<u8> {
         let mut reader = self.reader();
         let mut buf = Vec::with_capacity(reader.remaining());
-        while let Ok(chunk) = reader.chunk() {
+        while let Some(chunk) = reader.chunk() {
             buf.extend(chunk.iter().copied());
             reader.advance(chunk.len()).unwrap();
         }
@@ -482,10 +481,13 @@ impl<'a> VecWriter<'a> {
 
 impl<'a> BufWriter for VecWriter<'a> {
     #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        (self.position < self.vec.len())
-            .then(|| &mut self.vec[self.position..])
-            .ok_or(End)
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+        if self.position < self.vec.len() {
+            Some(&mut self.vec[self.position..])
+        }
+        else {
+            None
+        }
     }
 
     #[inline]

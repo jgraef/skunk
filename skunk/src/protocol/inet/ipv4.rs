@@ -5,8 +5,9 @@ use byst::{
     endianness::NetworkEndian,
     io::{
         read,
-        End,
+        FailedPartially,
         Limit,
+        LimitError,
         Read,
         Reader,
         ReaderExt,
@@ -36,7 +37,7 @@ pub struct Header {
 }
 
 impl<R: Reader> Read<R, ()> for Header {
-    type Error = InvalidHeader;
+    type Error = InvalidHeader<R::Error>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let version_ihl = read!(reader => u8)?;
@@ -108,8 +109,9 @@ pub struct Packet<P = AnyPayload> {
 impl<R: Reader, P, E> Read<R, ()> for Packet<P>
 where
     P: for<'r> Read<Limit<&'r mut R>, Protocol, Error = E>,
+    R::Error: FailedPartially,
 {
-    type Error = InvalidPacket<E>;
+    type Error = InvalidPacket<R::Error, E>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let header: Header = reader.read()?;
@@ -120,7 +122,7 @@ where
         let payload = limit
             .read_with(header.protocol)
             .map_err(InvalidPacket::Payload)?;
-        limit.skip_remaining()?;
+        let _ = limit.skip_remaining();
 
         Ok(Self { header, payload })
     }
@@ -128,20 +130,20 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid IPv4 packet")]
-pub enum InvalidPacket<P> {
-    Incomplete(#[from] End),
-    Header(#[from] InvalidHeader),
+pub enum InvalidPacket<R, P = AnyPayloadError<LimitError<R>>> {
+    Header(#[from] InvalidHeader<R>),
     Payload(#[source] P),
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid IPv4 header")]
-pub enum InvalidHeader {
-    #[error("Header is incomplete")]
-    Incomplete(#[from] End),
+pub enum InvalidHeader<R> {
+    Read(#[from] R),
 
     #[error("Invalid internet header length: {value}")]
-    InvalidInternetHeaderLength { value: u8 },
+    InvalidInternetHeaderLength {
+        value: u8,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -167,8 +169,8 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("IPv4 payload error")]
-pub enum AnyPayloadError<P> {
-    Udp(#[from] udp::InvalidPacket<P>),
+pub enum AnyPayloadError<R> {
+    Udp(#[from] udp::InvalidPacket<R>),
 }
 
 #[derive(Clone, Copy, Debug, Read)]

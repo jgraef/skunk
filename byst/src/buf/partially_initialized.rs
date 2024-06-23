@@ -20,10 +20,7 @@ use crate::{
         SizeLimit,
     },
     impl_me,
-    io::{
-        BufWriter,
-        End,
-    },
+    io::BufWriter,
     range::{
         Range,
         RangeOutOfBounds,
@@ -263,12 +260,12 @@ impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
     for PartiallyInitializedWriter<'a, B>
 {
     #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
         if self.position < self.partially_initialized.initialized {
-            Ok(&mut self.partially_initialized.bytes_mut()[self.position..])
+            Some(&mut self.partially_initialized.bytes_mut()[self.position..])
         }
         else {
-            Err(End)
+            None
         }
     }
 

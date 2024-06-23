@@ -6,8 +6,6 @@
 //!   features, and we don't really need them.
 
 use crate::io::{
-    End,
-    Full,
     Read,
     Reader,
     ReaderExt,
@@ -121,7 +119,7 @@ macro_rules! impl_endianness {
         }
 
         impl<R: Reader> Read<R, $endianness> for $ty {
-            type Error = End;
+            type Error = <R as Reader>::Error;
 
             #[inline]
             fn read(reader: &mut R, _context: $endianness) -> Result<Self, Self::Error> {
@@ -130,10 +128,10 @@ macro_rules! impl_endianness {
         }
 
         impl<W: Writer> Write<W, $endianness> for $ty {
-            type Error = Full;
+            type Error = <W as Writer>::Error;
 
             #[inline]
-            fn write(&self, writer: &mut W, _context: $endianness) -> Result<(), Full> {
+            fn write(&self, writer: &mut W, _context: $endianness) -> Result<(), Self::Error> {
                 let buf = <$ty>::$to_bytes(*self);
                 writer.write_buf(&buf)
             }

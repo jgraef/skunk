@@ -12,7 +12,6 @@ use std::{
 use byst::io::{
     read,
     BufReader,
-    End,
     Read,
 };
 
@@ -36,11 +35,8 @@ pub struct Packet {
     pub target_protocol_address: IpAddr,
 }
 
-impl<R> Read<R, ()> for Packet
-where
-    R: BufReader,
-{
-    type Error = InvalidPacket;
+impl<R: BufReader> Read<R, ()> for Packet {
+    type Error = InvalidPacket<R::Error>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let hardware_type = read!(reader => HardwareType)?;
@@ -126,7 +122,7 @@ type ProtocolType = super::ethernet::EtherType;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid ARP packet")]
-pub enum InvalidPacket {
+pub enum InvalidPacket<R> {
     #[error(
         "Invalid hardware type: expected {:?}, but got {got:?}",
         punctuated(expected, ", ")
@@ -146,16 +142,23 @@ pub enum InvalidPacket {
     },
 
     #[error("Invalid hardware address length: expected {expected:?}, but got {got:?}")]
-    InvalidHardwareAddressLength { expected: usize, got: u8 },
+    InvalidHardwareAddressLength {
+        expected: usize,
+        got: u8,
+    },
 
     #[error("Invalid protocol address length: expected {expected:?}, but got {got:?}")]
-    InvalidProtocolAddressLength { expected: usize, got: u8 },
+    InvalidProtocolAddressLength {
+        expected: usize,
+        got: u8,
+    },
 
     #[error("Invalid operation: {got}")]
-    InvalidOperation { got: u32 },
+    InvalidOperation {
+        got: u32,
+    },
 
-    #[error("Incomplete packet")]
-    Incomplete(#[from] End),
+    Read(#[from] R),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Read)]

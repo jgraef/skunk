@@ -5,7 +5,6 @@ use super::{
     BufReader,
     Length,
 };
-use crate::io::End;
 
 /// Iterator over the bytes in a buffer.
 pub struct BufIter<'b, B: Buf + ?Sized + 'b> {
@@ -25,7 +24,7 @@ impl<'b, B: Buf + ?Sized> Iterator for BufIter<'b, B> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let chunk = self.reader.chunk().map_err(|End| ()).ok()?;
+        let chunk = self.reader.chunk()?;
         let byte = *chunk.first().expect("BufReader returned empty chunk.;");
         self.reader
             .advance(1)

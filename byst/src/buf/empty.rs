@@ -117,27 +117,17 @@ impl BufReader for Empty {
 
     #[inline]
     fn view(&self, length: usize) -> Result<Self::View, End> {
-        if length > 0 {
-            Err(End)
-        }
-        else {
-            Ok(Self)
-        }
+        check_length_read(length).map(|()| Self)
     }
 
     #[inline]
-    fn chunk(&self) -> Result<&'static [u8], End> {
-        Err(End)
+    fn chunk(&self) -> Option<&'static [u8]> {
+        None
     }
 
     #[inline]
     fn advance(&mut self, by: usize) -> Result<(), End> {
-        if by > 0 {
-            Err(End)
-        }
-        else {
-            Ok(())
-        }
+        check_length_read(by)
     }
 
     #[inline]
@@ -153,13 +143,13 @@ impl BufReader for Empty {
 
 impl BufWriter for Empty {
     #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        Err(End)
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+        None
     }
 
     #[inline]
     fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
-        check_length(by)
+        check_length_write(by)
     }
 
     #[inline]
@@ -169,19 +159,29 @@ impl BufWriter for Empty {
 
     #[inline]
     fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
-        check_length(with.len())
+        check_length_write(with.len())
     }
 }
 
 impl Reader for Empty {
+    type Error = End;
+
     #[inline]
-    fn read_into<D: BufMut>(&mut self, _dest: D, _limit: impl Into<Option<usize>>) -> usize {
-        0
+    fn read_into<D: BufMut>(
+        &mut self,
+        _dest: D,
+        _limit: impl Into<Option<usize>>,
+    ) -> Result<usize, Self::Error> {
+        Ok(0)
+    }
+
+    fn read_into_exact<D: BufMut>(&mut self, _dest: D, length: usize) -> Result<(), Self::Error> {
+        check_length_read(length)
     }
 
     #[inline]
-    fn skip(&mut self, _amount: usize) -> usize {
-        0
+    fn skip(&mut self, amount: usize) -> Result<(), Self::Error> {
+        check_length_read(amount)
     }
 }
 
@@ -228,8 +228,8 @@ impl<'b> BytesImpl<'b> for Empty {
         Box::new(Self)
     }
 
-    fn chunk(&self) -> Result<&'_ [u8], End> {
-        Err(End)
+    fn chunk(&self) -> Option<&'_ [u8]> {
+        None
     }
 
     fn advance(&mut self, by: usize) -> Result<(), End> {
@@ -281,8 +281,8 @@ impl BytesMutImpl for Empty {
 }
 
 impl WriterImpl for Empty {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        Err(End)
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+        None
     }
 
     fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
@@ -316,13 +316,27 @@ fn check_range(range: Range) -> Result<(), RangeOutOfBounds> {
 }
 
 #[inline]
-fn check_length(length: usize) -> Result<(), crate::io::Full> {
+fn check_length_write(length: usize) -> Result<(), crate::io::Full> {
     if length == 0 {
         Ok(())
     }
     else {
         Err(crate::io::Full {
             written: 0,
+            requested: length,
+            remaining: 0,
+        })
+    }
+}
+
+#[inline]
+fn check_length_read(length: usize) -> Result<(), End> {
+    if length == 0 {
+        Ok(())
+    }
+    else {
+        Err(End {
+            read: 0,
             requested: length,
             remaining: 0,
         })

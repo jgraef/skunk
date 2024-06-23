@@ -1,6 +1,7 @@
 use byst::io::{
-    End,
+    FailedPartially,
     Limit,
+    LimitError,
     Read,
     Reader,
     ReaderExt,
@@ -30,8 +31,9 @@ pub struct Packet<P> {
 impl<R: Reader, P, E> Read<R, ()> for Packet<P>
 where
     P: for<'r> Read<Limit<&'r mut R>, (), Error = E>,
+    R::Error: FailedPartially,
 {
-    type Error = InvalidPacket<E>;
+    type Error = InvalidPacket<R::Error, E>;
 
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let header: Header = reader.read()?;
@@ -47,7 +49,7 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid UDP packet")]
-pub enum InvalidPacket<P> {
-    Incomplete(#[from] End),
+pub enum InvalidPacket<R, P = LimitError<R>> {
+    Read(#[from] R),
     Payload(#[source] P),
 }

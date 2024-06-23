@@ -8,7 +8,11 @@ pub use byst_macros::{
 };
 
 pub use self::{
-    limit::Limit,
+    limit::{
+        FailedPartially,
+        Limit,
+        LimitError,
+    },
     read::{
         read,
         BufReader,

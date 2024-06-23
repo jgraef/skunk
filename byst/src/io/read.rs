@@ -9,15 +9,22 @@ use std::{
 
 use byst_macros::for_tuple;
 
-use super::Limit;
+use super::{
+    limit::FailedPartially,
+    Limit,
+};
 use crate::{
     impl_me,
     Buf,
     BufMut,
-    RangeOutOfBounds,
 };
 
 /// Something that can be read from a reader `R`, given the context `C`.
+#[diagnostic::on_unimplemented(
+    message = "The type `{Self}` cannot be be read from reader `{R}` with context `{C}`.",
+    label = "Trying to read this",
+    note = "Are you using the right context? Most integers for example need an endianness specified as context: e.g. `reader.read_with(NetworkEndian)`"
+)]
 pub trait Read<R: ?Sized, C>: Sized {
     type Error;
 
@@ -25,10 +32,21 @@ pub trait Read<R: ?Sized, C>: Sized {
 }
 
 pub trait Reader {
-    // todo: remove `limit` argument. `dest` could be an `impl Writer`
-    fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize;
+    type Error;
 
-    fn skip(&mut self, amount: usize) -> usize;
+    /// This may return succesful with less bytes that space is available in
+    /// `dest` or `limit` specifies. It should only fail if the underlying data
+    /// source fails, but needs to still provide a way to tell how many bytes
+    /// have been read.
+    fn read_into<D: BufMut>(
+        &mut self,
+        dest: D,
+        limit: impl Into<Option<usize>>,
+    ) -> Result<usize, Self::Error>;
+
+    fn read_into_exact<D: BufMut>(&mut self, dest: D, length: usize) -> Result<(), Self::Error>;
+
+    fn skip(&mut self, amount: usize) -> Result<(), Self::Error>;
 }
 
 pub trait ReaderExt: Reader {
@@ -43,15 +61,10 @@ pub trait ReaderExt: Reader {
     }
 
     #[inline]
-    fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N], End> {
+    fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N], Self::Error> {
         let mut buf = [0u8; N];
-        let n = self.read_into(&mut buf, None);
-        if n == N {
-            Ok(buf)
-        }
-        else {
-            Err(End)
-        }
+        self.read_into_exact(&mut buf, N)?;
+        Ok(buf)
     }
 
     #[inline]
@@ -67,7 +80,7 @@ pub trait BufReader: Reader {
 
     fn view(&self, length: usize) -> Result<Self::View, End>;
 
-    fn chunk(&self) -> Result<&[u8], End>;
+    fn chunk(&self) -> Option<&[u8]>;
 
     fn advance(&mut self, by: usize) -> Result<(), End>;
 
@@ -77,15 +90,16 @@ pub trait BufReader: Reader {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, thiserror::Error)]
-#[error("End of reader")]
-pub struct End;
+#[error("End of reader: Tried to read {requested} bytes, but only {read} could be read.")]
+pub struct End {
+    pub read: usize,
+    pub requested: usize,
+    pub remaining: usize,
+}
 
-impl End {
-    #[inline]
-    pub(crate) fn from_range_out_of_bounds(_: RangeOutOfBounds) -> Self {
-        // todo: we could do some checks here, if it's really an error that can be
-        // interpreted as end of buffer.
-        Self
+impl FailedPartially for End {
+    fn partial_amount(&self) -> usize {
+        self.read
     }
 }
 
@@ -104,6 +118,7 @@ impl From<End> for std::io::Error {
 }
 
 impl From<Infallible> for End {
+    #[inline]
     fn from(value: Infallible) -> Self {
         match value {}
     }
@@ -114,13 +129,24 @@ impl From<Infallible> for End {
 pub struct InvalidDiscriminant<D>(pub D);
 
 impl<'a, R: Reader> Reader for &'a mut R {
+    type Error = <R as Reader>::Error;
+
     #[inline]
-    fn read_into<D: BufMut>(&mut self, dest: D, limit: impl Into<Option<usize>>) -> usize {
+    fn read_into<D: BufMut>(
+        &mut self,
+        dest: D,
+        limit: impl Into<Option<usize>>,
+    ) -> Result<usize, Self::Error> {
         <R as Reader>::read_into(*self, dest, limit)
     }
 
     #[inline]
-    fn skip(&mut self, amount: usize) -> usize {
+    fn read_into_exact<D: BufMut>(&mut self, dest: D, length: usize) -> Result<(), Self::Error> {
+        <R as Reader>::read_into_exact(*self, dest, length)
+    }
+
+    #[inline]
+    fn skip(&mut self, amount: usize) -> Result<(), Self::Error> {
         <R as Reader>::skip(*self, amount)
     }
 }
@@ -139,7 +165,7 @@ impl<'a, R: BufReader> BufReader for &'a mut R {
     }
 
     #[inline]
-    fn chunk(&self) -> Result<&[u8], End> {
+    fn chunk(&self) -> Option<&[u8]> {
         R::chunk(self)
     }
 
@@ -168,27 +194,37 @@ impl<'a> BufReader for &'a [u8] {
             Ok(&self[..length])
         }
         else {
-            Err(End)
+            Err(End {
+                requested: length,
+                read: 0,
+                remaining: self.len(),
+            })
         }
     }
 
     #[inline]
-    fn chunk(&self) -> Result<&'a [u8], End> {
+    fn chunk(&self) -> Option<&'a [u8]> {
         if self.is_empty() {
-            Err(End)
+            None
         }
         else {
-            Ok(*self)
+            Some(*self)
         }
     }
 
     #[inline]
     fn advance(&mut self, by: usize) -> Result<(), End> {
-        (by <= self.len())
-            .then(|| {
-                *self = &self[by..];
+        if by <= self.len() {
+            *self = &self[by..];
+            Ok(())
+        }
+        else {
+            Err(End {
+                read: 0,
+                requested: by,
+                remaining: self.len(),
             })
-            .ok_or(End)
+        }
     }
 
     #[inline]
@@ -231,7 +267,7 @@ impl<R: Reader, C, T: Read<R, C>, const N: usize> Read<R, C> for [T; N] {
 */
 
 impl<R: Reader, const N: usize> Read<R, ()> for [u8; N] {
-    type Error = End;
+    type Error = <R as Reader>::Error;
 
     #[inline]
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
@@ -240,7 +276,7 @@ impl<R: Reader, const N: usize> Read<R, ()> for [u8; N] {
 }
 
 impl<R: Reader> Read<R, ()> for u8 {
-    type Error = End;
+    type Error = <R as Reader>::Error;
 
     #[inline]
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
@@ -249,7 +285,7 @@ impl<R: Reader> Read<R, ()> for u8 {
 }
 
 impl<R: Reader> Read<R, ()> for i8 {
-    type Error = End;
+    type Error = <R as Reader>::Error;
 
     #[inline]
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
@@ -258,7 +294,7 @@ impl<R: Reader> Read<R, ()> for i8 {
 }
 
 impl<R: Reader> Read<R, ()> for Ipv4Addr {
-    type Error = End;
+    type Error = <R as Reader>::Error;
 
     #[inline]
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
@@ -267,7 +303,7 @@ impl<R: Reader> Read<R, ()> for Ipv4Addr {
 }
 
 impl<R: Reader> Read<R, ()> for Ipv6Addr {
-    type Error = End;
+    type Error = <R as Reader>::Error;
 
     #[inline]
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
@@ -487,7 +523,7 @@ mod tests {
         #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
-            End(#[from] End),
+            Incomplete(#[from] End),
             Invalid(#[from] InvalidDiscriminant<u8>),
         }
 
@@ -508,7 +544,7 @@ mod tests {
         #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
-            End(#[from] End),
+            Incomplete(#[from] End),
             Invalid(#[from] InvalidDiscriminant<u16>),
         }
 
@@ -529,7 +565,7 @@ mod tests {
         #[derive(Debug, PartialEq, Eq, thiserror::Error)]
         #[error("oops")]
         enum MyErr {
-            End(#[from] End),
+            Incomplete(#[from] End),
             Invalid(#[from] InvalidDiscriminant<u8>),
         }
 

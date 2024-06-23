@@ -24,7 +24,7 @@ use crate::{
 pub trait BytesImpl<'b>: Length + Send + Sync {
     fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds>;
     fn clone(&self) -> Box<dyn BytesImpl<'b> + 'b>;
-    fn chunk(&self) -> Result<&[u8], End>;
+    fn chunk(&self) -> Option<&[u8]>;
     fn advance(&mut self, by: usize) -> Result<(), End>;
 }
 
@@ -50,7 +50,7 @@ pub trait BytesMutImpl: Length + Send + Sync {
 }
 
 pub trait WriterImpl {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End>;
+    fn chunk_mut(&mut self) -> Option<&mut [u8]>;
     fn advance(&mut self, by: usize) -> Result<(), crate::io::Full>;
     fn remaining(&self) -> usize;
     fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full>;
@@ -65,8 +65,8 @@ impl<'b> BytesImpl<'b> for &'b [u8] {
         Box::new(*self)
     }
 
-    fn chunk(&self) -> Result<&[u8], End> {
-        Ok(BufReader::chunk(self)?)
+    fn chunk(&self) -> Option<&[u8]> {
+        BufReader::chunk(self)
     }
 
     fn advance(&mut self, by: usize) -> Result<(), End> {
@@ -110,8 +110,8 @@ impl<'b> BytesMutImpl for &'b mut [u8] {
 }
 
 impl<'b> WriterImpl for &'b mut [u8] {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        Ok(BufWriter::chunk_mut(self)?)
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+        BufWriter::chunk_mut(self)
     }
 
     fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {

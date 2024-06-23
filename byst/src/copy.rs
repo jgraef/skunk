@@ -9,7 +9,6 @@ use crate::{
     io::{
         BufReader,
         BufWriter,
-        End,
     },
     Range,
     RangeOutOfBounds,
@@ -134,7 +133,7 @@ pub fn copy_io(
 
     while amount.map_or(true, |n| n > 0) {
         match (destination.chunk_mut(), source.chunk()) {
-            (Ok(dest_chunk), Ok(src_chunk)) => {
+            (Some(dest_chunk), Some(src_chunk)) => {
                 let mut n = std::cmp::min(dest_chunk.len(), src_chunk.len());
                 if let Some(amount) = &mut amount {
                     n = std::cmp::min(n, *amount);
@@ -152,7 +151,7 @@ pub fn copy_io(
                     .advance(n)
                     .expect("Expected at least {n} more bytes in BufReader");
             }
-            (Err(End), Ok(src_chunk)) => {
+            (None, Some(src_chunk)) => {
                 if let Err(crate::io::Full { written, .. }) = destination.extend(src_chunk) {
                     // todo: we could try to fill any remaining bytes in the destination.
                     total_copied += written;
@@ -164,7 +163,7 @@ pub fn copy_io(
                     .advance(src_chunk.len())
                     .expect("Expected at least {n} more bytes in BufReader");
             }
-            (_, Err(End)) => break,
+            (_, None) => break,
         }
     }
 

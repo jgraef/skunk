@@ -9,10 +9,7 @@ use std::{
 pub use byst_macros::for_tuple;
 
 use crate::{
-    io::{
-        BufReader,
-        End,
-    },
+    io::BufReader,
     Buf,
 };
 
@@ -352,19 +349,19 @@ pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
 
     loop {
         match (left_reader.chunk(), right_reader.chunk()) {
-            (Err(End), Err(End)) => {
+            (None, None) => {
                 // boths chunks are exhausted at the same time, and they haven't been unequal
                 // yet. thus they're equal.
                 break true;
             }
-            (Ok(_), Err(End)) | (Err(End), Ok(_)) => {
+            (Some(_), None) | (None, Some(_)) => {
                 // we checked that both bufs have the same length, so this should not happen.
 
                 panic!(
                     "Both bufs have same length ({left_len}), but readers read different amount of bytes."
                 );
             }
-            (Ok(left), Ok(right)) => {
+            (Some(left), Some(right)) => {
                 let left_len = <[u8]>::len(left);
                 let right_len = <[u8]>::len(right);
                 let n = std::cmp::min(left_len, right_len);
@@ -373,12 +370,12 @@ pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
                     break false;
                 }
 
-                left_reader.advance(n).unwrap_or_else(|End| {
+                left_reader.advance(n).unwrap_or_else(|_e| {
                     panic!(
                         "Reader returned chunk of length {left_len}, but failed to advance by {n}."
                     )
                 });
-                right_reader.advance(n).unwrap_or_else(|End| {
+                right_reader.advance(n).unwrap_or_else(|_e| {
                     panic!(
                         "Reader returned chunk of length {right_len}, but failed to advance by {n}."
                     )
@@ -413,27 +410,35 @@ macro_rules! impl_me {
         $($rest:tt)*
     } => {
         impl<$($($generics)*)?> ::byst::io::Reader for $ty {
+            type Error = ::byst::io::End;
+
             #[inline]
             fn read_into<
                 D: ::byst::buf::BufMut
             >(
                 &mut self,
                 mut dest: D,
-                limit: impl Into<Option<usize>>
-            ) -> usize {
-                ::byst::copy_io(dest.writer(), self, limit)
+                limit: impl Into<Option<usize>>,
+            ) -> Result<usize, Self::Error> {
+                Ok(::byst::copy_io(dest.writer(), self, limit))
             }
 
             #[inline]
-            fn skip(&mut self, amount: usize) -> usize {
-                if let Err(::byst::io::End) = ::byst::io::BufReader::advance(self, amount) {
-                    let remaining = <$ty as ::byst::io::BufReader>::remaining(self);
-                    *self = Default::default();
-                    remaining
+            fn read_into_exact<D: ::byst::buf::BufMut>(&mut self, mut dest: D, length: usize) -> Result<(), Self::Error> {
+                let n_copied = ::byst::copy_io(dest.writer(), self, length);
+                assert!(n_copied <= length);
+                if n_copied == length {
+                    Ok(())
                 }
                 else {
-                    amount
+                    // fixme: this is inaccurate if the copy fails because the destination buffer is full.
+                    Err(::byst::io::End { read: n_copied, requested: length, remaining: 0 })
                 }
+            }
+
+            #[inline]
+            fn skip(&mut self, amount: usize) -> Result<(), Self::Error> {
+                ::byst::io::BufReader::advance(self, amount)
             }
         }
 
@@ -447,41 +452,18 @@ macro_rules! impl_me {
         impl_me!{ $($rest)* }
     };
     {
-        impl $([ $($generics:tt)* ])? Read<Self, ()> for $ty:ty as BufReader;
-        $($rest:tt)*
-    } => {
-        impl<$($($generics)*)?> ::byst::io::Read<$ty, ()> for $ty {
-            // todo: this should be Infallible
-            type Error = ::byst::io::End;
-
-            #[inline]
-            fn read(reader: &mut $ty, _context: ()) -> Result<Self, Self::Error> {
-                Ok(std::mem::take(reader))
-            }
-        }
-
-        impl_me!{ $($rest)* }
-    };
-    {
         impl $([ $($generics:tt)* ])? Read<_, ()> for $ty:ty as BufReader::View;
         $($rest:tt)*
     } => {
-        impl<$($($generics)*,)? __R> ::byst::io::Read<__R, ()> for $ty
+        impl<$($($generics)*,)? __R, __C> ::byst::io::Read<__R, __C> for $ty
         where
             __R: ::byst::io::BufReader<View = $ty>,
         {
-            // todo: this should be Infallible
-            type Error = ::byst::io::End;
+            type Error = ::std::convert::Infallible;
 
             #[inline]
-            fn read(reader: &mut __R, _context: ()) -> Result<Self, Self::Error> {
-                let view = reader.rest();
-                if view.is_empty() {
-                    Err(byst::io::End)
-                }
-                else {
-                    Ok(view)
-                }
+            fn read(reader: &mut __R, _context: __C) -> Result<Self, Self::Error> {
+                Ok(reader.rest())
             }
         }
 
@@ -531,14 +513,13 @@ macro_rules! impl_me {
         where
             __W: ::byst::io::Writer,
         {
-            type Error = ::byst::io::Full;
+            type Error = <__W as ::byst::io::Writer>::Error;
 
             #[inline]
             fn write(&self, writer: &mut __W, _context: ()) -> Result<(), Self::Error> {
                 writer.write_buf(self)
             }
         }
-
 
         impl_me!{ $($rest)* }
     };

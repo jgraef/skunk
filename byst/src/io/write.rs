@@ -6,7 +6,7 @@ use std::{
 use byst_macros::for_tuple;
 
 use super::{
-    End,
+    FailedPartially,
     Limit,
 };
 use crate::{
@@ -15,6 +15,11 @@ use crate::{
 };
 
 /// Something that can be written to a writer `W`, given the context `C`.
+#[diagnostic::on_unimplemented(
+    message = "The type `{Self}` cannot be be written to writer `{W}` with context `{C}`.",
+    label = "Trying to write this",
+    note = "Are you using the right context? Most integers for example need an endianness specified as context: e.g. `writer.write_with(123, NetworkEndian)`"
+)]
 pub trait Write<W: ?Sized, C> {
     type Error;
 
@@ -24,8 +29,8 @@ pub trait Write<W: ?Sized, C> {
 pub trait Writer {
     type Error;
 
-    fn write_buf<B: Buf>(&mut self, buf: B) -> Result<(), Full>;
-    fn skip(&mut self, amount: usize) -> Result<(), Full>;
+    fn write_buf<B: Buf>(&mut self, buf: B) -> Result<(), Self::Error>;
+    fn skip(&mut self, amount: usize) -> Result<(), Self::Error>;
 }
 
 pub trait WriterExt: Writer {
@@ -48,7 +53,7 @@ pub trait WriterExt: Writer {
 impl<W: Writer> WriterExt for W {}
 
 pub trait BufWriter: Writer {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End>;
+    fn chunk_mut(&mut self) -> Option<&mut [u8]>;
 
     fn advance(&mut self, by: usize) -> Result<(), Full>;
 
@@ -65,6 +70,13 @@ pub struct Full {
     pub written: usize,
     pub requested: usize,
     pub remaining: usize,
+}
+
+impl FailedPartially for Full {
+    #[inline]
+    fn partial_amount(&self) -> usize {
+        self.written
+    }
 }
 
 impl From<Infallible> for Full {
@@ -87,12 +99,12 @@ impl<'w, W: Writer> Writer for &'w mut W {
     type Error = W::Error;
 
     #[inline]
-    fn write_buf<B: Buf>(&mut self, buf: B) -> Result<(), Full> {
+    fn write_buf<B: Buf>(&mut self, buf: B) -> Result<(), Self::Error> {
         <W as Writer>::write_buf(*self, buf)
     }
 
     #[inline]
-    fn skip(&mut self, amount: usize) -> Result<(), Full> {
+    fn skip(&mut self, amount: usize) -> Result<(), Self::Error> {
         <W as Writer>::skip(*self, amount)
     }
 }
@@ -104,7 +116,7 @@ impl_me! {
 }
 
 impl<'a, W: BufWriter> BufWriter for &'a mut W {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
         W::chunk_mut(self)
     }
 
@@ -123,8 +135,13 @@ impl<'a, W: BufWriter> BufWriter for &'a mut W {
 
 impl<'a> BufWriter for &'a mut [u8] {
     #[inline]
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
-        (!self.is_empty()).then_some(&mut **self).ok_or(End)
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+        if self.is_empty() {
+            None
+        }
+        else {
+            Some(&mut **self)
+        }
     }
 
     #[inline]
@@ -185,7 +202,7 @@ impl<W, T> Write<W, ()> for PhantomData<T> {
 }
 
 impl<W: Writer, const N: usize> Write<W, ()> for [u8; N] {
-    type Error = Full;
+    type Error = <W as Writer>::Error;
 
     #[inline]
     fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {
@@ -194,7 +211,7 @@ impl<W: Writer, const N: usize> Write<W, ()> for [u8; N] {
 }
 
 impl<W: Writer> Write<W, ()> for u8 {
-    type Error = Full;
+    type Error = <W as Writer>::Error;
 
     #[inline]
     fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {
@@ -203,7 +220,7 @@ impl<W: Writer> Write<W, ()> for u8 {
 }
 
 impl<W: Writer> Write<W, ()> for i8 {
-    type Error = Full;
+    type Error = <W as Writer>::Error;
 
     #[inline]
     fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {

@@ -31,8 +31,8 @@ impl<'b> BytesImpl<'b> for Static {
         Box::new(*self)
     }
 
-    fn chunk(&self) -> Result<&[u8], End> {
-        Ok(BufReader::chunk(&self.0)?)
+    fn chunk(&self) -> Option<&[u8]> {
+        BufReader::chunk(&self.0)
     }
 
     fn advance(&mut self, by: usize) -> Result<(), End> {

@@ -101,11 +101,17 @@ impl<'b> BufReader for View<'b> {
 
     #[inline]
     fn view(&self, length: usize) -> Result<Self, End> {
-        Buf::view(self, Range::default().with_length(length)).map_err(End::from_range_out_of_bounds)
+        Buf::view(self, Range::default().with_length(length)).map_err(|_| {
+            End {
+                read: 0,
+                requested: length,
+                remaining: self.inner.len(),
+            }
+        })
     }
 
     #[inline]
-    fn chunk(&self) -> Result<&[u8], End> {
+    fn chunk(&self) -> Option<&[u8]> {
         self.inner.chunk()
     }
 
@@ -223,7 +229,7 @@ impl<'b> ViewMutWriter<'b> {
 }
 
 impl<'b> BufWriter for ViewMutWriter<'b> {
-    fn chunk_mut(&mut self) -> Result<&mut [u8], End> {
+    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
         self.inner.chunk_mut()
     }
 
