@@ -1,10 +1,6 @@
 use std::{
     fmt::Debug,
     mem::MaybeUninit,
-    ops::{
-        Deref,
-        DerefMut,
-    },
 };
 
 use super::{
@@ -90,22 +86,6 @@ impl<const N: usize> AsMut<[u8]> for ArrayBuf<N> {
     }
 }
 
-impl<const N: usize> Deref for ArrayBuf<N> {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        self.inner.deref()
-    }
-}
-
-impl<const N: usize> DerefMut for ArrayBuf<N> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        self.inner.deref_mut()
-    }
-}
-
 impl<const N: usize> Clone for ArrayBuf<N> {
     #[inline]
     fn clone(&self) -> Self {
@@ -114,7 +94,7 @@ impl<const N: usize> Clone for ArrayBuf<N> {
         // copy the portion that has been initialized.
 
         let mut cloned = Self::new();
-        let source = self.inner.deref();
+        let source = self.inner.as_ref();
 
         MaybeUninit::copy_from_slice(&mut cloned.inner.inner_mut()[..source.len()], source);
         unsafe {

@@ -7,10 +7,6 @@
 use std::{
     fmt::Debug,
     mem::MaybeUninit,
-    ops::{
-        Deref,
-        DerefMut,
-    },
 };
 
 use super::{
@@ -130,22 +126,6 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> AsMut<[u8]>
 {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
-        self.bytes_mut()
-    }
-}
-
-impl<B: AsRef<[MaybeUninit<u8>]>> Deref for PartiallyInitialized<B> {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        self.bytes()
-    }
-}
-
-impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> DerefMut for PartiallyInitialized<B> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
         self.bytes_mut()
     }
 }

@@ -2,10 +2,6 @@ use std::{
     cell::UnsafeCell,
     fmt::Debug,
     mem::MaybeUninit,
-    ops::{
-        Deref,
-        DerefMut,
-    },
     ptr::NonNull,
     sync::atomic::{
         AtomicUsize,
@@ -738,15 +734,6 @@ impl Length for ArcBuf {
     }
 }
 
-impl Deref for ArcBuf {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.bytes()
-    }
-}
-
 impl AsRef<[u8]> for ArcBuf {
     #[inline]
     fn as_ref(&self) -> &[u8] {
@@ -1056,22 +1043,6 @@ impl ArcBufMut {
     }
 }
 
-impl Deref for ArcBufMut {
-    type Target = [u8];
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.filled()
-    }
-}
-
-impl DerefMut for ArcBufMut {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.filled_mut()
-    }
-}
-
 impl AsRef<[u8]> for ArcBufMut {
     #[inline]
     fn as_ref(&self) -> &[u8] {
@@ -1325,6 +1296,7 @@ mod tests {
         buf::{
             tests::buf_mut_tests,
             Full,
+            Length,
         },
         copy,
         hexdump::Hexdump,
