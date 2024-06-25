@@ -1,15 +1,21 @@
+mod read;
+mod write;
+
 use darling::{
     FromDeriveInput,
     FromField,
     FromMeta,
     FromVariant,
 };
-use proc_macro2::Span;
+use proc_macro2::{
+    Span,
+    TokenStream,
+};
 use proc_macro_error::{
     abort,
     abort_call_site,
-    emit_call_site_error,
 };
+use quote::quote;
 use syn::{
     parse::Parser,
     parse_quote,
@@ -21,62 +27,58 @@ use syn::{
     Pat,
     Path,
     Type,
+    WhereClause,
 };
 
-use crate::util::DeriveBounds;
+pub use self::{
+    read::DeriveRead,
+    write::DeriveWrite,
+};
 
 #[derive(FromDeriveInput)]
 #[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
-pub struct StructDeriveOptions {
-    pub bitfield: Option<Bitfield>,
-    pub context: Option<ParamDeriveOptions>,
+pub struct DeriveOptions {
+    #[darling(default)]
+    pub transparent: bool,
+
+    pub context: Option<ContextDeriveOptions>,
     pub error: Option<Type>,
-}
 
-impl StructDeriveOptions {
-    pub fn context(&self) -> (Ident, Type) {
-        let (ident, ty) = if let Some(context) = &self.context {
-            (context.name.clone(), Some(context.ty.clone()))
-        }
-        else {
-            (None, None)
-        };
-        (
-            ident.unwrap_or_else(|| parse_quote! { __context }),
-            ty.unwrap_or_else(|| parse_quote! { () }),
-        )
-    }
-}
-
-#[derive(FromMeta)]
-pub struct ParamDeriveOptions {
-    name: Option<Ident>,
-    ty: Type,
-}
-
-#[derive(FromDeriveInput)]
-#[darling(attributes(byst), forward_attrs(allow, doc, cfg))]
-pub struct EnumDeriveOptions {
-    pub discriminant: Option<DiscriminantDeriveOptions>,
-
-    /// This can be used to implement parsing an enum without it reading the
-    /// discriminant. The discriminant is supplied as parameter.
-    pub context: Option<ParamDeriveOptions>,
-    pub error: Option<Type>,
+    pub tag: Option<TagDeriveOptions>,
     pub match_expr: Option<Expr>,
     #[darling(default)]
     pub no_wild: bool,
 }
 
-impl EnumDeriveOptions {
+impl DeriveOptions {
+    pub fn check_for_struct(&self) {
+        if self.tag.is_some() {
+            abort_call_site!("Cant use `tag` for structs.");
+        }
+        if self.match_expr.is_some() {
+            abort_call_site!("Cant use `match_expr` for structs.");
+        }
+        if self.no_wild {
+            abort_call_site!("Cant use `no_wild` for structs.");
+        }
+    }
+
+    pub fn check_for_transparent(&self) {
+        if self.context.is_some()
+            || self.error.is_some()
+            || self.tag.is_some()
+            || self.match_expr.is_some()
+            || self.no_wild
+        {
+            abort_call_site!("No other options are valid when deriving as view.");
+        }
+    }
+
     pub fn context(&self) -> (Ident, Type) {
         let (ident, ty) = if let Some(context) = &self.context {
             (context.name.clone(), Some(context.ty.clone()))
         }
         else {
-            if self.discriminant.is_none() {
-                emit_call_site_error!("You either need to specify `discriminant` or `context`. Otherwise the enum has no way to determine its discriminant.");
-            }
             (None, None)
         };
         (
@@ -85,39 +87,45 @@ impl EnumDeriveOptions {
         )
     }
 
-    pub fn discriminant_expr(&self, track: &mut DeriveBounds) -> Expr {
+    pub fn tag_expr(&self, track: &mut DeriveBounds) -> Expr {
         if let Some(expr) = &self.match_expr {
             expr.clone()
         }
-        else if let Some(discriminant) = &self.discriminant {
-            let discriminant_ty = &discriminant.ty;
-            let (context_ty, context_expr) = discriminant.context();
+        else if let Some(tag) = &self.tag {
+            let tag_ty = &tag.ty;
+            let (context_ty, context_expr) = tag.context();
 
-            track.reads(discriminant_ty, &context_ty);
+            track.reads(tag_ty, &context_ty);
 
             parse_quote! {
-                <#discriminant_ty as ::byst::io::Read::<_, #context_ty>>::read(&mut __reader, #context_expr)?
+                <#tag_ty as ::byst::io::Read::<_, #context_ty>>::read(&mut __reader, #context_expr)?
             }
         }
         else {
-            abort_call_site!("Either a discriminant type, or a match expression must be specified");
+            abort_call_site!("Either a tag type, or a match expression must be specified");
         }
     }
 
-    pub fn discriminant_ty(&self) -> Option<&Type> {
-        self.discriminant.as_ref().map(|d| &d.ty)
+    pub fn tag_ty(&self) -> Option<&Type> {
+        self.tag.as_ref().map(|d| &d.ty)
     }
 }
 
 #[derive(FromMeta)]
-pub struct DiscriminantDeriveOptions {
-    ty: Type,
+pub struct ContextDeriveOptions {
+    pub name: Option<Ident>,
+    pub ty: Type,
+}
+
+#[derive(FromMeta)]
+pub struct TagDeriveOptions {
+    pub ty: Type,
     #[darling(flatten)]
     pub endianness: Endianness,
     pub context: Option<ContextFieldOptions>,
 }
 
-impl DiscriminantDeriveOptions {
+impl TagDeriveOptions {
     pub fn context(&self) -> (Type, Expr) {
         context(&self.endianness, self.context.as_ref())
     }
@@ -184,7 +192,7 @@ fn context(endianness: &Endianness, context: Option<&ContextFieldOptions>) -> (T
                     .unwrap_or_else(|| parse_quote! { ::std::default::Default::default() }),
             )
         }
-        _ => abort_call_site!("endianness can not be specified, when also specifying context."),
+        _ => abort_call_site!("Endianness can not be specified, when also specifying context."),
     }
 }
 
@@ -193,7 +201,7 @@ fn context(endianness: &Endianness, context: Option<&ContextFieldOptions>) -> (T
 pub struct VariantOptions {
     ident: Ident,
     discriminant: Option<Expr>,
-    #[darling(rename = "discriminant")]
+    #[darling(rename = "tag")]
     pat: Option<DiscriminantPat>,
 }
 
@@ -251,22 +259,6 @@ pub struct ContextFieldOptions {
 }
 
 #[derive(FromMeta)]
-pub struct Bitfield {
-    pub ty: Path,
-
-    #[darling(flatten)]
-    pub endianness: Endianness,
-}
-
-#[derive(FromField)]
-#[darling(attributes(byst))]
-pub struct BitfieldFieldOptions {
-    pub bits: Option<usize>,
-    pub start: Option<usize>,
-    pub end: Option<usize>,
-}
-
-#[derive(FromMeta)]
 pub struct Endianness {
     #[darling(default)]
     pub big: bool,
@@ -296,4 +288,72 @@ impl Endianness {
             }
         }
     }
+}
+
+pub struct DeriveBounds {
+    pub where_clause: WhereClause,
+    pub error_ty: Option<Type>,
+}
+
+impl DeriveBounds {
+    pub fn new(where_clause: WhereClause, error_ty: Option<Type>) -> Self {
+        Self {
+            where_clause,
+            error_ty,
+        }
+    }
+
+    pub fn reads(&mut self, field_ty: &Type, context_ty: &Type) {
+        self.add_bounds(field_ty, context_ty, quote! { __R }, quote! { Read })
+    }
+
+    pub fn writes(&mut self, field_ty: &Type, context_ty: &Type) {
+        self.add_bounds(field_ty, context_ty, quote! { __W }, quote! { Write })
+    }
+
+    fn add_bounds(
+        &mut self,
+        field_ty: &Type,
+        context_ty: &Type,
+        io_ty: TokenStream,
+        io_trait: TokenStream,
+    ) {
+        self.where_clause
+            .predicates
+            .push(parse_quote! { #field_ty: ::byst::io::#io_trait::<#io_ty, #context_ty> });
+
+        if let Some(error_ty) = &self.error_ty {
+            self.where_clause.predicates.push(
+                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::#io_trait::<#io_ty, #context_ty>>::Error> },
+            );
+        }
+        else {
+            self.error_ty = Some(parse_quote! {
+                <#field_ty as ::byst::io::#io_trait::<#io_ty, #context_ty>>::Error
+            });
+        }
+    }
+
+    pub fn finish(self) -> (WhereClause, Type) {
+        let error_ty = self
+            .error_ty
+            .unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
+        (self.where_clause, error_ty)
+    }
+}
+
+#[derive(FromMeta)]
+pub struct Bitfield {
+    pub ty: Path,
+
+    #[darling(flatten)]
+    pub endianness: Endianness,
+}
+
+#[derive(FromField)]
+#[darling(attributes(byst))]
+pub struct BitfieldFieldOptions {
+    pub bits: Option<usize>,
+    pub start: Option<usize>,
+    pub end: Option<usize>,
 }

@@ -20,6 +20,9 @@ pub mod rule;
 pub mod store;
 pub mod util;
 
+// hack to get the proc-macro working from this crate
+extern crate self as skunk;
+
 /// skunk's error type
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

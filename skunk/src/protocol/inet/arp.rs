@@ -35,6 +35,34 @@ pub struct Packet {
     pub target_protocol_address: IpAddr,
 }
 
+impl Packet {
+    pub fn new(
+        operation: Operation,
+        sender_hardware_address: MacAddress,
+        sender_protocol_address: IpAddr,
+        target_hardware_address: MacAddress,
+        target_protocol_address: IpAddr,
+    ) -> Self {
+        let (protocol_type, protocol_address_length) =
+            match (&sender_protocol_address, &target_protocol_address) {
+                (IpAddr::V4(_), IpAddr::V4(_)) => (ProtocolType::IPV4, 4),
+                (IpAddr::V6(_), IpAddr::V6(_)) => (ProtocolType::IPV6, 16),
+                _ => panic!("Mixed IPv4 and IPv6 addresses"),
+            };
+        Self {
+            hardware_type: HardwareType::ETHER,
+            protocol_type,
+            hardware_address_length: 4,
+            protocol_address_length,
+            operation,
+            sender_hardware_address,
+            sender_protocol_address,
+            target_hardware_address,
+            target_protocol_address,
+        }
+    }
+}
+
 impl<R: BufReader> Read<R, ()> for Packet {
     type Error = InvalidPacket<R::Error>;
 
@@ -117,8 +145,7 @@ impl<R: BufReader> Read<R, ()> for Packet {
     }
 }
 
-// todo: remove alias
-type ProtocolType = super::ethernet::EtherType;
+pub type ProtocolType = super::ethernet::EtherType;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid ARP packet")]
@@ -165,7 +192,7 @@ pub enum InvalidPacket<R> {
 pub struct Operation(#[byst(network)] pub u16);
 
 network_enum! {
-    for Operation
+    for Operation;
 
     /// ARP request
     REQUEST => 1;
@@ -183,7 +210,7 @@ network_enum! {
 pub struct HardwareType(#[byst(network)] pub u16);
 
 network_enum! {
-    for HardwareType
+    for HardwareType;
 
     /// from KA9Q: NET/ROM pseudo
     NETROM => 0;

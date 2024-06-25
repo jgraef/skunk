@@ -5,10 +5,7 @@ use std::{
 
 use byst_macros::for_tuple;
 
-use super::{
-    FailedPartially,
-    Limit,
-};
+use super::Limit;
 use crate::{
     buf::Buf,
     impl_me,
@@ -70,13 +67,6 @@ pub struct Full {
     pub written: usize,
     pub requested: usize,
     pub remaining: usize,
-}
-
-impl FailedPartially for Full {
-    #[inline]
-    fn partial_amount(&self) -> usize {
-        self.written
-    }
 }
 
 impl From<Infallible> for Full {

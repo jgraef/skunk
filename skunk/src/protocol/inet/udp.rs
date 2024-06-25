@@ -1,10 +1,13 @@
-use byst::io::{
-    FailedPartially,
-    Limit,
-    LimitError,
-    Read,
-    Reader,
-    ReaderExt,
+use std::convert::Infallible;
+
+use byst::{
+    io::{
+        Limit,
+        Read,
+        Reader,
+        ReaderExt,
+    },
+    Bytes,
 };
 
 #[derive(Clone, Copy, Debug, Read)]
@@ -23,7 +26,7 @@ pub struct Header {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Packet<P> {
+pub struct Packet<P = Bytes> {
     pub header: Header,
     pub payload: P,
 }
@@ -31,7 +34,6 @@ pub struct Packet<P> {
 impl<R: Reader, P, E> Read<R, ()> for Packet<P>
 where
     P: for<'r> Read<Limit<&'r mut R>, (), Error = E>,
-    R::Error: FailedPartially,
 {
     type Error = InvalidPacket<R::Error, E>;
 
@@ -49,7 +51,7 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid UDP packet")]
-pub enum InvalidPacket<R, P = LimitError<R>> {
+pub enum InvalidPacket<R, P = Infallible> {
     Read(#[from] R),
     Payload(#[source] P),
 }

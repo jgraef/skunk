@@ -1,3 +1,4 @@
+use darling::FromDeriveInput;
 use proc_macro2::{
     Span,
     TokenStream,
@@ -12,11 +13,14 @@ use quote::{
 };
 use syn::{
     parse_macro_input,
-    parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
     token::Where,
     ConstParam,
+    Data,
+    DataEnum,
+    DataStruct,
+    DataUnion,
     DeriveInput,
     Field,
     Fields,
@@ -27,22 +31,63 @@ use syn::{
     Lifetime,
     LifetimeParam,
     Member,
-    Type,
     TypeParam,
     WhereClause,
 };
 
 use crate::error::Error;
 
-pub fn derive_helper(
-    input: proc_macro::TokenStream,
-    deriver: impl FnOnce(DeriveInput) -> Result<TokenStream, Error>,
-) -> proc_macro::TokenStream {
-    let item = parse_macro_input!(input as DeriveInput);
+pub trait Deriver {
+    const NAME: &'static str;
+    type Options: FromDeriveInput;
 
-    match deriver(item) {
-        Ok(output) => output.into(),
-        Err(e) => e.write_errors().into(),
+    fn process(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+        let input = parse_macro_input!(input as DeriveInput);
+
+        match Self::Options::from_derive_input(&input) {
+            Ok(options) => {
+                match Self::derive_for_item(input, options) {
+                    Ok(output) => output.into(),
+                    Err(e) => e.write_errors().into(),
+                }
+            }
+            Err(e) => e.write_errors().into(),
+        }
+    }
+
+    fn derive_for_item(item: DeriveInput, options: Self::Options) -> Result<TokenStream, Error> {
+        match &item.data {
+            Data::Struct(s) => Self::derive_for_struct(&s, &item, options),
+            Data::Enum(e) => Self::derive_for_enum(&e, &item, options),
+            Data::Union(u) => Self::derive_for_union(&u, &item, options),
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn derive_for_struct(
+        data: &DataStruct,
+        item: &DeriveInput,
+        options: Self::Options,
+    ) -> Result<TokenStream, Error> {
+        abort!(item.ident, "{} can't be derived on structs.", Self::NAME);
+    }
+
+    #[allow(unused_variables)]
+    fn derive_for_enum(
+        data: &DataEnum,
+        item: &DeriveInput,
+        options: Self::Options,
+    ) -> Result<TokenStream, Error> {
+        abort!(item.ident, "{} can't be derived on enums.", Self::NAME);
+    }
+
+    #[allow(unused_variables)]
+    fn derive_for_union(
+        union: &DataUnion,
+        item: &DeriveInput,
+        options: Self::Options,
+    ) -> Result<TokenStream, Error> {
+        abort!(item.ident, "{} can't be derived on unions.", Self::NAME);
     }
 }
 
@@ -198,58 +243,5 @@ impl<'a> ToTokens for TypeGenericParam<'a> {
             TypeGenericParam::Lifetime(lt) => lt.to_tokens(tokens),
             TypeGenericParam::Const(con) => con.to_tokens(tokens),
         }
-    }
-}
-
-// better name, and move to util (this can probably be used for Write too)
-pub struct DeriveBounds {
-    pub where_clause: WhereClause,
-    pub error_ty: Option<Type>,
-}
-
-impl DeriveBounds {
-    pub fn new(where_clause: WhereClause, error_ty: Option<Type>) -> Self {
-        Self {
-            where_clause,
-            error_ty,
-        }
-    }
-
-    pub fn reads(&mut self, field_ty: &Type, context_ty: &Type) {
-        self.add_bounds(field_ty, context_ty, quote! { __R }, quote! { Read })
-    }
-
-    pub fn writes(&mut self, field_ty: &Type, context_ty: &Type) {
-        self.add_bounds(field_ty, context_ty, quote! { __W }, quote! { Write })
-    }
-
-    fn add_bounds(
-        &mut self,
-        field_ty: &Type,
-        context_ty: &Type,
-        io_ty: TokenStream,
-        io_trait: TokenStream,
-    ) {
-        self.where_clause
-            .predicates
-            .push(parse_quote! { #field_ty: ::byst::io::#io_trait::<#io_ty, #context_ty> });
-
-        if let Some(error_ty) = &self.error_ty {
-            self.where_clause.predicates.push(
-                parse_quote! { #error_ty: ::std::convert::From<<#field_ty as ::byst::io::#io_trait::<#io_ty, #context_ty>>::Error> },
-            );
-        }
-        else {
-            self.error_ty = Some(parse_quote! {
-                <#field_ty as ::byst::io::#io_trait::<#io_ty, #context_ty>>::Error
-            });
-        }
-    }
-
-    pub fn finish(self) -> (WhereClause, Type) {
-        let error_ty = self
-            .error_ty
-            .unwrap_or_else(|| parse_quote! { ::std::convert::Infallible });
-        (self.where_clause, error_ty)
     }
 }

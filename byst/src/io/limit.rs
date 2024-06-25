@@ -1,6 +1,5 @@
-use std::convert::Infallible;
-
 use super::{
+    read::ReadError,
     BufReader,
     End,
     Reader,
@@ -29,29 +28,23 @@ impl<R> Limit<R> {
     }
 }
 
-impl<R: Reader> Limit<R>
-where
-    <R as Reader>::Error: FailedPartially,
-{
+impl<R: Reader> Limit<R> {
     pub fn skip_remaining(&mut self) -> Result<(), <R as Reader>::Error> {
-        match Reader::skip(&mut self.inner, self.limit) {
+        match self.inner.skip(self.limit) {
             Ok(()) => {
                 self.limit = 0;
                 Ok(())
             }
             Err(e) => {
-                self.limit -= e.partial_amount();
+                self.limit -= e.amount_read();
                 Err(e)
             }
         }
     }
 }
 
-impl<R: Reader> Reader for Limit<R>
-where
-    <R as Reader>::Error: FailedPartially,
-{
-    type Error = LimitError<<R as Reader>::Error>;
+impl<R: Reader> Reader for Limit<R> {
+    type Error = <R as Reader>::Error;
 
     fn read_into<D: BufMut>(
         &mut self,
@@ -71,15 +64,19 @@ where
                 Ok(n_read)
             }
             Err(e) => {
-                self.limit -= e.partial_amount();
-                Err(LimitError::Inner(e))
+                self.limit -= e.amount_read();
+                Err(e)
             }
         }
     }
 
     fn read_into_exact<D: BufMut>(&mut self, dest: D, length: usize) -> Result<(), Self::Error> {
         if length > self.limit {
-            Err(LimitError::LimitReached)
+            Err(Self::Error::from_end(End {
+                read: 0,
+                requested: length,
+                remaining: self.limit,
+            }))
         }
         else {
             match self.inner.read_into_exact(dest, length) {
@@ -88,8 +85,8 @@ where
                     Ok(())
                 }
                 Err(e) => {
-                    self.limit -= e.partial_amount();
-                    Err(LimitError::Inner(e))
+                    self.limit -= e.amount_read();
+                    Err(e)
                 }
             }
         }
@@ -104,17 +101,14 @@ where
                 Ok(())
             }
             Err(e) => {
-                self.limit -= e.partial_amount();
-                Err(LimitError::Inner(e))
+                self.limit -= e.amount_read();
+                Err(e)
             }
         }
     }
 }
 
-impl<R: BufReader> BufReader for Limit<R>
-where
-    <R as Reader>::Error: FailedPartially,
-{
+impl<R: BufReader> BufReader for Limit<R> {
     type View = R::View;
 
     #[inline]
@@ -171,42 +165,6 @@ where
                 view
             }
             Err(_) => self.inner.rest(),
-        }
-    }
-}
-
-#[diagnostic::on_unimplemented(
-    message = "The error type `{Self}` doesn't provide information about partial failures.",
-    note = "For `Limit` to work the error type of the inner reader or writer needs to provide information about partial reads or writes. Otherwise the `Limit` can't know how to update it's internal counter.",
-    note = "Implement `FailedPartially` for {Self}"
-)]
-pub trait FailedPartially {
-    fn partial_amount(&self) -> usize;
-}
-
-impl FailedPartially for Infallible {
-    fn partial_amount(&self) -> usize {
-        match *self {}
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum LimitError<E> {
-    #[error("Inner reader failed")]
-    Inner(#[source] E),
-
-    #[error("Limit reached")]
-    LimitReached,
-}
-
-impl<E: FailedPartially> FailedPartially for LimitError<E> {
-    fn partial_amount(&self) -> usize {
-        match self {
-            Self::Inner(e) => e.partial_amount(),
-            Self::LimitReached => {
-                // when we reach the limit for an exact read, we don't do a partial read.
-                0
-            }
         }
     }
 }

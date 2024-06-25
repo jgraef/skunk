@@ -127,6 +127,11 @@ impl Socket {
         &self.interface
     }
 
+    #[inline]
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
     pub fn into_channel(self) -> (Sender, Receiver) {
         let shared = Arc::new(Shared {
             socket: self,
@@ -151,6 +156,7 @@ impl Shared {
     fn get_buf(&self) -> ArcBufMut {
         let mut slab = self.slab.lock();
         let mut buf = slab.get();
+        drop(slab);
         buf.fully_initialize();
         buf
     }
@@ -222,7 +228,7 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub async fn send<T>(&mut self, _packet: T) -> Result<(), SendError<()>>
+    pub async fn send<T>(&self, _packet: &T) -> Result<(), SendError<()>>
     where
         T: Write<ArcBufMut, ()>,
     {

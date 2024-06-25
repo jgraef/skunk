@@ -101,7 +101,7 @@ impl<'b> BufReader for View<'b> {
 
     #[inline]
     fn view(&self, length: usize) -> Result<Self, End> {
-        Buf::view(self, Range::default().with_length(length)).map_err(|_| {
+        Buf::view(self, Range::default().with_start(0).with_length(length)).map_err(|_| {
             End {
                 read: 0,
                 requested: length,

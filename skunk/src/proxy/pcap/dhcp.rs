@@ -47,8 +47,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::{
-    packet::WritePacket,
-    vnet::NetworkConfig,
     Interface,
     MacAddress,
 };

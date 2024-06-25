@@ -46,7 +46,11 @@ pcap = ["dep:etherparse", "dep:dhcproto", "dep:nix"]
 #version = "0.1.0"
 path = "../byst"
 
+[dependencies.skunk-macros]
+path = "../skunk-macros"
+
 [dependencies]
+ahash = "0.8.11"
 bitflags = "2.5.0"
 bytes = "1.6.0"
 crc = "3.2.1"

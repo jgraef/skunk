@@ -149,6 +149,7 @@ impl<'a> Builder<'a> {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null()) // hostapd only logs to stdout
+            .kill_on_drop(true)
             .spawn()?;
 
         let span = tracing::debug_span!("hostapd", pid = process.id().unwrap());

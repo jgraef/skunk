@@ -6,11 +6,8 @@ use std::{
 use byst::{
     endianness::NetworkEndian,
     io::{
-        read,
         BufReader,
-        FailedPartially,
         Limit,
-        LimitError,
         Read,
         Reader,
         ReaderExt,
@@ -104,7 +101,6 @@ pub struct Frame<P = Bytes> {
 impl<R: BufReader, P, E> Read<R, ()> for Frame<P>
 where
     P: for<'r> Read<Limit<&'r mut R>, EtherType, Error = E>,
-    R::Error: FailedPartially,
 {
     type Error = InvalidFrame<R::Error, E>;
 
@@ -164,7 +160,7 @@ pub enum InvalidHeader<R> {
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid ethernet packet")]
-pub enum InvalidFrame<R, P = AnyPayloadError<LimitError<R>>> {
+pub enum InvalidFrame<R, P = Infallible> {
     Header(#[from] InvalidHeader<R>),
     Payload(#[source] P),
     #[error("Frame is not an Ethernet II frame: {ether_type:?}")]
@@ -192,7 +188,7 @@ impl<P> From<Infallible> for InvalidFrame<P> {
 pub struct EtherType(#[byst(network)] pub u16);
 
 network_enum! {
-    for EtherType
+    for EtherType;
 
     /// Internet protocol version 4
     IPV4 => 0x0800;
@@ -251,23 +247,23 @@ impl From<Option<u32>> for FrameCheckSequence {
 }
 
 #[derive(Clone, Debug)]
-pub enum AnyProtocol {
+pub enum AnyPayload<P> {
     Arp(arp::Packet),
-    Ipv4(ipv4::Packet),
+    Ipv4(ipv4::Packet<P>),
     Unknown,
 }
 
-impl<R: Reader> Read<R, EtherType> for AnyProtocol
+impl<R: Reader, P, E> Read<R, EtherType> for AnyPayload<P>
 where
     arp::Packet: Read<R, (), Error = arp::InvalidPacket<R::Error>>,
-    ipv4::Packet: Read<R, (), Error = ipv4::InvalidPacket<R::Error>>,
+    ipv4::Packet<P>: Read<R, (), Error = ipv4::InvalidPacket<R::Error, E>>,
 {
-    type Error = AnyPayloadError<R::Error>;
+    type Error = AnyPayloadError<R::Error, E>;
 
     fn read(reader: &mut R, ether_type: EtherType) -> Result<Self, Self::Error> {
         Ok(match ether_type {
-            EtherType::ARP => Self::Arp(read!(reader => arp::Packet)?),
-            EtherType::IPV4 => Self::Ipv4(read!(reader => ipv4::Packet)?),
+            EtherType::ARP => Self::Arp(reader.read()?),
+            EtherType::IPV4 => Self::Ipv4(reader.read()?),
             _ => Self::Unknown,
         })
     }
@@ -275,9 +271,9 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Payload error")]
-pub enum AnyPayloadError<R> {
+pub enum AnyPayloadError<R, P> {
     Arp(#[from] arp::InvalidPacket<R>),
-    Ipv4(#[from] ipv4::InvalidPacket<R>),
+    Ipv4(#[from] ipv4::InvalidPacket<R, P>),
 }
 
 /// Vlan tag for ethernet frames[1]

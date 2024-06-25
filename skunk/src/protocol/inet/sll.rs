@@ -19,7 +19,7 @@ use crate::util::network_enum;
 /// The header format is described here([1]).
 ///
 /// [1]: https://www.tcpdump.org/linktypes/LINKTYPE_LINUX_SLL.html
-pub struct SllHeader {
+pub struct Header {
     pub packet_type: PacketType,
     pub hardware_type: HardwareType,
     pub link_layer_address_length: u16,
@@ -38,7 +38,7 @@ pub struct SllHeader {
 pub struct PacketType(#[byst(network)] u16);
 
 network_enum! {
-    for PacketType
+    for PacketType;
 
     /// To us
     HOST => 0;
@@ -113,7 +113,7 @@ where
 pub struct LinuxNonstandardEtherType(#[byst(network)] u16);
 
 network_enum! {
-    for LinuxNonstandardEtherType
+    for LinuxNonstandardEtherType;
 
     N802_3 => 0x0001;
     AX25 => 0x0002;

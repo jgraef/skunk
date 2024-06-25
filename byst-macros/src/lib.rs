@@ -2,20 +2,18 @@
 
 #![allow(dead_code, rustdoc::broken_intra_doc_links)]
 mod bitmask;
-mod derive_read;
-mod derive_write;
 mod error;
 mod for_tuple;
-mod options;
+mod read_write;
 mod util;
 
 use proc_macro_error::proc_macro_error;
 use syn::parse_macro_input;
+use util::Deriver;
 
 use crate::{
     bitmask::BitRangeInput,
     for_tuple::ForTupleInput,
-    util::derive_helper,
 };
 
 /// Derive [`Read`][1] implementation.
@@ -47,13 +45,13 @@ use crate::{
 #[proc_macro_error]
 #[proc_macro_derive(Read, attributes(byst))]
 pub fn derive_read(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_helper(input, crate::derive_read::derive_read)
+    self::read_write::DeriveRead::process(input)
 }
 
 #[proc_macro_error]
 #[proc_macro_derive(Write, attributes(byst))]
 pub fn derive_write(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_helper(input, crate::derive_write::derive_write)
+    self::read_write::DeriveWrite::process(input)
 }
 
 /// Calls another macro with tuples of specified lengths.

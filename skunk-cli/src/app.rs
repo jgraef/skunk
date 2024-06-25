@@ -20,6 +20,7 @@ use skunk::{
         pcap::{
             self,
             interface::Interface,
+            VirtualNetwork,
         },
         socks::server as socks,
         DestinationAddress,
@@ -292,21 +293,11 @@ impl App {
                         tracing::info!("hostapd ready");
                     }
 
-                    pcap::run(&interface, shutdown).await?;
+                    let _network = VirtualNetwork::new(&interface)?;
+                    shutdown.cancelled().await;
                     Ok::<(), Error>(())
                 }
             });
-
-            if pcap.enabled {
-                join_set.spawn({
-                    let _shutdown = shutdown.clone();
-                    let _interface = interface.clone();
-                    async move {
-                        //pcap::dhcp::run(&interface, shutdown, Default::default()).await?;
-                        Ok::<(), Error>(())
-                    }
-                });
-            }
         }
 
         while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}

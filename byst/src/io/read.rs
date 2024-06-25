@@ -9,10 +9,7 @@ use std::{
 
 use byst_macros::for_tuple;
 
-use super::{
-    limit::FailedPartially,
-    Limit,
-};
+use super::Limit;
 use crate::{
     impl_me,
     Buf,
@@ -32,7 +29,7 @@ pub trait Read<R: ?Sized, C>: Sized {
 }
 
 pub trait Reader {
-    type Error;
+    type Error: ReadError;
 
     /// This may return succesful with less bytes that space is available in
     /// `dest` or `limit` specifies. It should only fail if the underlying data
@@ -47,6 +44,18 @@ pub trait Reader {
     fn read_into_exact<D: BufMut>(&mut self, dest: D, length: usize) -> Result<(), Self::Error>;
 
     fn skip(&mut self, amount: usize) -> Result<(), Self::Error>;
+}
+
+pub trait ReadError {
+    fn from_end(end: End) -> Self;
+
+    fn is_end(&self) -> bool;
+
+    fn amount_read(&self) -> usize;
+
+    fn is_exact_end(&self) -> bool {
+        self.is_end() && self.amount_read() == 0
+    }
 }
 
 pub trait ReaderExt: Reader {
@@ -75,7 +84,7 @@ pub trait ReaderExt: Reader {
 
 impl<R: Reader> ReaderExt for R {}
 
-pub trait BufReader: Reader {
+pub trait BufReader: Reader<Error = End> {
     type View: Buf;
 
     fn view(&self, length: usize) -> Result<Self::View, End>;
@@ -97,9 +106,17 @@ pub struct End {
     pub remaining: usize,
 }
 
-impl FailedPartially for End {
-    fn partial_amount(&self) -> usize {
+impl ReadError for End {
+    fn from_end(end: End) -> Self {
+        end
+    }
+
+    fn amount_read(&self) -> usize {
         self.read
+    }
+
+    fn is_end(&self) -> bool {
+        true
     }
 }
 
@@ -528,7 +545,7 @@ mod tests {
         }
 
         #[derive(Read, Debug, PartialEq)]
-        #[byst(discriminant(ty = "u8"), error = "MyErr")]
+        #[byst(tag(ty = "u8"), error = "MyErr")]
         enum Foo {}
 
         let mut reader: &'static [u8] = b"\x00\x00";
@@ -549,7 +566,7 @@ mod tests {
         }
 
         #[derive(Read, Debug, PartialEq)]
-        #[byst(discriminant(ty = "u16", big), error = "MyErr")]
+        #[byst(tag(ty = "u16", big), error = "MyErr")]
         enum Foo {
             One = 1,
             Two = 2,
@@ -570,16 +587,16 @@ mod tests {
         }
 
         #[derive(Read, Debug, PartialEq)]
-        #[byst(discriminant(ty = "u8"), error = "MyErr")]
+        #[byst(tag(ty = "u8"), error = "MyErr")]
         enum Foo {
-            #[byst(discriminant = 1)]
+            #[byst(tag = 1)]
             One {
                 #[byst(big)]
                 x: u16,
                 #[byst(big)]
                 y: u16,
             },
-            #[byst(discriminant = 2)]
+            #[byst(tag = 2)]
             Two(#[byst(big)] u16),
         }
 
@@ -604,26 +621,26 @@ mod tests {
         }
 
         #[derive(Read, Debug, PartialEq)]
-        #[byst(discriminant(ty = "u8"), context(name = "discriminant", ty = "u8"), match_expr = discriminant * 2, error = "MyErr")]
+        #[byst(tag(ty = "u8"), context(name = "discriminant", ty = "u8"), match_expr = discriminant * 2, error = "MyErr")]
         enum Foo {
-            #[byst(discriminant = 2)]
+            #[byst(tag = 2)]
             One {
                 #[byst(big)]
                 x: u16,
                 #[byst(big)]
                 y: u16,
             },
-            #[byst(discriminant = 4)]
+            #[byst(tag = 4)]
             Two(#[byst(big)] u16),
         }
 
         #[derive(Read, Debug, PartialEq)]
         #[byst(error = "MyErr")]
         struct Bar {
-            my_discriminant: u8,
+            my_tag: u8,
             #[byst(big)]
             some_data: u16,
-            #[byst(context(ty = "u8", with = my_discriminant))]
+            #[byst(context(ty = "u8", with = my_tag))]
             foo: Foo,
         }
 
@@ -631,7 +648,7 @@ mod tests {
             Bar,
             b"\x01\x12\x34\x01\x02\xab\xcd",
             Bar {
-                my_discriminant: 1,
+                my_tag: 1,
                 some_data: 0x1234,
                 foo: Foo::One {
                     x: 0x0102,
@@ -643,7 +660,7 @@ mod tests {
             Bar,
             b"\x02\x12\x34\xac\xab",
             Bar {
-                my_discriminant: 2,
+                my_tag: 2,
                 some_data: 0x1234,
                 foo: Foo::Two(0xacab)
             }

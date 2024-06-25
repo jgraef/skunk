@@ -114,7 +114,7 @@ pub enum Option<D> {
 pub struct OptionKind(u8);
 
 network_enum! {
-    for OptionKind
+    for OptionKind;
 
     /// End of Options list
     END => 0x00;

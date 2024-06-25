@@ -5,6 +5,7 @@ members = [
   "byst-macros",
   "skunk",
   "skunk-cli",
+  "skunk-macros",
 ]
 
 [patch.crates-io]

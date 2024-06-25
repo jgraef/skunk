@@ -1,6 +1,9 @@
-use std::fmt::{
-    Debug,
-    Display,
+use std::{
+    fmt::{
+        Debug,
+        Display,
+    },
+    str::FromStr,
 };
 
 use byst::io::{
@@ -96,5 +99,62 @@ impl<'a> TryFrom<&'a [u8]> for MacAddress {
     #[inline]
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         value.try_into().map(Self)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Could not parse MAC address: {0}")]
+pub struct MacAddressParseError(String);
+
+impl FromStr for MacAddress {
+    type Err = MacAddressParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        #[inline]
+        fn hex(s: &mut &str) -> Option<u8> {
+            let (a, b) = s.split_at(2);
+            let a = u8::from_str_radix(a, 16).ok()?;
+            *s = b;
+            Some(a)
+        }
+
+        #[inline]
+        fn colon(s: &mut &str) -> Option<()> {
+            let (a, b) = s.split_at(1);
+            *s = b;
+            (a == ":").then_some(())
+        }
+
+        #[inline]
+        fn parse(mut s: &str) -> Option<[u8; 6]> {
+            if !s.is_ascii() || s.len() != 17 {
+                return None;
+            }
+
+            let mut buf = [0u8; 6];
+
+            buf[0] = hex(&mut s)?;
+            for i in 1..6 {
+                colon(&mut s)?;
+                buf[i] = hex(&mut s)?;
+            }
+
+            Some(buf)
+        }
+
+        parse(s)
+            .map(Self)
+            .ok_or_else(|| MacAddressParseError(s.to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MacAddress;
+
+    #[test]
+    fn it_parses_a_mac_address() {
+        let mac: MacAddress = "12:34:56:78:90:af".parse().unwrap();
+        assert_eq!(mac, MacAddress([0x12, 0x34, 0x56, 0x78, 0x90, 0xaf]));
     }
 }

@@ -3,6 +3,7 @@
 pub(crate) mod boolean;
 pub(crate) mod error;
 pub mod io;
+pub mod ordered_multimap;
 
 use std::{
     fmt::{
@@ -107,7 +108,7 @@ pub(crate) use unique_ids;
 
 macro_rules! network_enum {
     {
-        for $ty:ident
+        for $ty:path;
         $(
             $(#[doc = $doc:expr])?
             $name:ident => $num:expr;
@@ -119,7 +120,7 @@ macro_rules! network_enum {
                 pub const $name: Self = Self($num);
             )*
 
-            pub fn name(&self) -> ::std::option::Option<&'static str> {
+            pub const fn name(&self) -> ::std::option::Option<&'static str> {
                 match self.0 {
                     $(
                         $num => ::std::option::Option::Some(stringify!($name)),
@@ -128,7 +129,7 @@ macro_rules! network_enum {
                 }
             }
 
-            pub fn description(&self) -> ::std::option::Option<&'static str> {
+            pub const fn description(&self) -> ::std::option::Option<&'static str> {
                 match self.0 {
                     $(
                         $($num => ::std::option::Option::Some($doc),)?
@@ -137,7 +138,7 @@ macro_rules! network_enum {
                 }
             }
 
-            pub fn is_known_value(&self) -> ::std::primitive::bool {
+            pub const fn is_known_value(&self) -> ::std::primitive::bool {
                 match self.0 {
                     $(
                         $num => true,

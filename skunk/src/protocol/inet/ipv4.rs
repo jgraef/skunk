@@ -1,16 +1,19 @@
-use std::net::Ipv4Addr;
+use std::{
+    convert::Infallible,
+    fmt::Debug,
+    net::Ipv4Addr,
+};
 
 use bitflags::bitflags;
 use byst::{
     endianness::NetworkEndian,
     io::{
         read,
-        FailedPartially,
         Limit,
-        LimitError,
         Read,
         Reader,
         ReaderExt,
+        Write,
     },
     Bytes,
 };
@@ -59,7 +62,7 @@ impl<R: Reader> Read<R, ()> for Header {
         let identification = read!(reader; NetworkEndian)?;
 
         let flags_fragment_offset = read!(reader => u16; NetworkEndian)?;
-        let flags = Flags::from_bits_truncate((flags_fragment_offset >> 13) as u8);
+        let flags = Flags::from_bits_retain((flags_fragment_offset >> 13) as u8);
         let fragment_offset = flags_fragment_offset & 0x1fff;
 
         let time_to_live = read!(reader)?;
@@ -92,7 +95,7 @@ impl<R: Reader> Read<R, ()> for Header {
 }
 
 bitflags! {
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, Read, Write)]
     pub struct Flags: u8 {
         const RESERVED = 0b100;
         const DONT_FRAGMENT = 0b010;
@@ -101,15 +104,14 @@ bitflags! {
 }
 
 #[derive(Clone, Debug)]
-pub struct Packet<P = AnyPayload> {
-    header: Header,
-    payload: P,
+pub struct Packet<P = Bytes> {
+    pub header: Header,
+    pub payload: P,
 }
 
 impl<R: Reader, P, E> Read<R, ()> for Packet<P>
 where
     P: for<'r> Read<Limit<&'r mut R>, Protocol, Error = E>,
-    R::Error: FailedPartially,
 {
     type Error = InvalidPacket<R::Error, E>;
 
@@ -130,7 +132,7 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid IPv4 packet")]
-pub enum InvalidPacket<R, P = AnyPayloadError<LimitError<R>>> {
+pub enum InvalidPacket<R, P = Infallible> {
     Header(#[from] InvalidHeader<R>),
     Payload(#[source] P),
 }
@@ -173,11 +175,11 @@ pub enum AnyPayloadError<R> {
     Udp(#[from] udp::InvalidPacket<R>),
 }
 
-#[derive(Clone, Copy, Debug, Read)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Read)]
 pub struct Protocol(pub u8);
 
 network_enum! {
-    for Protocol
+    for Protocol;
 
     /// Internet Control Message Protocol
     ICMP => 0x01;
@@ -187,4 +189,15 @@ network_enum! {
 
     /// User Datagram Protocol
     UDP => 0x11;
+}
+
+impl Debug for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = self.name() {
+            write!(f, "Protocol::{name}(0x{:02x})", self.0)
+        }
+        else {
+            write!(f, "Protocol(0x{:02x})", self.0)
+        }
+    }
 }
