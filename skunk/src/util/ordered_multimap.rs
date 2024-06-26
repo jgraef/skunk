@@ -167,7 +167,7 @@ impl<K, V, H> OrderedMultiMap<K, V, H> {
         }
     }
 
-    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    pub fn get_first<Q>(&self, key: &Q) -> Option<&V>
     where
         Q: Hash + Eq + PartialEq<K>,
         K: Hash,
@@ -179,7 +179,7 @@ impl<K, V, H> OrderedMultiMap<K, V, H> {
         }
     }
 
-    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    pub fn get_first_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         Q: Hash + Eq + PartialEq<K>,
         K: Hash,
@@ -189,6 +189,15 @@ impl<K, V, H> OrderedMultiMap<K, V, H> {
             EntryMut::Occupied(occupied) => Some(occupied.into_first_mut()),
             EntryMut::Vacant(_) => None,
         }
+    }
+
+    pub fn get<Q>(&self, key: &Q) -> EntryIter<K, V>
+    where
+        Q: Hash + Eq + PartialEq<K>,
+        K: Hash,
+        H: BuildHasher,
+    {
+        self.entry(key).iter()
     }
 
     pub fn insert(&mut self, key: K, value: V)
@@ -303,7 +312,7 @@ impl<'a, K, V, H> Entry<'a, K, V, H> {
         }
     }
 
-    pub fn iter(&self) -> EntryIter<'_, K, V> {
+    pub fn iter(&self) -> EntryIter<'a, K, V> {
         match self {
             Entry::Occupied(occupied) => occupied.iter(),
             Entry::Vacant(vacant) => {
@@ -343,7 +352,7 @@ impl<'a, K, V, H> OccupiedEntry<'a, K, V, H> {
         self.list().count
     }
 
-    pub fn iter(&self) -> EntryIter<'_, K, V> {
+    pub fn iter(&self) -> EntryIter<'a, K, V> {
         EntryIter {
             pairs: &self.map.pairs,
             state: self.list().entry_iter_state(),
@@ -975,5 +984,53 @@ impl<H> Buckets<H> {
 
     pub fn remove(&mut self, bucket: Bucket<List>) -> (List, InsertSlot) {
         unsafe { self.inner.remove(bucket) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OrderedMultiMap;
+
+    #[test]
+    fn it_inserts_and_gets_values() {
+        let mut map = OrderedMultiMap::new();
+
+        map.insert("Hello", "World");
+        map.insert("foo", "bar");
+        assert_eq!(map.get_first(&"Hello"), Some(&"World"));
+        assert_eq!(map.get_first(&"foo"), Some(&"bar"));
+    }
+
+    #[test]
+    fn it_inserts_and_contains_values() {
+        let mut map = OrderedMultiMap::new();
+
+        map.insert("Hello", "World");
+        assert!(map.contains(&"Hello"));
+    }
+
+    #[test]
+    fn it_inserts_and_iters() {
+        let mut map = OrderedMultiMap::new();
+
+        map.insert("Hello", "World");
+        map.insert("foo", "bar");
+        assert_eq!(
+            map.iter().collect::<Vec<_>>(),
+            vec![(&"Hello", &"World"), (&"foo", &"bar")]
+        );
+    }
+
+    #[test]
+    fn it_inserts_and_gets_values_with_same_key() {
+        let mut map = OrderedMultiMap::new();
+
+        map.insert("Hello", "World");
+        map.insert("Hello", "Rust");
+        map.insert("not", "you");
+        assert_eq!(
+            map.get(&"Hello").collect::<Vec<_>>(),
+            vec![(&"Hello", &"World"), (&"Hello", &"Rust")]
+        );
     }
 }
