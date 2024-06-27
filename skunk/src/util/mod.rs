@@ -1,6 +1,7 @@
 //! Utilities.
 
 pub(crate) mod boolean;
+pub mod crc;
 pub(crate) mod error;
 pub mod io;
 pub mod ordered_multimap;
@@ -21,10 +22,6 @@ use std::{
 };
 
 pub use byst::util::for_tuple;
-use byst::{
-    io::BufReader,
-    Buf,
-};
 use parking_lot::Mutex;
 pub use tokio_util::sync::CancellationToken;
 
@@ -184,36 +181,3 @@ impl<'a, T: Display> Display for Punctuated<'a, T> {
         Ok(())
     }
 }
-
-pub trait CrcExt {
-    type Output;
-
-    fn for_reader(&'static self, reader: impl BufReader) -> Self::Output;
-
-    #[inline]
-    fn for_buf(&'static self, buf: impl Buf) -> Self::Output {
-        self.for_reader(buf.reader())
-    }
-}
-
-macro_rules! impl_crc_ext {
-    ($($ty:ty)*) => {
-        $(
-            impl CrcExt for crc::Algorithm<$ty> {
-                type Output = $ty;
-
-                fn for_reader(&'static self, mut reader: impl BufReader) -> Self::Output {
-                    let crc = crc::Crc::<$ty>::new(self);
-                    let mut digest = crc.digest();
-                    while let Some(chunk) = reader.chunk() {
-                        digest.update(chunk);
-                        reader.advance(chunk.len()).unwrap();
-                    }
-                    digest.finalize()
-                }
-            }
-        )*
-    };
-}
-
-impl_crc_ext!(u32);

@@ -54,7 +54,7 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub async fn send(&self, packet: &Packet) -> Result<(), SendError> {
+    pub async fn send(&self, _packet: &Packet) -> Result<(), SendError> {
         //self.sock_tx.send(packet).await
         // todo: don't just send the ARP packet! we need to wrap it into an Ethernet
         // frame too lol

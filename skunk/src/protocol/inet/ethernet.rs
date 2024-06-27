@@ -11,9 +11,14 @@ use byst::{
         Read,
         Reader,
         ReaderExt,
+        Write,
+        Writer,
+        WriterExt,
     },
     Bytes,
 };
+use crc::Crc;
+use lazy_static::lazy_static;
 use smallvec::SmallVec;
 
 use super::{
@@ -22,8 +27,8 @@ use super::{
     mac_address::MacAddress,
 };
 use crate::util::{
+    crc::CrcExt,
     network_enum,
-    CrcExt,
 };
 
 /// Max payload size for ethernet frames.
@@ -44,7 +49,7 @@ pub struct Header {
 impl<R: Reader> Read<R, ()> for Header {
     type Error = InvalidHeader<R::Error>;
 
-    fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         let destination = reader.read()?;
         let source = reader.read()?;
 
@@ -81,6 +86,28 @@ impl<R: Reader> Read<R, ()> for Header {
     }
 }
 
+impl<W: Writer> Write<W, ()> for Header {
+    type Error = W::Error;
+
+    fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {
+        writer.write(&self.destination)?;
+        writer.write(&self.source)?;
+
+        if !self.vlan_tags.is_empty() {
+            for vlan_tag in &self.vlan_tags[..(self.vlan_tags.len() - 1)] {
+                writer.write(&EtherType::VLAN_TAGGED_QINQ)?;
+                writer.write(vlan_tag)?;
+            }
+            writer.write(&EtherType::VLAN_TAGGED)?;
+            writer.write(self.vlan_tags.last().unwrap())?;
+        }
+
+        writer.write(&self.ether_type)?;
+
+        Ok(())
+    }
+}
+
 /// An Ethernet II frame.
 ///
 /// > In computer networking, an Ethernet frame is a data link layer protocol
@@ -104,11 +131,11 @@ where
 {
     type Error = InvalidFrame<R::Error, E>;
 
-    fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
+    fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         let fcs_present = {
             // Compute CRC32 for this frame. if it's the expected value, the FCS is present.
             let view = reader.view(reader.remaining()).unwrap();
-            FCS_CRC32.for_buf(view) == FCS_CRC32.residue
+            CRC.for_buf(view) == CRC.algorithm.residue
         };
 
         // Read the header
@@ -149,6 +176,20 @@ where
     }
 }
 
+impl<W: Writer, P> Write<W, ()> for Frame<P>
+where
+    P: Write<W, (), Error = W::Error>,
+{
+    type Error = W::Error;
+
+    fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {
+        writer.write(&self.header)?;
+        writer.write(&self.payload)?;
+        // todo: write FCS
+        Ok(())
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid Ethernet II header")]
 pub enum InvalidHeader<R> {
@@ -184,7 +225,7 @@ impl<P> From<Infallible> for InvalidFrame<P> {
 /// > some Ethernet frames.[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/EtherType
-#[derive(Clone, Copy, PartialEq, Eq, Read)]
+#[derive(Clone, Copy, PartialEq, Eq, Read, Write)]
 pub struct EtherType(#[byst(network)] pub u16);
 
 network_enum! {
@@ -279,7 +320,7 @@ pub enum AnyPayloadError<R, P> {
 /// Vlan tag for ethernet frames[1]
 ///
 /// [1]: https://en.wikipedia.org/wiki/IEEE_802.1Q
-#[derive(Clone, Copy, Debug, Read, Default)]
+#[derive(Clone, Copy, Debug, Default, Read, Write)]
 pub struct VlanTag(#[byst(network)] pub u16);
 
 impl VlanTag {
@@ -318,13 +359,18 @@ impl VlanTag {
     }
 }
 
-pub const FCS_CRC32: crc::Algorithm<u32> = crc::Algorithm {
-    width: 32,
-    poly: 0x04c11db7,
-    init: 0xffffffff,
-    refin: true,
-    refout: true,
-    xorout: 0xffffffff,
-    check: 0xcbf43926,
-    residue: 0xdebb20e3,
-};
+lazy_static! {
+    pub static ref CRC: Crc::<u32> = {
+        const ALGORITHM: crc::Algorithm<u32> = crc::Algorithm {
+            width: 32,
+            poly: 0x04c11db7,
+            init: 0xffffffff,
+            refin: true,
+            refout: true,
+            xorout: 0xffffffff,
+            check: 0xcbf43926,
+            residue: 0xdebb20e3,
+        };
+        Crc::<u32>::new(&ALGORITHM)
+    };
+}

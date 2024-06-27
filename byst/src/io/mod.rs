@@ -43,16 +43,6 @@ pub trait Position {
     /// 2. Ignore invalid positions until the [`Reader`] is being read from, and
     ///    then return [`End`].
     fn set_position(&mut self, position: usize);
-
-    #[inline]
-    fn is_at_start(&self) -> bool {
-        self.position() == 0
-    }
-
-    #[inline]
-    fn reset_position(&mut self) {
-        self.set_position(0);
-    }
 }
 
 /// A reader that knows how many bytes are remaining.

@@ -49,7 +49,7 @@ pub trait WriterExt: Writer {
 
 impl<W: Writer> WriterExt for W {}
 
-pub trait BufWriter: Writer {
+pub trait BufWriter: Writer<Error = Full> {
     fn chunk_mut(&mut self) -> Option<&mut [u8]>;
 
     fn advance(&mut self, by: usize) -> Result<(), Full>;

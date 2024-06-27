@@ -6,6 +6,7 @@ use super::{
 };
 use crate::BufMut;
 
+#[derive(Clone, Debug)]
 pub struct Limit<R> {
     inner: R,
     limit: usize,

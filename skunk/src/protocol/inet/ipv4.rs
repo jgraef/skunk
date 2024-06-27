@@ -14,6 +14,8 @@ use byst::{
         Reader,
         ReaderExt,
         Write,
+        Writer,
+        WriterExt,
     },
     Bytes,
 };
@@ -94,6 +96,15 @@ impl<R: Reader> Read<R, ()> for Header {
     }
 }
 
+impl<W: Writer> Write<W, ()> for Header {
+    type Error = W::Error;
+
+    fn write(&self, _writer: &mut W, _context: ()) -> Result<(), Self::Error> {
+        //writer.write(&(self.version << 4 | self.internet_header_length))?;
+        Ok(())
+    }
+}
+
 bitflags! {
     #[derive(Clone, Copy, Debug, Read, Write)]
     pub struct Flags: u8 {
@@ -127,6 +138,19 @@ where
         let _ = limit.skip_remaining();
 
         Ok(Self { header, payload })
+    }
+}
+
+impl<W: Writer, P> Write<W, ()> for Packet<P>
+where
+    P: Write<W, (), Error = W::Error>,
+{
+    type Error = W::Error;
+
+    fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {
+        writer.write(&self.header)?;
+        writer.write(&self.payload)?;
+        Ok(())
     }
 }
 
