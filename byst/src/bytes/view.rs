@@ -17,6 +17,7 @@ use crate::{
         BufReader,
         BufWriter,
         End,
+        Seek,
     },
     util::{
         buf_eq,
@@ -100,7 +101,21 @@ impl<'b> BufReader for View<'b> {
     type View = Self;
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self, End> {
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        self.inner.peek_chunk()
+    }
+
+    #[inline]
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
+        let view = self.peek_view(length)?;
+        self.inner
+            .advance(length)
+            .unwrap_or_else(|_| unreachable!());
+        Ok(view)
+    }
+
+    #[inline]
+    fn peek_view(&self, length: usize) -> Result<Self, End> {
         Buf::view(self, Range::default().with_start(0).with_length(length)).map_err(|_| {
             End {
                 read: 0,
@@ -111,8 +126,13 @@ impl<'b> BufReader for View<'b> {
     }
 
     #[inline]
-    fn chunk(&self) -> Option<&[u8]> {
-        self.inner.chunk()
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        self.clone()
     }
 
     #[inline]
@@ -124,10 +144,19 @@ impl<'b> BufReader for View<'b> {
     fn remaining(&self) -> usize {
         self.inner.len()
     }
+}
+
+impl<'b> Seek for View<'b> {
+    type Position = View<'b>;
 
     #[inline]
-    fn rest(&mut self) -> Self::View {
-        std::mem::take(self)
+    fn tell(&self) -> Self::Position {
+        self.clone()
+    }
+
+    #[inline]
+    fn seek(&mut self, position: &Self::Position) -> Self::Position {
+        std::mem::replace(self, position.clone())
     }
 }
 
@@ -229,8 +258,29 @@ impl<'b> ViewMutWriter<'b> {
 }
 
 impl<'b> BufWriter for ViewMutWriter<'b> {
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
-        self.inner.chunk_mut()
+    type ViewMut<'a> = ViewMut<'a> where Self: 'a;
+
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.peek_chunk_mut()
+    }
+
+    fn view_mut(&mut self, _length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        todo!();
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, _length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        todo!();
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        todo!();
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        todo!();
     }
 
     fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {

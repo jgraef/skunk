@@ -1,3 +1,4 @@
+mod count;
 mod limit;
 mod read;
 mod write;
@@ -8,6 +9,7 @@ pub use byst_macros::{
 };
 
 pub use self::{
+    count::Count,
     limit::Limit,
     read::{
         read,
@@ -28,24 +30,44 @@ pub use self::{
     },
 };
 
-/// A reader that also has knowledge about the position in the underlying
-/// buffer.
-pub trait Position {
-    fn position(&self) -> usize;
+/// A reader or writer that also has knowledge about the position in the
+/// underlying buffer.
+pub trait Seek {
+    type Position;
 
-    /// Set the position of the reader.
-    ///
-    /// It is up to the implementor how to handle invalid `position`s. The
-    /// options are:
-    ///
-    /// 1. Panic immediately when [`set_position`](Self::set_position) is
-    ///    called.
-    /// 2. Ignore invalid positions until the [`Reader`] is being read from, and
-    ///    then return [`End`].
-    fn set_position(&mut self, position: usize);
+    fn tell(&self) -> Self::Position;
+    fn seek(&mut self, position: &Self::Position) -> Self::Position;
 }
 
-/// A reader that knows how many bytes are remaining.
+impl<'a, T: Seek> Seek for &'a mut T {
+    type Position = T::Position;
+
+    #[inline]
+    fn tell(&self) -> Self::Position {
+        T::tell(*self)
+    }
+
+    #[inline]
+    fn seek(&mut self, position: &Self::Position) -> Self::Position {
+        T::seek(*self, position)
+    }
+}
+
+impl<'a> Seek for &'a [u8] {
+    type Position = &'a [u8];
+
+    #[inline]
+    fn tell(&self) -> Self::Position {
+        self
+    }
+
+    #[inline]
+    fn seek(&mut self, position: &Self::Position) -> Self::Position {
+        std::mem::replace(self, *position)
+    }
+}
+
+/// A reader or writer that knows how many bytes are remaining.
 pub trait Remaining {
     fn remaining(&self) -> usize;
 

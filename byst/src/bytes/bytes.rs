@@ -14,6 +14,7 @@ use crate::{
     io::{
         BufReader,
         End,
+        Seek,
     },
     util::{
         buf_eq,
@@ -113,13 +114,34 @@ impl BufReader for Bytes {
     type View = Self;
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self::View, End> {
-        Ok(Bytes::from(<View as BufReader>::view(&self.inner, length)?))
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        <View as BufReader>::peek_chunk(&self.inner)
     }
 
     #[inline]
-    fn chunk(&self) -> Option<&[u8]> {
-        <View as BufReader>::chunk(&self.inner)
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
+        Ok(Bytes::from(<View as BufReader>::view(
+            &mut self.inner,
+            length,
+        )?))
+    }
+
+    #[inline]
+    fn peek_view(&self, length: usize) -> Result<Self::View, End> {
+        Ok(Bytes::from(<View as BufReader>::peek_view(
+            &self.inner,
+            length,
+        )?))
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        Bytes::from(<View as BufReader>::rest(&mut self.inner))
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        Bytes::from(<View as BufReader>::peek_rest(&self.inner))
     }
 
     #[inline]
@@ -131,10 +153,19 @@ impl BufReader for Bytes {
     fn remaining(&self) -> usize {
         <View as BufReader>::remaining(&self.inner)
     }
+}
+
+impl Seek for Bytes {
+    type Position = Self;
 
     #[inline]
-    fn rest(&mut self) -> Self::View {
-        std::mem::take(self)
+    fn tell(&self) -> Self::Position {
+        Bytes::from(self.inner.tell())
+    }
+
+    #[inline]
+    fn seek(&mut self, position: &Self::Position) -> Self::Position {
+        Bytes::from(self.inner.seek(&position.inner))
     }
 }
 

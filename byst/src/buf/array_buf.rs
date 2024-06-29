@@ -213,10 +213,31 @@ pub struct ArrayBufWriter<'a, const N: usize> {
     inner: PartiallyInitializedWriter<'a, [MaybeUninit<u8>; N]>,
 }
 
-impl<'a, const N: usize> BufWriter for ArrayBufWriter<'a, N> {
+impl<'b, const N: usize> BufWriter for ArrayBufWriter<'b, N> {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+
     #[inline]
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
-        self.inner.chunk_mut()
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.peek_chunk_mut()
+    }
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        self.inner.view_mut(length)
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        self.inner.peek_view_mut(length)
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        self.inner.rest_mut()
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        self.inner.peek_rest_mut()
     }
 
     #[inline]

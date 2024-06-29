@@ -132,7 +132,7 @@ pub fn copy_io(
     let mut total_copied = 0;
 
     while amount.map_or(true, |n| n > 0) {
-        match (destination.chunk_mut(), source.chunk()) {
+        match (destination.peek_chunk_mut(), source.peek_chunk()) {
             (Some(dest_chunk), Some(src_chunk)) => {
                 let mut n = std::cmp::min(dest_chunk.len(), src_chunk.len());
                 if let Some(amount) = &mut amount {

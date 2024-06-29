@@ -85,7 +85,7 @@ pub trait BufExt: Buf {
     fn into_vec(&self) -> Vec<u8> {
         let mut reader = self.reader();
         let mut buf = Vec::with_capacity(reader.remaining());
-        while let Some(chunk) = reader.chunk() {
+        while let Some(chunk) = reader.peek_chunk() {
             buf.extend(chunk.iter().copied());
             reader.advance(chunk.len()).unwrap();
         }
@@ -479,15 +479,59 @@ impl<'a> VecWriter<'a> {
     }
 }
 
-impl<'a> BufWriter for VecWriter<'a> {
+impl<'v> BufWriter for VecWriter<'v> {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+
     #[inline]
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
         if self.position < self.vec.len() {
             Some(&mut self.vec[self.position..])
         }
         else {
             None
         }
+    }
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if self.position + length <= self.vec.len() {
+            let view = &mut self.vec[self.position..][..length];
+            self.position += length;
+            Ok(view)
+        }
+        else {
+            Err(crate::io::Full {
+                written: 0,
+                requested: length,
+                remaining: self.vec.len() - self.position,
+            })
+        }
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if self.position + length <= self.vec.len() {
+            Ok(&mut self.vec[self.position..][..length])
+        }
+        else {
+            Err(crate::io::Full {
+                written: 0,
+                requested: length,
+                remaining: self.vec.len() - self.position,
+            })
+        }
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        let new_position = self.vec.len();
+        let rest = &mut self.vec[self.position..];
+        self.position = new_position;
+        rest
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        &mut self.vec[self.position..]
     }
 
     #[inline]
@@ -532,7 +576,10 @@ pub(crate) mod tests {
                 };
                 let mut bytes_mut = $new;
                 copy_range(&mut bytes_mut, 4..8, b"abcd", ..).unwrap();
-                assert_eq!(bytes_mut.reader().chunk().unwrap(), b"\x00\x00\x00\x00abcd");
+                assert_eq!(
+                    bytes_mut.reader().peek_chunk().unwrap(),
+                    b"\x00\x00\x00\x00abcd"
+                );
             }
 
             #[test]
@@ -547,7 +594,7 @@ pub(crate) mod tests {
                 let mut bytes_mut = $new;
                 copy_range(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
                 copy_range(&mut bytes_mut, 2..6, b"efgh", ..).unwrap();
-                assert_eq!(bytes_mut.reader().chunk().unwrap(), b"abefgh");
+                assert_eq!(bytes_mut.reader().peek_chunk().unwrap(), b"abefgh");
             }
 
             #[test]
@@ -562,7 +609,7 @@ pub(crate) mod tests {
                 let mut bytes_mut = $new;
                 copy_range(&mut bytes_mut, 0..4, b"abcd", ..).unwrap();
                 copy_range(&mut bytes_mut, 2.., b"efgh", ..).unwrap();
-                assert_eq!(bytes_mut.reader().chunk().unwrap(), b"abefgh");
+                assert_eq!(bytes_mut.reader().peek_chunk().unwrap(), b"abefgh");
             }
         };
     }

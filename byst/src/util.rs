@@ -348,7 +348,7 @@ pub fn buf_eq(left: impl Buf, right: impl Buf) -> bool {
     let mut right_reader = right.reader();
 
     loop {
-        match (left_reader.chunk(), right_reader.chunk()) {
+        match (left_reader.peek_chunk(), right_reader.peek_chunk()) {
             (None, None) => {
                 // boths chunks are exhausted at the same time, and they haven't been unequal
                 // yet. thus they're equal.

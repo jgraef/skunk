@@ -256,17 +256,61 @@ impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> PartiallyInitia
     }
 }
 
-impl<'a, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
-    for PartiallyInitializedWriter<'a, B>
+impl<'b, B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufWriter
+    for PartiallyInitializedWriter<'b, B>
 {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+
     #[inline]
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
         if self.position < self.partially_initialized.initialized {
             Some(&mut self.partially_initialized.bytes_mut()[self.position..])
         }
         else {
             None
         }
+    }
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if self.position + length <= self.partially_initialized.initialized {
+            let view = &mut self.partially_initialized.bytes_mut()[self.position..][..length];
+            self.position += length;
+            Ok(view)
+        }
+        else {
+            Err(crate::io::Full {
+                written: 0,
+                requested: length,
+                remaining: self.partially_initialized.initialized - self.position,
+            })
+        }
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if self.position + length <= self.partially_initialized.initialized {
+            Ok(&mut self.partially_initialized.bytes_mut()[self.position..][..length])
+        }
+        else {
+            Err(crate::io::Full {
+                written: 0,
+                requested: length,
+                remaining: self.partially_initialized.initialized - self.position,
+            })
+        }
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        let new_position = self.partially_initialized.initialized;
+        let rest = &mut self.partially_initialized.bytes_mut()[self.position..];
+        self.position = new_position;
+        rest
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        &mut self.partially_initialized.bytes_mut()[self.position..]
     }
 
     #[inline]

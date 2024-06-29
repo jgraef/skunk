@@ -7,6 +7,7 @@ use byst::{
     endianness::NetworkEndian,
     io::{
         BufReader,
+        BufWriter,
         Limit,
         Read,
         Reader,
@@ -134,7 +135,9 @@ where
     fn read(reader: &mut R, _context: ()) -> Result<Self, Self::Error> {
         let fcs_present = {
             // Compute CRC32 for this frame. if it's the expected value, the FCS is present.
-            let view = reader.view(reader.remaining()).unwrap();
+            // todo: I think we should just ignore the FCS and assume those bytes belong to
+            // the payload.
+            let view = reader.peek_rest();
             CRC.for_buf(view) == CRC.algorithm.residue
         };
 
@@ -176,7 +179,7 @@ where
     }
 }
 
-impl<W: Writer, P> Write<W, ()> for Frame<P>
+impl<W: BufWriter, P> Write<W, ()> for Frame<P>
 where
     P: Write<W, (), Error = W::Error>,
 {

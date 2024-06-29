@@ -9,7 +9,10 @@ use std::{
 
 use byst_macros::for_tuple;
 
-use super::Limit;
+use super::{
+    Limit,
+    Seek,
+};
 use crate::{
     impl_me,
     Buf,
@@ -84,18 +87,41 @@ pub trait ReaderExt: Reader {
 
 impl<R: Reader> ReaderExt for R {}
 
-pub trait BufReader: Reader<Error = End> {
+pub trait BufReader: Reader<Error = End> + Seek {
     type View: Buf;
 
-    fn view(&self, length: usize) -> Result<Self::View, End>;
+    /// Returns a single chunk starting at the current position.
+    ///
+    /// This doesn't advance the cursor. You can use [`advance`][Self::advance]
+    /// to advance the cursor.
+    fn peek_chunk(&self) -> Option<&[u8]>;
 
-    fn chunk(&self) -> Option<&[u8]>;
+    /// Returns a view of `length` bytes starting at the current position.
+    ///
+    /// This advances the cursor by `length` bytes.
+    fn view(&mut self, length: usize) -> Result<Self::View, End>;
 
+    /// Returns a view of `length` bytes starting at the current position.
+    ///
+    /// This doesn't advance the cursor. You can use [`advance`][Self::advance]
+    /// to advance the cursor.
+    fn peek_view(&self, length: usize) -> Result<Self::View, End>;
+
+    /// Returns a view of the rest of this reader.
+    ///
+    /// This advances the cursor to the end of the reader.
+    fn rest(&mut self) -> Self::View;
+
+    /// Returns a view of the rest of this reader.
+    ///
+    /// This doesn't advance the cursor.
+    fn peek_rest(&self) -> Self::View;
+
+    /// Advances the cursor by `by` bytes.
     fn advance(&mut self, by: usize) -> Result<(), End>;
 
+    /// Returns the number of bytes remaining.
     fn remaining(&self) -> usize;
-
-    fn rest(&mut self) -> Self::View;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, thiserror::Error)]
@@ -107,14 +133,17 @@ pub struct End {
 }
 
 impl ReadError for End {
+    #[inline]
     fn from_end(end: End) -> Self {
         end
     }
 
+    #[inline]
     fn amount_read(&self) -> usize {
         self.read
     }
 
+    #[inline]
     fn is_end(&self) -> bool {
         true
     }
@@ -177,28 +206,38 @@ impl<'a, R: BufReader> BufReader for &'a mut R {
     type View = R::View;
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self::View, End> {
-        R::view(self, length)
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        R::peek_chunk(*self)
     }
 
     #[inline]
-    fn chunk(&self) -> Option<&[u8]> {
-        R::chunk(self)
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
+        R::view(*self, length)
     }
 
     #[inline]
-    fn advance(&mut self, by: usize) -> Result<(), End> {
-        R::advance(self, by)
-    }
-
-    #[inline]
-    fn remaining(&self) -> usize {
-        R::remaining(self)
+    fn peek_view(&self, length: usize) -> Result<Self::View, End> {
+        R::peek_view(*self, length)
     }
 
     #[inline]
     fn rest(&mut self) -> Self::View {
-        R::rest(self)
+        R::rest(*self)
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        R::peek_rest(*self)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), End> {
+        R::advance(*self, by)
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        R::remaining(*self)
     }
 }
 
@@ -206,7 +245,33 @@ impl<'a> BufReader for &'a [u8] {
     type View = &'a [u8];
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self::View, End> {
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        if self.is_empty() {
+            None
+        }
+        else {
+            Some(*self)
+        }
+    }
+
+    #[inline]
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
+        if length <= self.len() {
+            let (left, right) = self.split_at(length);
+            *self = right;
+            Ok(left)
+        }
+        else {
+            Err(End {
+                requested: length,
+                read: 0,
+                remaining: self.len(),
+            })
+        }
+    }
+
+    #[inline]
+    fn peek_view(&self, length: usize) -> Result<Self::View, End> {
         if length <= self.len() {
             Ok(&self[..length])
         }
@@ -220,13 +285,13 @@ impl<'a> BufReader for &'a [u8] {
     }
 
     #[inline]
-    fn chunk(&self) -> Option<&'a [u8]> {
-        if self.is_empty() {
-            None
-        }
-        else {
-            Some(*self)
-        }
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        self
     }
 
     #[inline]
@@ -247,11 +312,6 @@ impl<'a> BufReader for &'a [u8] {
     #[inline]
     fn remaining(&self) -> usize {
         self.len()
-    }
-
-    #[inline]
-    fn rest(&mut self) -> Self::View {
-        std::mem::take(self)
     }
 }
 

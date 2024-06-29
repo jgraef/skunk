@@ -22,17 +22,17 @@ impl Length for Static {
 
 impl<'b> BytesImpl<'b> for Static {
     #[inline]
-    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds> {
-        Ok(Box::new(Buf::view(&self.0, range)?))
-    }
-
-    #[inline]
     fn clone(&self) -> Box<dyn BytesImpl<'b> + 'b> {
         Box::new(*self)
     }
 
-    fn chunk(&self) -> Option<&[u8]> {
-        BufReader::chunk(&self.0)
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        BufReader::peek_chunk(&self.0)
+    }
+
+    #[inline]
+    fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds> {
+        Ok(Box::new(Buf::view(&self.0, range)?))
     }
 
     fn advance(&mut self, by: usize) -> Result<(), End> {

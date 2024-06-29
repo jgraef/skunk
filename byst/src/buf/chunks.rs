@@ -24,7 +24,7 @@ impl<'b, B: Buf + ?Sized> Iterator for BufIter<'b, B> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let chunk = self.reader.chunk()?;
+        let chunk = self.reader.peek_chunk()?;
         let byte = *chunk.first().expect("BufReader returned empty chunk.;");
         self.reader
             .advance(1)

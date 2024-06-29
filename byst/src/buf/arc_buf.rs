@@ -20,9 +20,13 @@ use crate::{
     bytes::r#impl::{
         BytesImpl,
         BytesMutImpl,
+        WriterImpl,
     },
     impl_me,
-    io::End,
+    io::{
+        End,
+        Seek,
+    },
     util::{
         buf_eq,
         debug_as_hexdump,
@@ -668,26 +672,48 @@ impl BufReader for ArcBuf {
     type View = Self;
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self::View, End> {
-        let mut view = Buf::view(self, 0..length).map_err(|RangeOutOfBounds { .. }| {
-            End {
-                requested: length,
-                read: 0,
-                remaining: self.len(),
-            }
-        })?;
-        view.inner.shrink(length, self.len());
-        Ok(view)
-    }
-
-    #[inline]
-    fn chunk(&self) -> Option<&[u8]> {
+    fn peek_chunk(&self) -> Option<&[u8]> {
         if self.is_empty() {
             None
         }
         else {
             Some(self.bytes())
         }
+    }
+
+    #[inline]
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
+        let view = Buf::view(self, 0..length).map_err(|RangeOutOfBounds { .. }| {
+            End {
+                requested: length,
+                read: 0,
+                remaining: self.len(),
+            }
+        })?;
+        self.inner.shrink(length, self.len());
+        Ok(view)
+    }
+
+    #[inline]
+    fn peek_view(&self, length: usize) -> Result<Self::View, End> {
+        let view = Buf::view(self, 0..length).map_err(|RangeOutOfBounds { .. }| {
+            End {
+                requested: length,
+                read: 0,
+                remaining: self.len(),
+            }
+        })?;
+        Ok(view)
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        std::mem::take(self)
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        Clone::clone(self)
     }
 
     #[inline]
@@ -709,10 +735,19 @@ impl BufReader for ArcBuf {
     fn remaining(&self) -> usize {
         self.len()
     }
+}
+
+impl Seek for ArcBuf {
+    type Position = ArcBuf;
 
     #[inline]
-    fn rest(&mut self) -> Self::View {
-        std::mem::take(self)
+    fn tell(&self) -> Self::Position {
+        Clone::clone(self)
+    }
+
+    #[inline]
+    fn seek(&mut self, position: &Self::Position) -> Self::Position {
+        std::mem::replace(self, Clone::clone(position))
     }
 }
 
@@ -725,8 +760,8 @@ impl<'b> BytesImpl<'b> for ArcBuf {
         Box::new(Clone::clone(self))
     }
 
-    fn chunk(&self) -> Option<&[u8]> {
-        BufReader::chunk(self)
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        BufReader::peek_chunk(self)
     }
 
     fn advance(&mut self, by: usize) -> Result<(), End> {
@@ -1127,6 +1162,7 @@ impl BufMut for ArcBufMut {
         Writer::new(self)
     }
 
+    #[inline]
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
         if size <= self.capacity() {
             Ok(())
@@ -1159,7 +1195,7 @@ impl BytesMutImpl for ArcBufMut {
     }
 
     fn writer(&mut self) -> Box<dyn crate::bytes::r#impl::WriterImpl + '_> {
-        Box::new(self.filled_mut())
+        Box::new(Writer::new(self))
     }
 
     fn reserve(&mut self, size: usize) -> Result<(), Full> {
@@ -1243,15 +1279,58 @@ impl<'a> Writer<'a> {
     }
 }
 
-impl<'a> BufWriter for Writer<'a> {
+impl<'b> BufWriter for Writer<'b> {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+
     #[inline]
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
         if self.position < self.buf.filled {
             Some(&mut self.buf.filled_mut()[self.position..])
         }
         else {
             None
         }
+    }
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if self.position + length <= self.buf.filled {
+            let view = &mut self.buf.filled_mut()[self.position..][..length];
+            self.position += length;
+            Ok(view)
+        }
+        else {
+            Err(crate::io::Full {
+                written: 0,
+                requested: length,
+                remaining: self.buf.filled - self.position,
+            })
+        }
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if self.position + length <= self.buf.filled {
+            Ok(&mut self.buf.filled_mut()[self.position..][..length])
+        }
+        else {
+            Err(crate::io::Full {
+                written: 0,
+                requested: length,
+                remaining: self.buf.filled - self.position,
+            })
+        }
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        let rest = &mut self.buf.filled_mut()[self.position..];
+        self.position += rest.len();
+        rest
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        &mut self.buf.filled_mut()[self.position..]
     }
 
     #[inline]
@@ -1291,6 +1370,28 @@ impl<'a> BufWriter for Writer<'a> {
             })
             .map_err(Into::into)
         }
+    }
+}
+
+impl<'b> WriterImpl for Writer<'b> {
+    #[inline]
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
+        BufWriter::peek_chunk_mut(self)
+    }
+
+    #[inline]
+    fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
+        BufWriter::advance(self, by)
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        BufWriter::remaining(self)
+    }
+
+    #[inline]
+    fn extend(&mut self, with: &[u8]) -> Result<(), crate::io::Full> {
+        BufWriter::extend(self, with)
     }
 }
 

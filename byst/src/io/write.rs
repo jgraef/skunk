@@ -9,6 +9,7 @@ use super::Limit;
 use crate::{
     buf::Buf,
     impl_me,
+    BufMut,
 };
 
 /// Something that can be written to a writer `W`, given the context `C`.
@@ -50,7 +51,19 @@ pub trait WriterExt: Writer {
 impl<W: Writer> WriterExt for W {}
 
 pub trait BufWriter: Writer<Error = Full> {
-    fn chunk_mut(&mut self) -> Option<&mut [u8]>;
+    type ViewMut<'a>: BufMut
+    where
+        Self: 'a;
+
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]>;
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, Full>;
+
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, Full>;
+
+    fn rest_mut(&mut self) -> Self::ViewMut<'_>;
+
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_>;
 
     fn advance(&mut self, by: usize) -> Result<(), Full>;
 
@@ -105,33 +118,100 @@ impl_me! {
     //impl['a] Writer for &'a mut Vec<u8> as BufWriter;
 }
 
-impl<'a, W: BufWriter> BufWriter for &'a mut W {
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
-        W::chunk_mut(self)
+impl<'b, W: BufWriter> BufWriter for &'b mut W {
+    type ViewMut<'a> = <W as BufWriter>::ViewMut<'a> where Self: 'a;
+
+    #[inline]
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
+        W::peek_chunk_mut(*self)
     }
 
+    #[inline]
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, Full> {
+        W::view_mut(*self, length)
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, Full> {
+        W::peek_view_mut(*self, length)
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        W::rest_mut(*self)
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        W::peek_rest_mut(*self)
+    }
+
+    #[inline]
     fn advance(&mut self, by: usize) -> Result<(), Full> {
-        W::advance(self, by)
+        W::advance(*self, by)
     }
 
+    #[inline]
     fn remaining(&self) -> usize {
-        W::remaining(self)
+        W::remaining(*self)
     }
 
+    #[inline]
     fn extend(&mut self, with: &[u8]) -> Result<(), Full> {
-        W::extend(self, with)
+        W::extend(*self, with)
     }
 }
 
-impl<'a> BufWriter for &'a mut [u8] {
+impl<'b> BufWriter for &'b mut [u8] {
+    type ViewMut<'a> = &'a mut [u8] where Self: 'a;
+
     #[inline]
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
         if self.is_empty() {
             None
         }
         else {
             Some(&mut **self)
         }
+    }
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        if length <= self.len() {
+            let (left, right) = std::mem::take(self).split_at_mut(length);
+            *self = right;
+            Ok(left)
+        }
+        else {
+            Err(Full {
+                requested: length,
+                remaining: self.len(),
+                written: 0,
+            })
+        }
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, Full> {
+        if length <= self.len() {
+            Ok(&mut self[..length])
+        }
+        else {
+            Err(Full {
+                requested: length,
+                remaining: self.len(),
+                written: 0,
+            })
+        }
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        std::mem::take(self)
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        &mut **self
     }
 
     #[inline]

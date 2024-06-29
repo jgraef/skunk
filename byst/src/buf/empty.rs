@@ -21,6 +21,7 @@ use crate::{
     io::{
         End,
         Reader,
+        Seek,
     },
     BufMut,
     Bytes,
@@ -116,13 +117,30 @@ impl BufReader for Empty {
     type View = Self;
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self::View, End> {
-        check_length_read(length).map(|()| Self)
+    fn peek_chunk(&self) -> Option<&'static [u8]> {
+        None
     }
 
     #[inline]
-    fn chunk(&self) -> Option<&'static [u8]> {
-        None
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
+        check_length_read(length)?;
+        Ok(Self)
+    }
+
+    #[inline]
+    fn peek_view(&self, length: usize) -> Result<Self::View, End> {
+        check_length_read(length)?;
+        Ok(Self)
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        Self
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        Self
     }
 
     #[inline]
@@ -134,17 +152,49 @@ impl BufReader for Empty {
     fn remaining(&self) -> usize {
         0
     }
+}
+
+impl Seek for Empty {
+    type Position = Self;
 
     #[inline]
-    fn rest(&mut self) -> Self::View {
+    fn tell(&self) -> Self::Position {
+        Self
+    }
+
+    #[inline]
+    fn seek(&mut self, _position: &Self::Position) -> Self::Position {
         Self
     }
 }
 
 impl BufWriter for Empty {
+    type ViewMut<'a> = Empty where Self: 'a;
+
     #[inline]
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
         None
+    }
+
+    fn view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        check_length_write(length)?;
+        Ok(Self)
+    }
+
+    #[inline]
+    fn peek_view_mut(&mut self, length: usize) -> Result<Self::ViewMut<'_>, crate::io::Full> {
+        check_length_write(length)?;
+        Ok(Self)
+    }
+
+    #[inline]
+    fn rest_mut(&mut self) -> Self::ViewMut<'_> {
+        Self
+    }
+
+    #[inline]
+    fn peek_rest_mut(&mut self) -> Self::ViewMut<'_> {
+        Self
     }
 
     #[inline]
@@ -228,7 +278,7 @@ impl<'b> BytesImpl<'b> for Empty {
         Box::new(Self)
     }
 
-    fn chunk(&self) -> Option<&'_ [u8]> {
+    fn peek_chunk(&self) -> Option<&'_ [u8]> {
         None
     }
 
@@ -281,7 +331,7 @@ impl BytesMutImpl for Empty {
 }
 
 impl WriterImpl for Empty {
-    fn chunk_mut(&mut self) -> Option<&mut [u8]> {
+    fn peek_chunk_mut(&mut self) -> Option<&mut [u8]> {
         None
     }
 

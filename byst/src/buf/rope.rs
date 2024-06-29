@@ -10,6 +10,10 @@ use super::{
 };
 use crate::{
     impl_me,
+    io::{
+        End,
+        Seek,
+    },
     Buf,
     Range,
     RangeOutOfBounds,
@@ -176,24 +180,44 @@ impl<'a, B> Default for Reader<'a, B> {
 impl<'a, B: Buf> BufReader for Reader<'a, B> {
     type View = View<'a, B>;
 
-    fn view(&self, _length: usize) -> Result<Self::View, crate::io::End> {
+    fn peek_chunk(&self) -> Option<&[u8]> {
         todo!()
     }
 
-    fn chunk(&self) -> Option<&[u8]> {
+    #[inline]
+    fn view(&mut self, _length: usize) -> Result<Self::View, End> {
         todo!()
     }
 
-    fn advance(&mut self, _by: usize) -> Result<(), crate::io::End> {
+    fn peek_view(&self, _length: usize) -> Result<Self::View, End> {
+        todo!()
+    }
+
+    fn rest(&mut self) -> Self::View {
+        todo!()
+    }
+
+    fn peek_rest(&self) -> Self::View {
+        todo!()
+    }
+
+    fn advance(&mut self, _by: usize) -> Result<(), End> {
         todo!()
     }
 
     fn remaining(&self) -> usize {
         todo!()
     }
+}
 
-    #[inline]
-    fn rest(&mut self) -> Self::View {
+impl<'a, B: Buf> Seek for Reader<'a, B> {
+    type Position = ();
+
+    fn tell(&self) -> Self::Position {
+        todo!();
+    }
+
+    fn seek(&mut self, _position: &Self::Position) -> Self::Position {
         todo!();
     }
 }
@@ -297,7 +321,7 @@ mod tests {
         // uggh... fix this when we solved the BufReader lifetime issue.
         let mut reader = buf.reader();
         let mut chunks = vec![];
-        while let Some(chunk) = reader.chunk() {
+        while let Some(chunk) = reader.peek_chunk() {
             chunks.push(chunk.to_owned());
             reader.advance(chunk.len()).unwrap();
         }

@@ -3,6 +3,7 @@ use super::{
     BufReader,
     End,
     Reader,
+    Seek,
 };
 use crate::BufMut;
 
@@ -113,7 +114,18 @@ impl<R: BufReader> BufReader for Limit<R> {
     type View = R::View;
 
     #[inline]
-    fn view(&self, length: usize) -> Result<Self::View, End> {
+    fn peek_chunk(&self) -> Option<&[u8]> {
+        if self.limit == 0 {
+            None
+        }
+        else {
+            let chunk = self.inner.peek_chunk()?;
+            Some(&chunk[..std::cmp::min(chunk.len(), self.limit)])
+        }
+    }
+
+    #[inline]
+    fn view(&mut self, length: usize) -> Result<Self::View, End> {
         if length > self.limit {
             Err(End {
                 read: 0,
@@ -122,18 +134,41 @@ impl<R: BufReader> BufReader for Limit<R> {
             })
         }
         else {
+            self.limit -= length;
             self.inner.view(length)
         }
     }
 
     #[inline]
-    fn chunk(&self) -> Option<&[u8]> {
-        if self.limit == 0 {
-            None
+    fn peek_view(&self, length: usize) -> Result<Self::View, End> {
+        if length > self.limit {
+            Err(End {
+                read: 0,
+                requested: length,
+                remaining: self.limit.min(self.inner.remaining()),
+            })
         }
         else {
-            let chunk = self.inner.chunk()?;
-            Some(&chunk[..std::cmp::min(chunk.len(), self.limit)])
+            self.inner.peek_view(length)
+        }
+    }
+
+    #[inline]
+    fn rest(&mut self) -> Self::View {
+        match self.inner.view(self.limit) {
+            Ok(view) => {
+                self.limit = 0;
+                view
+            }
+            Err(_) => self.inner.rest(),
+        }
+    }
+
+    #[inline]
+    fn peek_rest(&self) -> Self::View {
+        match self.inner.peek_view(self.limit) {
+            Ok(view) => view,
+            Err(_) => self.inner.peek_rest(),
         }
     }
 
@@ -157,15 +192,26 @@ impl<R: BufReader> BufReader for Limit<R> {
     fn remaining(&self) -> usize {
         std::cmp::min(self.limit, self.inner.remaining())
     }
+}
+
+impl<R: Seek> Seek for Limit<R> {
+    type Position = Limit<R::Position>;
 
     #[inline]
-    fn rest(&mut self) -> Self::View {
-        match self.inner.view(self.limit) {
-            Ok(view) => {
-                self.limit = 0;
-                view
-            }
-            Err(_) => self.inner.rest(),
+    fn tell(&self) -> Self::Position {
+        Limit {
+            inner: self.inner.tell(),
+            limit: self.limit,
         }
+    }
+
+    #[inline]
+    fn seek(&mut self, position: &Self::Position) -> Self::Position {
+        let position = Limit {
+            inner: self.inner.seek(&position.inner),
+            limit: self.limit,
+        };
+        self.limit = position.limit;
+        position
     }
 }

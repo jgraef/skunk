@@ -27,7 +27,7 @@ impl<W: CrcInt> CrcExt for crc::Crc<W> {
 
     fn for_reader(&self, mut reader: impl BufReader) -> Self::Output {
         let mut digest = W::crc_digest(self);
-        while let Some(chunk) = reader.chunk() {
+        while let Some(chunk) = reader.peek_chunk() {
             W::digest_update(&mut digest, chunk);
             reader.advance(chunk.len()).unwrap();
         }
@@ -56,7 +56,7 @@ impl<'c, C: CrcInt, W: Writer> Writer for CrcWriter<'c, C, W> {
 
     fn write_buf<B: Buf>(&mut self, buf: B) -> Result<(), Self::Error> {
         let mut reader = buf.reader();
-        while let Some(chunk) = reader.chunk() {
+        while let Some(chunk) = reader.peek_chunk() {
             C::digest_update(&mut self.digest, chunk);
             self.writer.write_buf(chunk)?;
             reader.advance(chunk.len()).unwrap();
