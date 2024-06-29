@@ -289,7 +289,8 @@ impl BufferRef {
     ///
     /// The caller must ensure that the access is unique, and that the range is
     /// valid. No other active references, mutable or not may exist to this
-    /// portion of the buffer.
+    /// portion of the buffer. Furthermore the caller must not write
+    /// uninitialized values into the initialized portion of the buffer.
     #[inline]
     unsafe fn uninitialized_mut<'a>(&'a self) -> &'a mut [MaybeUninit<u8>] {
         // SAFETY:
@@ -978,14 +979,17 @@ impl ArcBufMut {
     }
 
     /// Returns a mutable reference to the full buffer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must not write uninitialized values into the initialized
+    /// portion of the buffer.
     #[inline]
-    pub fn uninitialized_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe {
-            // SAFETY:
-            //
-            // - We have the only reference to that portion of the buffer.
-            self.inner.uninitialized_mut()
-        }
+    pub unsafe fn uninitialized_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+        // SAFETY:
+        //
+        // - We have the only reference to that portion of the buffer.
+        self.inner.uninitialized_mut()
     }
 
     /// Resizes the buffer to include all bytes upto `to`.

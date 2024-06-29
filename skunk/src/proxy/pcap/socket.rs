@@ -1,10 +1,4 @@
-use std::{
-    os::fd::{
-        AsRawFd,
-        OwnedFd,
-    },
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use byst::{
     buf::{
@@ -18,18 +12,8 @@ use byst::{
     },
     Bytes,
 };
-use nix::sys::socket::{
-    AddressFamily,
-    MsgFlags,
-    SockFlag,
-    SockProtocol,
-    SockType,
-};
 use parking_lot::Mutex;
-use tokio::io::{
-    unix::AsyncFd,
-    Interest,
-};
+use tokio::io::ReadBuf;
 
 use super::interface::Interface;
 use crate::protocol::inet::ethernet::MAX_FRAME_SIZE;
@@ -40,46 +24,22 @@ pub enum Mode {
     LinuxSll,
 }
 
-impl Mode {
-    fn as_sock_type(&self) -> SockType {
-        match self {
-            Self::Raw => SockType::Raw,
-            Self::LinuxSll => SockType::Datagram,
-        }
-    }
-}
-
-/// A "raw" socket. This can be used to send and receive ethernet frames.[1]
+/// A "raw" socket. This can be used to send and receive ethernet frames or
+/// "cooked" (Linux SLL) packets.[1]
 ///
 /// This can be created with [`Interface::socket`].
 ///
 /// [1]: https://www.man7.org/linux/man-pages/man7/packet.7.html
 #[derive(Debug)]
 pub struct Socket {
-    socket: AsyncFd<OwnedFd>,
+    socket: super::os::Socket,
     interface: Interface,
     mode: Mode,
 }
 
 impl Socket {
     pub(super) fn open(interface: Interface, mode: Mode) -> Result<Self, std::io::Error> {
-        // note: the returned OwnedFd will close the socket on drop.
-        let socket = nix::sys::socket::socket(
-            AddressFamily::Packet,
-            mode.as_sock_type(),
-            SockFlag::SOCK_NONBLOCK,
-            SockProtocol::EthAll,
-        )?;
-
-        let bind_address = interface
-            .raw_bind_address()
-            .expect("interface has no address we can bind to");
-        // note: we might need to set the protocol field in `bind_addr`, but this is
-        // currently not possible. see https://github.com/nix-rust/nix/issues/2059
-        nix::sys::socket::bind(socket.as_raw_fd(), &bind_address)?;
-
-        let socket = AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?;
-
+        let socket = super::os::Socket::open(&interface, mode)?;
         Ok(Self {
             socket,
             interface,
@@ -91,35 +51,14 @@ impl Socket {
     ///
     /// The real packet size is returned, even if the buffer wasn't large
     /// enough.
-    pub async fn receive(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.socket
-            .async_io(Interest::READABLE, |socket| {
-                // `MsgFlags::MSG_TRUNC` tells the kernel to return the real packet length, even
-                // if the buffer is not large enough.
-                Ok(nix::sys::socket::recv(
-                    socket.as_raw_fd(),
-                    buf,
-                    MsgFlags::MSG_TRUNC,
-                )?)
-            })
-            .await
+    #[inline]
+    pub async fn receive(&self, buf: &mut ReadBuf<'_>) -> Result<usize, std::io::Error> {
+        self.socket.receive(buf).await
     }
 
+    #[inline]
     pub async fn send(&self, buf: &[u8]) -> Result<(), std::io::Error> {
-        let bytes_sent = self
-            .socket
-            .async_io(Interest::WRITABLE, |socket| {
-                Ok(nix::sys::socket::send(
-                    socket.as_raw_fd(),
-                    buf,
-                    MsgFlags::empty(),
-                )?)
-            })
-            .await?;
-        if bytes_sent < buf.len() {
-            tracing::warn!(buf_len = buf.len(), bytes_sent, "sent truncated packet");
-        }
-        Ok(())
+        self.socket.send(buf).await
     }
 
     #[inline]
@@ -155,10 +94,7 @@ impl Shared {
     #[inline]
     fn get_buf(&self) -> ArcBufMut {
         let mut slab = self.slab.lock();
-        let mut buf = slab.get();
-        drop(slab);
-        buf.fully_initialize();
-        buf
+        slab.get()
     }
 }
 
@@ -184,16 +120,28 @@ impl Receiver {
     {
         loop {
             let mut buf = self.shared.get_buf();
+            let mut read_buf = unsafe {
+                // SAFETY: ReadBuf ensures that no uninitialized values are written to the
+                // buffer.
+                ReadBuf::uninit(buf.uninitialized_mut())
+            };
 
-            let n_read = self.shared.socket.receive(buf.initialized_mut()).await?;
+            let n_read = self.shared.socket.receive(&mut read_buf).await?;
+
+            let initialized = read_buf.initialized().len();
+            let filled = read_buf.filled().len();
+            unsafe {
+                buf.set_initialized_to(initialized);
+            }
+            buf.set_filled_to(filled);
 
             if n_read > buf.capacity() {
                 tracing::warn!(n_read, buf_capacity = buf.capacity(), "Truncated packet");
             }
             else {
-                buf.set_filled_to(n_read);
                 let mut buf = Bytes::from(buf);
                 let packet = read!(&mut buf => T).map_err(ReceiveError::Decode)?;
+
                 break Ok(packet);
             }
         }

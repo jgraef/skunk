@@ -40,7 +40,7 @@ graph-vis = []
 # Transparent proxy
 #
 # TODO: split into protocols
-pcap = ["dep:etherparse", "dep:dhcproto", "dep:nix"]
+pcap = ["dep:libc"]
 
 [dependencies.byst]
 #version = "0.1.0"
@@ -55,8 +55,6 @@ bitflags = "2.5.0"
 bytes = "1.6.0"
 crc = "3.2.1"
 derive_more = "0.99.17"
-dhcproto = { version = "0.12.0", optional = true }
-etherparse = { version = "0.15.0", optional = true }
 futures = "0.3.30"
 hashbrown = "0.14.5"
 http-body-util = { version = "0.1.1", optional = true }
@@ -66,7 +64,7 @@ iana-ports = { git = "https://github.com/jgraef/iana-numbers.git" }
 indexmap = "2.2.6"
 ip_network = { version = "0.4.1", features = ["serde"] }
 lazy_static = "1.4.0"
-nix = { version = "0.29.0", optional = true, features = ["net"] }
+libc = { version = "0.2.155", optional = true }
 nom = "7.1.3"
 parking_lot = { version = "0.12.2", features = ["arc_lock"] }
 petgraph = "0.6.5"

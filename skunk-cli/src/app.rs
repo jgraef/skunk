@@ -213,7 +213,7 @@ impl App {
             }
 
             if let Some(interface) = pcap.interface {
-                let interface_opt = Interface::from_name(&interface);
+                let interface_opt = Interface::from_name(&interface)?;
                 if interface_opt.is_none() {
                     eprintln!("interface '{interface}' not found");
                     print_interfaces()?;

@@ -2,7 +2,9 @@ pub mod ap;
 pub mod arp;
 //pub mod dhcp;
 pub mod interface;
+mod os;
 pub mod socket;
+pub mod udp;
 
 use std::{
     collections::HashMap,
@@ -28,6 +30,7 @@ use skunk_macros::{
     ipv4_network,
 };
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use self::{
     interface::Interface,
@@ -143,20 +146,27 @@ impl VirtualNetwork {
     }
 }
 
+#[derive(Debug)]
 struct Reactor {
     interface: Interface,
     sock_tx: socket::Sender,
     sock_rx: socket::Receiver,
     command_rx: mpsc::Receiver<Command>,
     arp_listener: mpsc::Sender<arp::Packet>,
-    udp_listeners: HashMap<(IpAddr, u16), mpsc::Sender<UdpPacket>>,
+    udp_listeners: HashMap<(IpAddr, u16), mpsc::Sender<udp::Packet>>,
 }
 
 impl Reactor {
     fn spawn(self) {
-        tokio::spawn(async move {
-            let _ = self.run().await.log_error();
-        });
+        let span = tracing::info_span!("reactor");
+        tokio::spawn(
+            async move {
+                tracing::debug!("reactor spawned");
+                let _ = self.run().await.log_error();
+                tracing::debug!("reactor done");
+            }
+            .instrument(span),
+        );
     }
 
     async fn run(mut self) -> Result<(), Error> {
@@ -233,18 +243,11 @@ pub struct AddressTriple {
     pub port: u16,
 }
 
-#[derive(Clone, Debug)]
-pub struct UdpPacket {
-    pub source: AddressTriple,
-    pub destination: AddressTriple,
-    pub data: Bytes,
-}
-
 #[derive(Debug)]
 enum Command {
     RegisterUdpListener {
         bind_address: (IpAddr, u16),
-        packet_tx: mpsc::Sender<UdpPacket>,
+        packet_tx: mpsc::Sender<udp::Packet>,
     },
 }
 
@@ -256,7 +259,7 @@ pub struct VirtualHost {
 }
 
 impl VirtualHost {
-    pub async fn udp_socket(&self, bind_address: Option<(IpAddr, u16)>) -> UdpSocket {
+    pub async fn udp_socket(&self, bind_address: Option<(IpAddr, u16)>) -> udp::Socket {
         let rx = if let Some(bind_address) = bind_address {
             let (packet_tx, packet_rx) = mpsc::channel(16);
             self.network
@@ -265,62 +268,18 @@ impl VirtualHost {
                     packet_tx,
                 })
                 .await;
-            Some(UdpReceiver { packet_rx })
+            Some(udp::Receiver { packet_rx })
         }
         else {
             None
         };
 
-        UdpSocket {
+        udp::Socket {
             rx,
-            tx: UdpSender {
+            tx: udp::Sender {
                 sock_tx: self.network.sock_tx.clone(),
             },
         }
-    }
-}
-
-pub struct UdpSender {
-    sock_tx: socket::Sender,
-}
-
-impl UdpSender {
-    pub async fn send(&mut self) -> Result<(), SendError> {
-        todo!();
-    }
-}
-
-pub struct UdpReceiver {
-    packet_rx: mpsc::Receiver<UdpPacket>,
-}
-
-impl UdpReceiver {
-    pub async fn receive(&mut self) -> Option<UdpPacket> {
-        self.packet_rx.recv().await
-    }
-}
-
-pub struct UdpSocket {
-    tx: UdpSender,
-    rx: Option<UdpReceiver>,
-}
-
-impl UdpSocket {
-    pub async fn receive(&mut self) -> Option<UdpPacket> {
-        if let Some(rx) = &mut self.rx {
-            rx.receive().await
-        }
-        else {
-            None
-        }
-    }
-
-    pub async fn send(&mut self) -> Result<(), SendError> {
-        self.tx.send().await
-    }
-
-    pub fn split(self) -> (UdpSender, Option<UdpReceiver>) {
-        (self.tx, self.rx)
     }
 }
 

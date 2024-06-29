@@ -58,7 +58,9 @@ impl Sender {
         //self.sock_tx.send(packet).await
         // todo: don't just send the ARP packet! we need to wrap it into an Ethernet
         // frame too lol
-        todo!();
+        //todo!();
+        tracing::debug!("TODO: implement arp::Sender::send");
+        Ok(())
     }
 }
 
