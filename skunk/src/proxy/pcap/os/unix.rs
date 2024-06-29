@@ -221,11 +221,16 @@ impl SyncSocket {
             Mode::LinuxSll => libc::SOCK_DGRAM,
         };
 
+        // [this][1] example code uses `htons`, so we need to convert to u16 and then network endian.
+        //
+        // [1]: https://stackoverflow.com/questions/54056426/af-packet-and-ethernet
+        const ETH_P_ALL: u16 = (libc::ETH_P_ALL as u16).to_be();
+
         let sock = unsafe {
             libc::socket(
                 libc::AF_PACKET,
                 sock_type | libc::SOCK_NONBLOCK,
-                libc::ETH_P_ALL.to_be(),
+                ETH_P_ALL.into(),
             )
         };
 
@@ -236,7 +241,7 @@ impl SyncSocket {
         // todo: do we want to use `setsockopt(socket, BindToDevice, b"eth0")` instead?
         let mut bind_addr = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
-            sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
+            sll_protocol: ETH_P_ALL,
             sll_ifindex: interface.inner.index as i32,
             sll_hatype: 1,
             sll_pkttype: 0,
