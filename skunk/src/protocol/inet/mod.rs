@@ -1,5 +1,6 @@
 pub mod arp;
 pub mod dhcp;
+pub mod dns;
 pub mod ethernet;
 pub mod ipv4;
 mod mac_address;

@@ -203,7 +203,7 @@ pub enum AnyPayloadError<R> {
 pub struct Protocol(pub u8);
 
 network_enum! {
-    for Protocol;
+    for Protocol: Debug;
 
     /// Internet Control Message Protocol
     ICMP => 0x01;
@@ -213,15 +213,4 @@ network_enum! {
 
     /// User Datagram Protocol
     UDP => 0x11;
-}
-
-impl Debug for Protocol {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(name) = self.name() {
-            write!(f, "Protocol::{name}(0x{:02x})", self.0)
-        }
-        else {
-            write!(f, "Protocol(0x{:02x})", self.0)
-        }
-    }
 }

@@ -221,7 +221,8 @@ impl SyncSocket {
             Mode::LinuxSll => libc::SOCK_DGRAM,
         };
 
-        // [this][1] example code uses `htons`, so we need to convert to u16 and then network endian.
+        // [this][1] example code uses `htons`, so we need to convert to u16 and then
+        // network endian.
         //
         // [1]: https://stackoverflow.com/questions/54056426/af-packet-and-ethernet
         const ETH_P_ALL: u16 = (libc::ETH_P_ALL as u16).to_be();

@@ -109,11 +109,11 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Read)]
+#[derive(Clone, Copy, PartialEq, Eq, Read)]
 pub struct LinuxNonstandardEtherType(#[byst(network)] u16);
 
 network_enum! {
-    for LinuxNonstandardEtherType;
+    for LinuxNonstandardEtherType: Debug;
 
     N802_3 => 0x0001;
     AX25 => 0x0002;

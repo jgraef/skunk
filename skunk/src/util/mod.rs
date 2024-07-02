@@ -145,6 +145,33 @@ macro_rules! network_enum {
             }
         }
     };
+    {
+        for $ty:path: Debug;
+        $(
+            $(#[doc = $doc:expr])?
+            $name:ident => $num:expr;
+        )*
+    } => {
+        network_enum!{
+            for $ty;
+            $(
+                $(#[doc = $doc])?
+                $name => $num;
+            )*
+        }
+
+        impl ::std::fmt::Debug for $ty {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                if let Some(name) = self.name() {
+                    write!(f, "{}::{name}(0x{:04x})", stringify!($ty), self.0)
+                }
+                else {
+                    write!(f, "{}(0x{:04x})", stringify!($ty), self.0)
+                }
+            }
+        }
+
+    }
 }
 
 pub(crate) use network_enum;

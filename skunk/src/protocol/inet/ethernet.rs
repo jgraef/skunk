@@ -232,7 +232,7 @@ impl<P> From<Infallible> for InvalidFrame<P> {
 pub struct EtherType(#[byst(network)] pub u16);
 
 network_enum! {
-    for EtherType;
+    for EtherType: Debug;
 
     /// Internet protocol version 4
     IPV4 => 0x0800;
@@ -262,17 +262,6 @@ impl EtherType {
     #[inline]
     pub fn is_ethernet2(&self) -> bool {
         self.0 >= 0x0600
-    }
-}
-
-impl Debug for EtherType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(name) = self.name() {
-            write!(f, "EtherType::{name}(0x{:04x})", self.0)
-        }
-        else {
-            write!(f, "EtherType(0x{:04x})", self.0)
-        }
     }
 }
 

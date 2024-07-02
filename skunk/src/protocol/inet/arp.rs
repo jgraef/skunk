@@ -188,11 +188,11 @@ pub enum InvalidPacket<R> {
     Read(#[from] R),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Read)]
+#[derive(Clone, Copy, PartialEq, Eq, Read)]
 pub struct Operation(#[byst(network)] pub u16);
 
 network_enum! {
-    for Operation;
+    for Operation: Debug;
 
     /// ARP request
     REQUEST => 1;
@@ -210,7 +210,7 @@ network_enum! {
 pub struct HardwareType(#[byst(network)] pub u16);
 
 network_enum! {
-    for HardwareType;
+    for HardwareType: Debug;
 
     /// from KA9Q: NET/ROM pseudo
     NETROM => 0;
@@ -407,15 +407,4 @@ network_enum! {
     VOID => 0xFFFF;
     NONE => 0xFFFE;
 
-}
-
-impl Debug for HardwareType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(name) = self.name() {
-            write!(f, "HardwareType::{name}({:04x})", self.0)
-        }
-        else {
-            write!(f, "HardwareType({:04x})", self.0)
-        }
-    }
 }
