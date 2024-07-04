@@ -272,14 +272,14 @@ impl SyncSocket {
         let res = unsafe {
             // `MsgFlags::MSG_TRUNC` tells the kernel to return the real packet length, even
             // if the buffer is not large enough.
-            let n = libc::recv(
+            libc::recv(
                 self.fd.as_raw_fd(),
                 buf.as_mut_ptr() as *mut libc::c_void,
                 buf.len(),
                 libc::MSG_TRUNC,
-            );
-            n
+            )
         };
+
         if res == -1 {
             Err(Error::last_os_error())
         }
@@ -297,6 +297,7 @@ impl SyncSocket {
                 0,
             )
         };
+
         if res == -1 {
             Err(Error::last_os_error())
         }

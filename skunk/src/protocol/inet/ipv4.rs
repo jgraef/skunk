@@ -47,6 +47,10 @@ impl<R: Reader> Read<R, ()> for Header {
     fn read(reader: &mut R, _params: ()) -> Result<Self, Self::Error> {
         let version_ihl = read!(reader => u8)?;
         let version = version_ihl >> 4;
+        if version != 4 {
+            return Err(InvalidHeader::InvalidVersion { value: version });
+        }
+
         let internet_header_length = version_ihl & 0xf;
         if internet_header_length != 5 {
             // todo: support options
@@ -165,6 +169,11 @@ pub enum InvalidPacket<R, P = Infallible> {
 #[error("Invalid IPv4 header")]
 pub enum InvalidHeader<R> {
     Read(#[from] R),
+
+    #[error("Invalid IP version: {value}")]
+    InvalidVersion {
+        value: u8,
+    },
 
     #[error("Invalid internet header length: {value}")]
     InvalidInternetHeaderLength {
