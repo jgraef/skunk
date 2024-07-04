@@ -1,0 +1,39 @@
+
+#root {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 3rem;
+    background: #1f033f;
+    background-image: var(--bs-gradient);
+}
+
+.sidebar .nav-link {
+    margin-top: auto;
+    margin-bottom: auto;
+    padding-top: auto;
+    padding-bottom: auto;
+    color: white;
+    width: 3rem;
+    height: 3rem;
+}
+
+.sidebar .nav-link.active {
+    background: rgba(0, 0, 0, 0.8);
+}
+
+.nav-flush .nav-link {
+    border-radius: 0;
+}
+
+.main {
+    display: flex;
+    flex-wrap: nowrap;
+    flex-grow: 1;
+    overflow-x: auto;
+    overflow-y: hidden;
+}

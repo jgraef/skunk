@@ -13,3 +13,6 @@ Thumbs.db
 
 # Env vars
 .env
+
+# trunk dist
+/skunk-ui/dist

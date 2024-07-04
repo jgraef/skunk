@@ -4,8 +4,10 @@ members = [
   "byst",
   "byst-macros",
   "skunk",
+  "skunk-api-client",
   "skunk-cli",
   "skunk-macros",
+  "skunk-ui",
 ]
 
 [patch.crates-io]
