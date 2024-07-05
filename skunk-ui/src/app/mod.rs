@@ -8,6 +8,7 @@ use leptos::{
     view,
     DynAttrs,
     IntoView,
+    MaybeSignal,
     Oco,
     Signal,
     SignalGet,
@@ -44,14 +45,6 @@ use crate::components::{
 };
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
-
-#[component]
-pub fn BootstrapIcon(
-    #[prop(into)] icon: Oco<'static, str>,
-    #[prop(into, optional)] alt: Option<Oco<'static, str>>,
-) -> impl IntoView {
-    view! { <i class={format!("bi bi-{icon}")} aria-label=alt></i> }
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
@@ -138,6 +131,7 @@ pub fn App() -> impl IntoView {
                     <Routes>
                         <Route path="/" view=Home />
                         <Route path="/flows" view=Flows />
+                        <Route path="/filters" view=|| view!{ "TODO" } />
                         <Route path="/settings" view=|| view!{ "TODO" } />
                         <Route path="/*any" view=NotFound />
                     </Routes>

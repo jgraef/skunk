@@ -1,0 +1,17 @@
+
+
+.expand-button {
+    border: none;
+    background: none;
+}
+
+.expand-icon {
+    i {
+        display: inline-block;
+        transition: all ease-in-out .3s;
+    }
+
+    &[data-expanded="data-expanded"] i {
+        transform: rotate(90deg);
+    }
+}

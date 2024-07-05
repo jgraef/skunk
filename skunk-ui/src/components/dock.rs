@@ -9,14 +9,14 @@ use leptos_router::{
     A,
 };
 
-use crate::app::BootstrapIcon;
+use super::icon::BootstrapIcon;
 
 stylance::import_crate_style!(style, "src/components/dock.module.scss");
 
 #[component]
 pub fn Item<H: ToHref + 'static>(
     href: H,
-    #[prop(into)] icon: Oco<'static, str>,
+    #[prop(into)] icon: String,
     #[prop(into)] label: Oco<'static, str>,
 ) -> impl IntoView {
     view! {
@@ -35,6 +35,7 @@ pub fn Dock() -> impl IntoView {
             <ul class=style::group_top>
                 <Item href="/" icon="house" label="Home" />
                 <Item href="/flows" icon="ethernet" label="Flows" />
+                <Item href="/filters" icon="funnel" label="Filters" />
             </ul>
             <ul class=style::group_bottom>
                 <Item href="/settings" icon="gear" label="Settings" />

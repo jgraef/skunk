@@ -1,0 +1,54 @@
+
+.flows {
+    overflow-y: scroll;
+
+    table {
+        width: 100%;
+        height: fit-content;
+
+        th {
+            padding-left: 1px;
+            padding-right: 1px;
+            padding-top: 2px;
+            padding-bottom: 2px;
+        }
+
+        td {
+            padding: 1px;
+        }
+
+        td, th {
+            background-color: black;
+        }
+
+        tr.entry:hover td {
+            background-color: $skunk-highlight;
+        }
+    }
+}
+
+.info {
+    height: fit-content;
+
+    td {
+        height: fit-content;
+    }
+
+    .expander {
+        display: block;
+        max-height: 0;
+        overflow-y: hidden;
+        transition: max-height ease-in-out 0.5s;
+
+        &[data-expanded="data-expanded"] {
+            max-height: 100vh;
+        }
+    }
+
+    .expander-content {
+        padding-top: 0.2em;
+        padding-bottom: 0.2em;
+        padding-left: 1em;
+        padding-right: 0.2em;
+    }
+}

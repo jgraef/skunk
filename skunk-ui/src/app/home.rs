@@ -4,7 +4,7 @@ use leptos::{
     IntoView,
 };
 
-use super::BootstrapIcon;
+use crate::components::icon::BootstrapIcon;
 
 stylance::import_crate_style!(style, "src/app/home.module.scss");
 
