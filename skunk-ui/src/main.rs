@@ -1,4 +1,5 @@
 mod app;
+mod components;
 mod error;
 
 use wasm_bindgen::JsCast;

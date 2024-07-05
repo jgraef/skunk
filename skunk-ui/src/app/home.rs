@@ -2,32 +2,45 @@ use leptos::{
     component,
     view,
     IntoView,
-    SignalGet,
 };
 
-use super::{
-    BootstrapIcon,
-    Context,
-    GITHUB_PAGE,
-};
+use super::BootstrapIcon;
+
+stylance::import_crate_style!(style, "src/app/home.module.scss");
+
+pub const GITHUB_LINK: &'static str = "https://github.com/jgraef/skunk";
+pub const DISCORD_LINK: &'static str = "https://discord.gg/skunk-todo";
+pub const TWITTER_LINK: &'static str = "https://twitter.com/skunk-todo";
+pub const REDDIT_LINK: &'static str = "https://reddit.com/r/skunk-proxy";
 
 #[component]
 pub fn Home() -> impl IntoView {
-    let Context { theme, .. } = Context::get();
-
     view! {
-        <h1>
-            <i>"skunk"</i> "&mdash;" <img src="/NotoSkunk.svg" style="height: 1em;" /> "A person-in-the-middle proxy"
-            <small class="d-flex flex-row">
-                <button type="button" class="btn py-0 px-1 m-auto" style="color: white;" on:click=move |_| theme.toggle()>
-                    {move || {
-                        view!{<BootstrapIcon icon=theme.theme_icon.get() />}
-                    }}
-                </button>
-                <a href=GITHUB_PAGE target="_blank" class="py-0 px-1 m-auto" style="color: white;">
+        <div class=style::welcome>
+            <img src="NotoSkunk.svg" />
+
+            <h1>"Welcome to skunk"</h1>
+
+            <div class=style::socials>
+                <a href=GITHUB_LINK target="_blank">
                     <BootstrapIcon icon="github" />
                 </a>
-            </small>
-        </h1>
+                <a href=DISCORD_LINK target="_blank">
+                    <BootstrapIcon icon="discord" />
+                </a>
+                <a href=TWITTER_LINK target="_blank">
+                    <BootstrapIcon icon="twitter" />
+                </a>
+                <a href=REDDIT_LINK target="_blank">
+                    <BootstrapIcon icon="reddit" />
+                </a>
+            </div>
+
+            <div class=style::actions>
+                <a href="#">"Start intercepting"</a>
+                <a href="/settings">"Configure"</a>
+                <a href="#">"Read docs"</a>
+            </div>
+        </div>
     }
 }

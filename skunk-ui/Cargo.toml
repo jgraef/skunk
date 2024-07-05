@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies.skunk-api-client]
-version = "0.1.0"
 path = "../skunk-api-client"
 
 [dependencies]
@@ -18,3 +17,9 @@ leptos-use = { version = "0.10.10", features = ["serde"] }
 console_error_panic_hook = "0.1.7"
 gloo-utils = "0.2.0"
 wasm-bindgen = "0.2.92"
+stylance = "0.5.1"
+
+[package.metadata.stylance]
+output_file = "../target/app.scss"
+class_name_pattern = "skunk-[name]-[hash]"
+scss_prelude = '@use "../skunk-ui/assets/prelude.scss" as *;'

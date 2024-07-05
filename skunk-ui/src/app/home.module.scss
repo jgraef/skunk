@@ -1,0 +1,52 @@
+
+.welcome {
+    display: flex;
+    flex-direction: column;
+    width: 50%;
+    height: 50%;
+    margin-left: auto;
+    margin-right: auto;
+    margin-top: 5em;
+    text-align: center;
+
+    img {
+        $size: 15em;
+        width: $size;
+        height: $size;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    h1 {
+        display: flex;
+        flex-direction: row;
+        margin-top: 1em;
+        margin-left: auto;
+        margin-right: auto;
+    }
+}
+
+
+.socials {
+    display: flex;
+    flex-direction: row;
+    margin-left: auto;
+    margin-right: auto;
+    a {
+        margin-left: 0.5em;
+        color: white;
+        text-decoration: none;
+    }
+}
+
+.actions {
+    display: flex;
+    flex-direction: column;
+    margin-top: 4em;
+    margin-left: auto;
+    margin-right: auto;
+
+    a {
+        text-decoration: none;
+    }
+}

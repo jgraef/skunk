@@ -1,0 +1,57 @@
+
+
+.dock {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    width: 3rem;
+    background: #1f033f;
+    background-image: var(--bs-gradient);
+
+    .item {
+        @extend .nav-item;
+
+        border-radius: 0;
+    }
+
+    .link {
+        @extend .nav-link;
+
+        --bs-nav-link-padding-x: 0;
+        --bs-nav-link-padding-y: 0;
+
+        font-size: 1.5em;
+
+        width: 3rem;
+        height: 3rem;
+        margin-top: auto;
+        margin-bottom: auto;
+        color: white;
+
+        i {
+            vertical-align: middle;
+        }
+    }
+
+    %group {
+        @extend .nav;
+        @extend .nav-pills;
+        
+        display: flex;
+        flex-direction: column;
+        text-align: center;
+
+        --bs-nav-pills-border-radius: 0;
+        --bs-nav-pills-link-active-bg: rgba(0, 0, 0, 0.8);
+    }
+    
+    .group-top {
+        @extend %group;
+        margin-bottom: auto;
+    }
+    
+    .group-bottom {
+        @extend %group;
+        margin-top: auto;
+    }
+}

@@ -20,8 +20,6 @@ use leptos_router::{
     Route,
     Router,
     Routes,
-    ToHref,
-    A,
 };
 use leptos_use::{
     use_color_mode,
@@ -33,8 +31,9 @@ use self::{
     flows::Flows,
     home::Home,
 };
+use crate::components::dock::Dock;
 
-pub const GITHUB_PAGE: &'static str = "https://github.com/jgraef/skunk";
+stylance::import_crate_style!(style, "src/app/app.module.scss");
 
 #[component]
 pub fn BootstrapIcon(
@@ -42,21 +41,6 @@ pub fn BootstrapIcon(
     #[prop(into, optional)] alt: Option<Oco<'static, str>>,
 ) -> impl IntoView {
     view! { <i class={format!("bi bi-{icon}")} aria-label=alt></i> }
-}
-
-#[component]
-pub fn NavLink<H: ToHref + 'static>(
-    href: H,
-    #[prop(into)] icon: Oco<'static, str>,
-    #[prop(into)] label: Oco<'static, str>,
-) -> impl IntoView {
-    view! {
-        <li class="nav-item" data-bs-toggle="tooltip" data-bs-placement="right" data-bs-original-title=label.clone()>
-            <A href={href} active_class="active" class="nav-link">
-                <BootstrapIcon icon=icon alt=label />
-            </A>
-        </li>
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -135,15 +119,8 @@ pub fn App() -> impl IntoView {
         />
         <Router>
             <div class="d-flex flex-row" style="height: 100vh; width: 100%">
-                <nav class="d-flex flex-column flex-shrink-0 text-white sidebar">
-                    <ul class="nav nav-pills nav-flush flex-column mb-auto text-center">
-                        <NavLink href="/" icon="house" label="Home" />
-                        <NavLink href="/flows" icon="ethernet" label="Flows" />
-                        <li class="mt-auto"></li>
-                        <NavLink href="/settings" icon="gear" label="Settings" />
-                    </ul>
-                </nav>
-                <main class="main d-flex flex-column w-100 h-100 mw-100 mh-100 position-relative">
+                <Dock />
+                <main class=style::main>
                     <Routes>
                         <Route path="/" view=Home />
                         <Route path="/flows" view=Flows />
