@@ -1,5 +1,6 @@
 mod flows;
 mod home;
+mod settings;
 
 use leptos::{
     component,
@@ -8,8 +9,6 @@ use leptos::{
     view,
     DynAttrs,
     IntoView,
-    MaybeSignal,
-    Oco,
     Signal,
     SignalGet,
     SignalSet,
@@ -34,6 +33,7 @@ use leptos_use::{
     ColorMode,
     UseColorModeReturn,
 };
+use settings::SettingsRoutes;
 
 use self::{
     flows::Flows,
@@ -132,7 +132,7 @@ pub fn App() -> impl IntoView {
                         <Route path="/" view=Home />
                         <Route path="/flows" view=Flows />
                         <Route path="/filters" view=|| view!{ "TODO" } />
-                        <Route path="/settings" view=|| view!{ "TODO" } />
+                        <SettingsRoutes />
                         <Route path="/*any" view=NotFound />
                     </Routes>
                 </main>

@@ -93,9 +93,7 @@ pub fn CommandMenu() -> impl IntoView {
                                         tracing::debug!(id, "command selected");
                                     }
                                 >
-                                    <span class=style::icon>
-                                        <BootstrapIcon icon=command.icon.into_owned() />
-                                    </span>
+                                    <BootstrapIcon icon=command.icon.into_owned() />
                                     {command.label}
                                 </button>
                             }

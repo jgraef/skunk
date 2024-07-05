@@ -4,16 +4,9 @@ use leptos::{
     view,
     For,
     IntoView,
-    Signal,
 };
 
-use crate::{
-    components::{
-        expand_button::ExpandButton,
-        icon::BootstrapIcon,
-    },
-    util::SignalToggle,
-};
+use crate::components::expand_button::ExpandButton;
 
 stylance::import_crate_style!(style, "src/app/flows.module.scss");
 

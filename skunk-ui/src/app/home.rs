@@ -38,8 +38,9 @@ pub fn Home() -> impl IntoView {
 
             <div class=style::actions>
                 <a href="#">"Start intercepting"</a>
-                <a href="/settings">"Configure"</a>
                 <a href="#">"Read docs"</a>
+                <a href="/settings">"Configure"</a>
+                <a href="/settings/tls">"Install root certificate"</a>
             </div>
         </div>
     }

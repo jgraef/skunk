@@ -1,0 +1,40 @@
+
+.settings {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+}
+
+.sidebar {
+    display: flex;
+    flex-direction: column;
+    overflow: scroll;
+    width: 15em;
+    min-width: 15em;
+    border-right: 1px solid $skunk-primary;
+
+    ul {
+        list-style-type: none;
+        margin: 0;
+        padding: 0;
+        vertical-align: middle;
+    }
+
+    :global(.bi) {
+        margin-right: 0.5em;
+        font-size: larger;
+    }
+
+    a {
+        display: block;
+        color: white;
+        text-decoration: none;
+        padding: 0.5em;
+        transition: background-color ease-in-out 0.3s;
+
+        &[aria-current] {
+            background-color: $skunk-primary;
+        }
+    }
+}
