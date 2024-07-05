@@ -1,0 +1,46 @@
+
+.menu {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, 0);
+    width: 50%;
+    max-height: 20%;
+    background: black;
+    display: flex;
+    flex-direction: column;
+    
+    input {
+        background: black;
+        border-radius: 4px;
+        border: $skunk-primary 2px solid;
+        padding: 2px;
+        font-size: small;
+    }
+
+    input:focus {
+        outline: none;
+        border: $skunk-highlight 2px solid;
+    }
+}
+
+.suggestions {
+    border: $skunk-primary 1px solid;
+    display: flex;
+    flex-direction: column;
+
+    button {
+        @extend .btn;
+
+        text-align: left;
+        padding: 1px;
+        font-size: small;
+    }
+
+    button:active, button:focus {
+        outline: none;
+        border: $skunk-highlight 1px solid;
+    }
+}
+
+

@@ -5,7 +5,7 @@
     flex-direction: column;
     flex-shrink: 0;
     width: 3rem;
-    background: #1f033f;
+    background: $skunk-primary;
     background-image: var(--bs-gradient);
 
     .item {

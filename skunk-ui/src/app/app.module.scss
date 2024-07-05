@@ -1,4 +1,7 @@
 
+$skunk-primary: #1f033f;
+$skunk-highlight: #591c9f;
+
 .main {
     display: flex;
     flex-direction: column;
@@ -11,4 +14,6 @@
     overflow-x: auto;
     overflow-y: hidden;
     background: black;
+    font-family: monospace;
 }
+

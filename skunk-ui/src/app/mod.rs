@@ -3,6 +3,8 @@ mod home;
 
 use leptos::{
     component,
+    create_node_ref,
+    html,
     view,
     DynAttrs,
     IntoView,
@@ -11,6 +13,11 @@ use leptos::{
     SignalGet,
     SignalSet,
     WriteSignal,
+};
+use leptos_hotkeys::{
+    provide_hotkeys_context,
+    scopes,
+    HotkeysContext,
 };
 use leptos_meta::{
     provide_meta_context,
@@ -31,7 +38,10 @@ use self::{
     flows::Flows,
     home::Home,
 };
-use crate::components::dock::Dock;
+use crate::components::{
+    command_menu::CommandMenu,
+    dock::Dock,
+};
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
 
@@ -113,6 +123,9 @@ pub fn App() -> impl IntoView {
         ..
     } = Context::provide();
 
+    let main_ref = create_node_ref::<html::Main>();
+    let HotkeysContext { .. } = provide_hotkeys_context(main_ref, false, scopes!());
+
     view! {
         <Html
             attr:data-bs-theme=bs_theme
@@ -120,7 +133,8 @@ pub fn App() -> impl IntoView {
         <Router>
             <div class="d-flex flex-row" style="height: 100vh; width: 100%">
                 <Dock />
-                <main class=style::main>
+                <main class=style::main node_ref=main_ref>
+                    <CommandMenu />
                     <Routes>
                         <Route path="/" view=Home />
                         <Route path="/flows" view=Flows />
