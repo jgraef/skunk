@@ -15,6 +15,7 @@
 
         td {
             padding: 1px;
+            transition: background-color ease-in-out 0.1s;
         }
 
         td, th {
@@ -22,7 +23,7 @@
         }
 
         tr.entry:hover td {
-            background-color: $skunk-highlight;
+            background-color: $skunk-emphasis;
         }
     }
 }

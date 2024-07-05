@@ -1,6 +1,7 @@
 
 $skunk-primary: #1f033f;
-$skunk-highlight: #591c9f;
+$skunk-emphasis: #591c9f;
+$skunk-emphasis-light: #b289e0;
 
 .main {
     display: flex;
@@ -18,3 +19,10 @@ $skunk-highlight: #591c9f;
     font-size: smaller;
 }
 
+a {
+    color: $skunk-emphasis;
+}
+
+a:hover {
+    color: $skunk-emphasis-light;
+}
