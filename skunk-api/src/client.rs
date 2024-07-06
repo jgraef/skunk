@@ -108,15 +108,14 @@ impl Reactor {
         base_url: UrlBuilder,
         command_rx: mpsc::Receiver<Command>,
     ) -> Result<Self, Error> {
-        let websocket = WebSocket::new(
-            client
-                .get(base_url.push("ws").finish())
-                .upgrade()
-                .send()
-                .await?
-                .into_websocket()
-                .await?,
-        );
+        let websocket = client
+            .get(base_url.push("ws").finish())
+            .upgrade()
+            .send()
+            .await?
+            .into_websocket()
+            .await?
+            .into();
 
         Ok(Self {
             websocket,
@@ -187,12 +186,14 @@ struct WebSocket {
     inner: reqwest_websocket::WebSocket,
 }
 
-impl WebSocket {
-    pub fn new(inner: reqwest_websocket::WebSocket) -> Self {
+impl From<reqwest_websocket::WebSocket> for WebSocket {
+    fn from(inner: reqwest_websocket::WebSocket) -> Self {
         Self { inner }
     }
+}
 
-    pub async fn receive<T: for<'de> Deserialize<'de>>(&mut self) -> Result<Option<T>, Error> {
+impl WebSocket {
+    async fn receive<T: for<'de> Deserialize<'de>>(&mut self) -> Result<Option<T>, Error> {
         while let Some(message) = self.inner.try_next().await? {
             match message {
                 Message::Binary(data) => {
@@ -206,7 +207,7 @@ impl WebSocket {
         Ok(None)
     }
 
-    pub async fn send<T: Serialize>(&mut self, item: &T) -> Result<(), Error> {
+    async fn send<T: Serialize>(&mut self, item: &T) -> Result<(), Error> {
         let data = rmp_serde::to_vec(item)?;
         self.inner.send(Message::Binary(data)).await?;
         Ok(())
