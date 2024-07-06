@@ -31,10 +31,14 @@ color-eyre = "0.6.3"
 dirs = "5.0.1"
 dotenvy = "0.15.7"
 futures = "0.3.30"
-reverse-proxy-service = { git = "https://github.com/jgraef/reverse-proxy-service.git", branch = "switch/update", features = ["axum"] }
+mime = "0.3.17"
+notify = { version = "6.1.1", default-features = false, features = ["fsevent-sys", "macos_fsevent"] }
 serde = { version = "1.0.201", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal"] }
 toml = "0.8.12"
+tower-http = { version = "0.5.2", features = ["fs"] }
+tower-layer = "0.3.2"
+tower-service = "0.3.2"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 

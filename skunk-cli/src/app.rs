@@ -5,7 +5,6 @@ use std::{
 
 use axum::Router;
 use color_eyre::eyre::Error;
-use reverse_proxy_service::rewrite;
 use skunk::{
     address::TcpAddress,
     protocol::{
@@ -38,6 +37,7 @@ use crate::{
         ProxyArgs,
     },
     config::Config,
+    serve_ui::ServeUi,
 };
 
 pub struct App {
@@ -199,19 +199,12 @@ impl App {
                 async move {
                     tracing::info!(bind_address = ?args.api.bind_address, "Starting API");
 
-                    let mut router = Router::new().nest("/api", skunk_api::server::router());
+                    let mut api = skunk_api::server::builder();
+                    let hot_reload = api.with_hot_reload();
 
-                    if let Some(ui_address) = args.api.ui_address {
-                        // note: this is only here for development, so that we can forward
-                        // everything else to trunk
-                        router = router.fallback_service(
-                            reverse_proxy_service::builder_http(ui_address)?
-                                .build(rewrite::Identity),
-                        );
-                    }
-                    else {
-                        router = router.fallback(|| async { "404 - Not found" });
-                    }
+                    let router = Router::new()
+                        .nest("/api", api.finish())
+                        .fallback_service(ServeUi::new_dev(hot_reload));
 
                     let listener = tokio::net::TcpListener::bind(args.api.bind_address).await?;
                     axum::serve(listener, router)

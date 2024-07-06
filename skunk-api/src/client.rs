@@ -1,8 +1,18 @@
 #![allow(dead_code)]
 
+use std::{
+    fmt::Debug,
+    pin::Pin,
+    task::{
+        Context,
+        Poll,
+    },
+};
+
 use futures_util::{
+    Future,
+    FutureExt,
     SinkExt,
-    TryFutureExt,
     TryStreamExt,
 };
 use reqwest_websocket::{
@@ -13,7 +23,10 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{
+    mpsc,
+    watch,
+};
 use tracing::Instrument;
 use url::Url;
 
@@ -34,25 +47,47 @@ pub enum Error {
     Encode(#[from] rmp_serde::encode::Error),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Client {
     client: reqwest::Client,
     base_url: UrlBuilder,
     command_tx: mpsc::Sender<Command>,
+    reload_rx: watch::Receiver<()>,
 }
 
 impl Client {
-    pub fn new(base_url: Url) -> Self {
+    pub fn new(base_url: Url) -> (Self, Connection) {
         let client = reqwest::Client::new();
         let base_url = UrlBuilder { url: base_url };
         let (command_tx, command_rx) = mpsc::channel(4);
+        let (reload_tx, reload_rx) = watch::channel(());
 
-        Reactor::spawn(client.clone(), base_url.clone(), command_rx);
+        let connection = Connection {
+            inner: Box::pin({
+                let client = client.clone();
+                let base_url = base_url.clone();
+                let span = tracing::info_span!("connection");
+                async move {
+                    let reactor = Reactor::new(client, base_url, command_rx, reload_tx).await?;
+                    reactor.run().await
+                }
+                .instrument(span)
+            }),
+        };
 
-        Self {
+        let client = Self {
             client,
             base_url,
             command_tx,
+            reload_rx,
+        };
+
+        (client, connection)
+    }
+
+    pub fn hot_reload(&self) -> HotReload {
+        HotReload {
+            reload_rx: self.reload_rx.clone(),
         }
     }
 }
@@ -73,40 +108,44 @@ impl UrlBuilder {
     }
 }
 
+/// Client connection.
+///
+/// This must be polled to drive the connection for a [`Client`].
+pub struct Connection {
+    inner: Pin<Box<dyn Future<Output = Result<(), Error>>>>,
+}
+
+impl Future for Connection {
+    type Output = Result<(), Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner.poll_unpin(cx)
+    }
+}
+
+impl Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection").finish_non_exhaustive()
+    }
+}
+
 /// Reactor that handles the websocket connection to the server.
 ///
 /// The client can send commands through the sender half of `command_rx`.
 struct Reactor {
     websocket: WebSocket,
     command_rx: mpsc::Receiver<Command>,
+    reload_tx: watch::Sender<()>,
     ids: Ids,
     flows_tx: Option<mpsc::Sender<()>>,
 }
 
 impl Reactor {
-    fn spawn(client: reqwest::Client, base_url: UrlBuilder, command_rx: mpsc::Receiver<Command>) {
-        let span = tracing::info_span!("client");
-
-        // needs to be local, because the WebSocket is not `Send + Sync` on WASM.
-        tokio::task::spawn_local(
-            async move {
-                Reactor::new(client, base_url, command_rx)
-                    .await?
-                    .run()
-                    .await?;
-                Ok::<(), Error>(())
-            }
-            .instrument(span)
-            .map_err(|e| {
-                tracing::error!("{e}");
-            }),
-        );
-    }
-
     async fn new(
         client: reqwest::Client,
         base_url: UrlBuilder,
         command_rx: mpsc::Receiver<Command>,
+        reload_tx: watch::Sender<()>,
     ) -> Result<Self, Error> {
         let websocket = client
             .get(base_url.push("ws").finish())
@@ -120,6 +159,7 @@ impl Reactor {
         Ok(Self {
             websocket,
             command_rx,
+            reload_tx,
             ids: Ids::new(Ids::SCOPE_CLIENT),
             flows_tx: None,
         })
@@ -149,7 +189,12 @@ impl Reactor {
     }
 
     async fn handle_message(&mut self, message: ServerMessage) -> Result<(), Error> {
+        tracing::debug!(?message, "received");
+
         match message {
+            ServerMessage::HotReload => {
+                let _ = self.reload_tx.send(());
+            }
             ServerMessage::Interrupt { continue_tx } => {
                 // todo: for now we'll just send a Continue back
                 // eventually we want to send the interrupt to the user with a oneshot channel.
@@ -200,6 +245,7 @@ impl WebSocket {
                     let item: T = rmp_serde::from_slice(&data)?;
                     return Ok(Some(item));
                 }
+                Message::Close { .. } => return Ok(None),
                 _ => {}
             }
         }
@@ -211,5 +257,19 @@ impl WebSocket {
         let data = rmp_serde::to_vec(item)?;
         self.inner.send(Message::Binary(data)).await?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HotReload {
+    reload_rx: watch::Receiver<()>,
+}
+
+impl HotReload {
+    pub async fn wait(&mut self) {
+        if self.reload_rx.changed().await.is_err() {
+            tracing::debug!("hot_reload sender dropped");
+            futures_util::future::pending::<()>().await;
+        }
     }
 }

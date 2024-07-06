@@ -7,6 +7,7 @@ pub type Id = u32;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
+    HotReload,
     // todo
     Interrupt {
         continue_tx: Id,

@@ -154,19 +154,10 @@ pub struct ApiArgs {
         id = "api_bind_address",
         value_name("ADDRESS"),
         long = "api-bind-address",
-        default_value = "127.0.0.1:8081",
+        default_value = "127.0.0.1:8080",
         env = "SKUNK_API"
     )]
     pub bind_address: SocketAddr,
-
-    #[clap(
-        id = "api_ui_address",
-        value_name("ADDRESS"),
-        long = "api-ui-address",
-        default_value = "127.0.0.1:8080",
-        env = "SKUNK_UI_ADDRESS"
-    )]
-    pub ui_address: Option<String>,
 }
 
 /// Skunk app command-line options (i.e. command-line arguments without the

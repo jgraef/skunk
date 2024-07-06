@@ -3,6 +3,7 @@
 mod app;
 mod args;
 mod config;
+mod serve_ui;
 
 use clap::Parser;
 use color_eyre::eyre::Error;

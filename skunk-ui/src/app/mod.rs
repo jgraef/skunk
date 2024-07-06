@@ -2,6 +2,9 @@ mod flows;
 mod home;
 mod settings;
 
+use std::time::Duration;
+
+use gloo_timers::future::sleep;
 use leptos::{
     component,
     create_node_ref,
@@ -34,6 +37,8 @@ use leptos_use::{
     UseColorModeReturn,
 };
 use settings::SettingsRoutes;
+use skunk_api::client::Client;
+use url::Url;
 
 use self::{
     flows::Flows,
@@ -97,17 +102,49 @@ impl Theme {
     }
 }
 
+fn base_url() -> Option<Url> {
+    gloo_utils::document().base_uri().ok()??.parse().ok()
+}
+
+fn api_url() -> Option<Url> {
+    let mut url = base_url()?;
+    url.path_segments_mut().unwrap().push("api");
+    Some(url)
+}
+
 #[derive(Clone, Debug)]
 pub struct Context {
     theme: Theme,
+    client: Client,
 }
 
 impl Context {
     pub fn provide() -> Self {
+        let (client, connection) = Client::new(api_url().expect("Could not determine API url"));
+
+        // poll the connection in a separate task
+        leptos::spawn_local(async move {
+            if let Err(e) = connection.await {
+                tracing::error!("client connection failed: {e}");
+            }
+        });
+
+        // reload page on hot-reload signal
+        let mut hot_reload = client.hot_reload();
+        leptos::spawn_local(async move {
+            hot_reload.wait().await;
+            tracing::info!("Reloading page in 2s");
+            sleep(Duration::from_secs(2)).await;
+            let _ = gloo_utils::window().location().reload();
+        });
+
         let context = Self {
             theme: Theme::default(),
+            client,
         };
+
         leptos::provide_context(context.clone());
+
         context
     }
 
@@ -119,6 +156,8 @@ impl Context {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+
+    // create app context
     let Context {
         theme: Theme { bs_theme, .. },
         ..
