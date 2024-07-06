@@ -14,7 +14,9 @@ use tokio::sync::watch;
 use tracing::Instrument;
 
 use crate::protocol::{
+    ClientHello,
     ClientMessage,
+    ServerHello,
     ServerMessage,
 };
 
@@ -24,6 +26,7 @@ pub enum Error {
     Axum(#[from] axum::Error),
     Decode(#[from] rmp_serde::decode::Error),
     Encode(#[from] rmp_serde::encode::Error),
+    Protocol,
 }
 
 pub fn builder() -> Builder {
@@ -77,6 +80,24 @@ impl Reactor {
         if let Some(reload_rx) = &mut self.reload_rx {
             reload_rx.mark_unchanged();
         }
+
+        let client_hello: ClientHello = self
+            .socket
+            .receive()
+            .await?
+            .ok_or_else(|| Error::Protocol)?;
+        tracing::debug!(user_agent = %client_hello.user_agent, "client connected");
+
+        self.socket
+            .send(&ServerHello {
+                server_agent: concat!(
+                    std::env!("CARGO_PKG_NAME"),
+                    "-",
+                    std::env!("CARGO_PKG_VERSION")
+                )
+                .into(),
+            })
+            .await?;
 
         loop {
             tokio::select! {

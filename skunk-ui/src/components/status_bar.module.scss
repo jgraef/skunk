@@ -1,0 +1,20 @@
+
+.status-bar {
+    $height: 2em;
+    $vpad: 1px;
+    $hpad: 0.5em;
+
+    display: flex;
+    flex-direction: row;
+    border-top: 1px solid $skunk-primary;
+    height: $height;
+    min-height: $height;
+    max-height: $height;
+    font-size: x-small;
+    padding-top: $vpad;
+    padding-bottom: $vpad;
+    padding-left: $hpad;
+    padding-right: $hpad;
+    background: black;
+    color: $skunk-emphasis-light;
+}

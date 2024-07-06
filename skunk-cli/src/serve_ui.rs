@@ -66,7 +66,8 @@ impl ServeUi {
                 .join("..")
                 .join("skunk-ui")
                 .join("dist")
-                .canonicalize().unwrap();
+                .canonicalize()
+                .unwrap();
             let hot_reload = api_builder.with_hot_reload();
 
             tracing::info!(path = %path.display(), "serving ui from workspace with hot-reload");

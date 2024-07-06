@@ -47,6 +47,7 @@ use self::{
 use crate::components::{
     command_menu::CommandMenu,
     dock::Dock,
+    status_bar::StatusBar,
 };
 
 stylance::import_crate_style!(style, "src/app/app.module.scss");
@@ -114,8 +115,8 @@ fn api_url() -> Option<Url> {
 
 #[derive(Clone, Debug)]
 pub struct Context {
-    theme: Theme,
-    client: Client,
+    pub theme: Theme,
+    pub client: Client,
 }
 
 impl Context {
@@ -171,7 +172,7 @@ pub fn App() -> impl IntoView {
             attr:data-bs-theme=bs_theme
         />
         <Router>
-            <div class="d-flex flex-row" style="height: 100vh; width: 100%">
+            <div class=style::app>
                 <Dock />
                 <main class=style::main node_ref=main_ref>
                     <CommandMenu />
@@ -184,6 +185,7 @@ pub fn App() -> impl IntoView {
                     </Routes>
                 </main>
             </div>
+            <StatusBar />
         </Router>
     }
 }

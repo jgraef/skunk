@@ -32,7 +32,9 @@ use url::Url;
 
 use crate::{
     protocol::{
+        ClientHello,
         ClientMessage,
+        ServerHello,
         ServerMessage,
     },
     util::Ids,
@@ -45,6 +47,8 @@ pub enum Error {
     Websocket(#[from] reqwest_websocket::Error),
     Decode(#[from] rmp_serde::decode::Error),
     Encode(#[from] rmp_serde::encode::Error),
+    #[error("protocol error")]
+    Protocol,
 }
 
 #[derive(Clone, Debug)]
@@ -53,6 +57,7 @@ pub struct Client {
     base_url: UrlBuilder,
     command_tx: mpsc::Sender<Command>,
     reload_rx: watch::Receiver<()>,
+    status_rx: watch::Receiver<Status>,
 }
 
 impl Client {
@@ -61,6 +66,7 @@ impl Client {
         let base_url = UrlBuilder { url: base_url };
         let (command_tx, command_rx) = mpsc::channel(4);
         let (reload_tx, reload_rx) = watch::channel(());
+        let (status_tx, status_rx) = watch::channel(Default::default());
 
         let connection = Connection {
             inner: Box::pin({
@@ -68,7 +74,8 @@ impl Client {
                 let base_url = base_url.clone();
                 let span = tracing::info_span!("connection");
                 async move {
-                    let reactor = Reactor::new(client, base_url, command_rx, reload_tx).await?;
+                    let reactor =
+                        Reactor::new(client, base_url, command_rx, reload_tx, status_tx).await?;
                     reactor.run().await
                 }
                 .instrument(span)
@@ -80,6 +87,7 @@ impl Client {
             base_url,
             command_tx,
             reload_rx,
+            status_rx,
         };
 
         (client, connection)
@@ -89,6 +97,10 @@ impl Client {
         HotReload {
             reload_rx: self.reload_rx.clone(),
         }
+    }
+
+    pub fn status(&self) -> watch::Receiver<Status> {
+        self.status_rx.clone()
     }
 }
 
@@ -133,9 +145,10 @@ impl Debug for Connection {
 ///
 /// The client can send commands through the sender half of `command_rx`.
 struct Reactor {
-    websocket: WebSocket,
+    socket: WebSocket,
     command_rx: mpsc::Receiver<Command>,
     reload_tx: watch::Sender<()>,
+    status_tx: watch::Sender<Status>,
     ids: Ids,
     flows_tx: Option<mpsc::Sender<()>>,
 }
@@ -146,6 +159,7 @@ impl Reactor {
         base_url: UrlBuilder,
         command_rx: mpsc::Receiver<Command>,
         reload_tx: watch::Sender<()>,
+        status_tx: watch::Sender<Status>,
     ) -> Result<Self, Error> {
         let websocket = client
             .get(base_url.push("ws").finish())
@@ -157,18 +171,38 @@ impl Reactor {
             .into();
 
         Ok(Self {
-            websocket,
+            socket: websocket,
             command_rx,
             reload_tx,
+            status_tx,
             ids: Ids::new(Ids::SCOPE_CLIENT),
             flows_tx: None,
         })
     }
 
     async fn run(mut self) -> Result<(), Error> {
+        self.socket
+            .send(&ClientHello {
+                user_agent: concat!(
+                    std::env!("CARGO_PKG_NAME"),
+                    "-",
+                    std::env!("CARGO_PKG_VERSION")
+                )
+                .into(),
+            })
+            .await?;
+
+        let _server_hello: ServerHello = self
+            .socket
+            .receive()
+            .await?
+            .ok_or_else(|| Error::Protocol)?;
+
+        let _ = self.status_tx.send(Status::Connected);
+
         loop {
             tokio::select! {
-                message_res = self.websocket.receive() => {
+                message_res = self.socket.receive() => {
                     let Some(message) = message_res? else {
                         tracing::debug!("Connection closed");
                         break;
@@ -185,6 +219,8 @@ impl Reactor {
             }
         }
 
+        let _ = self.status_tx.send(Status::Disconnected);
+
         Ok(())
     }
 
@@ -198,7 +234,7 @@ impl Reactor {
             ServerMessage::Interrupt { continue_tx } => {
                 // todo: for now we'll just send a Continue back
                 // eventually we want to send the interrupt to the user with a oneshot channel.
-                self.websocket
+                self.socket
                     .send(&ClientMessage::Continue { continue_tx })
                     .await?;
             }
@@ -272,4 +308,11 @@ impl HotReload {
             futures_util::future::pending::<()>().await;
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Status {
+    #[default]
+    Disconnected,
+    Connected,
 }
