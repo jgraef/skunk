@@ -37,7 +37,7 @@ use leptos_use::{
     UseColorModeReturn,
 };
 use settings::SettingsRoutes;
-use skunk_api::client::Client;
+use skunk_api_client::Client;
 use url::Url;
 
 use self::{

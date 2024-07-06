@@ -1,8 +1,10 @@
 #![allow(dead_code)]
 
+mod api;
 mod app;
 mod args;
 mod config;
+mod proxy;
 mod serve_ui;
 
 use clap::Parser;

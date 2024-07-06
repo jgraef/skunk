@@ -15,6 +15,7 @@ use futures_util::{
     SinkExt,
     TryStreamExt,
 };
+use lazy_static::lazy_static;
 use reqwest_websocket::{
     Message,
     RequestBuilderExt,
@@ -23,6 +24,17 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use skunk_api_protocol::{
+    protocol::{
+        ClientHello,
+        ClientMessage,
+        ServerHello,
+        ServerMessage,
+        Version,
+    },
+    util::Ids,
+    PROTOCOL_VERSION,
+};
 use tokio::sync::{
     mpsc,
     watch,
@@ -30,25 +42,11 @@ use tokio::sync::{
 use tracing::Instrument;
 use url::Url;
 
-use crate::{
-    protocol::{
-        ClientHello,
-        ClientMessage,
-        ServerHello,
-        ServerMessage,
-    },
-    util::Ids,
-};
+use super::Error;
 
-#[derive(Debug, thiserror::Error)]
-#[error("API client error")]
-pub enum Error {
-    Reqwest(#[from] reqwest::Error),
-    Websocket(#[from] reqwest_websocket::Error),
-    Decode(#[from] rmp_serde::decode::Error),
-    Encode(#[from] rmp_serde::encode::Error),
-    #[error("protocol error")]
-    Protocol,
+pub const USER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
+lazy_static! {
+    pub static ref CLIENT_VERSION: Version = std::env!("CARGO_PKG_VERSION").parse().unwrap();
 }
 
 #[derive(Clone, Debug)]
@@ -183,12 +181,9 @@ impl Reactor {
     async fn run(mut self) -> Result<(), Error> {
         self.socket
             .send(&ClientHello {
-                user_agent: concat!(
-                    std::env!("CARGO_PKG_NAME"),
-                    "-",
-                    std::env!("CARGO_PKG_VERSION")
-                )
-                .into(),
+                user_agent: USER_AGENT.into(),
+                app_version: CLIENT_VERSION.clone(),
+                protocol_version: PROTOCOL_VERSION,
             })
             .await?;
 

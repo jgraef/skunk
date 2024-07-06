@@ -1,7 +1,6 @@
 use leptos::{
     create_signal,
     ReadSignal,
-    Signal,
     SignalSet,
     SignalUpdate,
 };

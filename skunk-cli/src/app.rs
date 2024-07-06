@@ -5,6 +5,8 @@ use std::{
 
 use axum::Router;
 use color_eyre::eyre::Error;
+use lazy_static::lazy_static;
+use semver::Version;
 use skunk::{
     address::TcpAddress,
     protocol::{
@@ -39,6 +41,11 @@ use crate::{
     config::Config,
     serve_ui::ServeUi,
 };
+
+pub const APP_NAME: &'static str = std::env!("CARGO_PKG_NAME");
+lazy_static! {
+    pub static ref APP_VERSION: Version = std::env!("CARGO_PKG_VERSION").parse().unwrap();
+}
 
 pub struct App {
     options: Options,
@@ -189,7 +196,7 @@ impl App {
 
         if args.api.enabled {
             let shutdown = shutdown.clone();
-            let mut api = skunk_api::server::builder();
+            let mut api = super::api::builder();
             let serve_ui = ServeUi::from_config(&self.config, &mut api);
 
             join_set.spawn(async move {

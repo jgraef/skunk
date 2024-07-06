@@ -5,7 +5,7 @@ use leptos::{
     Signal,
     SignalGet,
 };
-use skunk_api::client::Status;
+use skunk_api_client::Status;
 
 use crate::{
     app::Context,

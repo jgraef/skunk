@@ -10,15 +10,24 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use skunk_api_protocol::{
+    protocol::{
+        ClientHello,
+        ClientMessage,
+        ServerHello,
+        ServerMessage,
+    },
+    PROTOCOL_VERSION,
+};
 use tokio::sync::watch;
 use tracing::Instrument;
 
-use crate::protocol::{
-    ClientHello,
-    ClientMessage,
-    ServerHello,
-    ServerMessage,
+use crate::app::{
+    APP_NAME,
+    APP_VERSION,
 };
+
+pub const SERVER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
 
 #[derive(Debug, thiserror::Error)]
 #[error("API server error")]
@@ -46,27 +55,34 @@ impl Builder {
     }
 
     pub fn finish(self) -> Router {
-        Router::default().route(
-            "/ws",
-            routing::get(|ws: WebSocketUpgrade| {
-                async move {
-                    let span = tracing::info_span!("websocket");
-                    ws.on_upgrade(move |socket| {
-                        async move {
-                            let reactor = Reactor {
-                                socket: socket.into(),
-                                reload_rx: self.reload_rx,
-                            };
+        Router::default()
+            .route(
+                "/ws",
+                routing::get(|ws: WebSocketUpgrade| {
+                    // websocket connection
 
-                            if let Err(e) = reactor.run().await {
-                                tracing::error!("{e:?}");
+                    async move {
+                        let span = tracing::info_span!("websocket");
+                        ws.on_upgrade(move |socket| {
+                            async move {
+                                let reactor = Reactor {
+                                    socket: socket.into(),
+                                    reload_rx: self.reload_rx,
+                                };
+
+                                if let Err(e) = reactor.run().await {
+                                    tracing::error!("{e:?}");
+                                }
                             }
-                        }
-                        .instrument(span)
-                    })
-                }
-            }),
-        )
+                            .instrument(span)
+                        })
+                    }
+                }),
+            )
+            .route(
+                "/settings/tls/ca-cert.pem",
+                routing::get(|| async { "TODO" }),
+            )
     }
 }
 
@@ -81,23 +97,20 @@ impl Reactor {
             reload_rx.mark_unchanged();
         }
 
+        self.socket
+            .send(&ServerHello {
+                server_agent: APP_NAME.into(),
+                app_version: APP_VERSION.clone(),
+                protocol_version: PROTOCOL_VERSION,
+            })
+            .await?;
+
         let client_hello: ClientHello = self
             .socket
             .receive()
             .await?
             .ok_or_else(|| Error::Protocol)?;
         tracing::debug!(user_agent = %client_hello.user_agent, "client connected");
-
-        self.socket
-            .send(&ServerHello {
-                server_agent: concat!(
-                    std::env!("CARGO_PKG_NAME"),
-                    "-",
-                    std::env!("CARGO_PKG_VERSION")
-                )
-                .into(),
-            })
-            .await?;
 
         loop {
             tokio::select! {
@@ -140,7 +153,7 @@ impl Reactor {
             ClientMessage::Continue { continue_tx: _ } => todo!(),
         }
 
-        Ok(())
+        //Ok(())
     }
 }
 

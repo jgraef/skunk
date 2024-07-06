@@ -23,7 +23,6 @@ use notify::{
     RecursiveMode,
     Watcher as _,
 };
-use skunk_api::server::HotReload;
 use tokio::sync::watch;
 use tower_http::services::{
     ServeDir,
@@ -31,7 +30,10 @@ use tower_http::services::{
 };
 use tower_service::Service;
 
-use crate::config::Config;
+use crate::{
+    api,
+    config::Config,
+};
 
 #[derive(Clone, Debug)]
 pub struct ServeUi {
@@ -40,7 +42,7 @@ pub struct ServeUi {
 }
 
 impl ServeUi {
-    pub fn new(path: impl AsRef<Path>, hot_reload: Option<HotReload>) -> Self {
+    pub fn new(path: impl AsRef<Path>, hot_reload: Option<api::HotReload>) -> Self {
         let path = path.as_ref();
 
         let watcher = if let Some(hot_reload) = hot_reload {
@@ -60,7 +62,7 @@ impl ServeUi {
         Self { inner, watcher }
     }
 
-    pub fn from_config(config: &Config, api_builder: &mut skunk_api::server::Builder) -> Self {
+    pub fn from_config(config: &Config, api_builder: &mut api::Builder) -> Self {
         if std::env::var("SKUNK_UI_DEV").is_ok() {
             let path = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
                 .join("..")
@@ -75,6 +77,10 @@ impl ServeUi {
         }
         else {
             let path = config.data_relative_path(&config.ui.path);
+
+            if !path.exists() {
+                todo!("Install UI");
+            }
 
             tracing::info!(path = %path.display(), "serving ui");
             Self::new(path, None)
@@ -98,7 +104,7 @@ impl Service<Request<Body>> for ServeUi {
 
 fn setup_hot_reload(
     path: &Path,
-    hot_reload: HotReload,
+    hot_reload: api::HotReload,
 ) -> Result<RecommendedWatcher, notify::Error> {
     // note: the watcher is shutdown when it's dropped.
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
