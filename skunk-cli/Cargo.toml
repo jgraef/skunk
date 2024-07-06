@@ -16,17 +16,21 @@ categories = [
 name = "skunk"
 path = "src/main.rs"
 
+[dependencies.skunk-api]
+path = "../skunk-api"
+features = ["server"]
+
 [dependencies.byst]
 #version = "0.1.0"
 path = "../byst"
 
 [dependencies]
+clap = { version = "4.5.8", features = ["derive", "env"] }
 color-eyre = "0.6.3"
 dirs = "5.0.1"
 dotenvy = "0.15.7"
 futures = "0.3.30"
 serde = { version = "1.0.201", features = ["derive"] }
-structopt = "0.3.26"
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal"] }
 toml = "0.8.12"
 tracing = "0.1.40"

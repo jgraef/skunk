@@ -3,8 +3,8 @@
 mod app;
 mod config;
 
+use clap::Parser;
 use color_eyre::eyre::Error;
-use structopt::StructOpt;
 use tracing_subscriber::EnvFilter;
 
 use crate::app::{
@@ -21,7 +21,7 @@ async fn main() -> Result<(), Error> {
         .pretty()
         .init();
 
-    let args = Args::from_args();
+    let args = Args::parse();
     App::new(args.options)?.run(args.command).await?;
 
     Ok(())

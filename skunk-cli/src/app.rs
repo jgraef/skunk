@@ -5,6 +5,17 @@ use std::{
     sync::Arc,
 };
 
+use clap::{
+    builder::{
+        styling::{
+            AnsiColor,
+            Color,
+            Style,
+        },
+        Styles,
+    },
+    Parser,
+};
 use color_eyre::eyre::{
     bail,
     Error,
@@ -29,7 +40,6 @@ use skunk::{
     },
     util::CancellationToken,
 };
-use structopt::StructOpt;
 use tokio::{
     net::TcpStream,
     task::JoinSet,
@@ -38,21 +48,51 @@ use tokio::{
 use crate::config::Config;
 
 /// skunk - 🦨 A person-in-the-middle proxy
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
+#[clap(styles(Args::STYLES))]
+pub struct Args {
+    /// General options for the skunk command-line.
+    #[clap(flatten)]
+    pub options: Options,
+
+    /// The specific command to run.
+    #[clap(subcommand)]
+    pub command: Command,
+}
+
+impl Args {
+    const STYLES: Styles = Styles::styled()
+        .header(Style::new().bold())
+        .usage(Style::new().bold())
+        .literal(
+            Style::new()
+                .italic()
+                .fg_color(Some(Color::Ansi(AnsiColor::Magenta))),
+        )
+        .placeholder(
+            Style::new()
+                .italic()
+                .fg_color(Some(Color::Ansi(AnsiColor::BrightGreen))),
+        )
+        .valid(Style::new().italic())
+        .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))));
+}
+
+#[derive(Debug, Parser)]
 pub enum Command {
     /// Generates key and root certificate for the certificate authority used to
     /// intercept TLS traffic.
     Ca {
         /// Overwrite existing files.
-        #[structopt(short, long)]
+        #[clap(short, long)]
         force: bool,
     },
     /// Example command to log (possibly decrypted) HTTP traffic to console.
     LogHttp {
-        #[structopt(flatten)]
+        #[clap(flatten)]
         socks: SocksArgs,
 
-        #[structopt(flatten)]
+        #[clap(flatten)]
         pcap: PcapArgs,
 
         /// Target host:port addresses.
@@ -62,32 +102,32 @@ pub enum Command {
         target: Vec<TcpAddress>,
     },
     Proxy {
-        #[structopt(flatten)]
+        #[clap(flatten)]
         socks: SocksArgs,
 
-        #[structopt(short, long)]
+        #[clap(short, long)]
         rule: Vec<PathBuf>,
     },
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct SocksArgs {
     /// Enable socks proxy
-    #[structopt(name = "socks", long = "socks")]
+    #[clap(name = "socks", long = "socks")]
     enabled: bool,
 
     /// Bind address for the SOCKS proxy.
-    #[structopt(long = "socks-bind-address", default_value = "127.0.0.1:9090")]
+    #[clap(long = "socks-bind-address", default_value = "127.0.0.1:9090")]
     bind_address: SocketAddr,
 
     /// Username for the SOCKS proxy. If this is specified, --socks-password
     /// needs to be specified as well.
-    #[structopt(long = "socks-username")]
+    #[clap(long = "socks-username")]
     username: Option<String>,
 
     /// Password for the SOCKS proxy. If this is specified, --socks-username
     /// needs to be specified as well.
-    #[structopt(long = "socks-password")]
+    #[clap(long = "socks-password")]
     password: Option<String>,
 }
 
@@ -105,38 +145,26 @@ impl SocksArgs {
     }
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct PcapArgs {
-    #[structopt(name = "pcap", long = "pcap")]
+    #[clap(name = "pcap", long = "pcap")]
     enabled: bool,
 
-    #[structopt(long = "pcap-interface")]
+    #[clap(long = "pcap-interface")]
     interface: Option<String>,
 
-    #[structopt(long = "pcap-ap")]
+    #[clap(long = "pcap-ap")]
     ap: bool,
 }
 
 /// Skunk app command-line options (i.e. command-line arguments without the
 /// actual command to run).
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Options {
     /// Path to the skunk configuration directory. Defaults to
     /// `~/.config/gocksec/skunk/`.
-    #[structopt(short, long, env = "SKUNK_CONFIG")]
+    #[clap(short, long, env = "SKUNK_CONFIG")]
     config: Option<PathBuf>,
-}
-
-/// Skunk app command-line arguments.
-#[derive(Debug, StructOpt)]
-pub struct Args {
-    /// General options for the skunk command-line.
-    #[structopt(flatten)]
-    pub options: Options,
-
-    /// The specific command to run.
-    #[structopt(subcommand)]
-    pub command: Command,
 }
 
 pub struct App {
