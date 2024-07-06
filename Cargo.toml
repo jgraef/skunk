@@ -4,10 +4,11 @@ members = [
   "byst",
   "byst-macros",
   "skunk",
-  "skunk-api-client",
+  "skunk-api",
   "skunk-cli",
   "skunk-macros",
   "skunk-ui",
 ]
 
 [patch.crates-io]
+reqwest-websocket = { git = "https://github.com/jgraef/reqwest-websocket.git" }

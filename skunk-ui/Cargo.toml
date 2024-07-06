@@ -3,8 +3,9 @@ name = "skunk-ui"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies.skunk-api-client]
-path = "../skunk-api-client"
+[dependencies.skunk-api]
+path = "../skunk-api"
+features = ["client"]
 
 [dependencies]
 tracing = "0.1.40"

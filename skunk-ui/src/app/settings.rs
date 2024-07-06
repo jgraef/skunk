@@ -1,5 +1,6 @@
 use leptos::{
     component,
+    event_target_value,
     view,
     IntoView,
 };
@@ -9,11 +10,12 @@ use leptos_router::{
     Route,
     A,
 };
+use leptos_use::ColorMode;
 use lipsum::lipsum;
 
-use crate::components::icon::{
-    BootstrapIcon,
-    SkunkIcon,
+use crate::{
+    app::Context,
+    components::icon::BootstrapIcon,
 };
 
 stylance::import_crate_style!(style, "src/app/settings.module.scss");
@@ -65,6 +67,41 @@ fn General() -> impl IntoView {
             <p>
                 { lipsum(100) }
             </p>
+            <h2>
+                <BootstrapIcon icon="brush" />
+                "Theme"
+            </h2>
+            <select
+                class="form-select"
+                aria-label="Select theme"
+                on:change=move |event| {
+                    let value = event_target_value(&event);
+                    let mode = match value.as_str() {
+                        "system-default" => ColorMode::Auto,
+                        "light" => ColorMode::Light,
+                        "dark" => ColorMode::Dark,
+                        _ => {
+                            tracing::warn!("Invalid theme selected: {value}");
+                            return;
+                        },
+                    };
+
+                    let Context { theme, .. } = Context::get();
+                    theme.set(mode);
+                }
+            >
+                <option value="system-default">
+                    "System default"
+                </option>
+                <option value="light">
+                    <BootstrapIcon icon="sun-fill" />
+                    "Light"
+                </option>
+                <option value="dark">
+                    <BootstrapIcon icon="moon-stars-fill" />
+                    "Dark"
+                </option>
+            </select>
         </div>
     }
 }

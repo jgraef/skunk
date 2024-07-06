@@ -87,6 +87,14 @@ impl Theme {
         };
         self.set_mode.set(new);
     }
+
+    pub fn set(&self, mode: ColorMode) {
+        self.set_mode.set(mode);
+    }
+
+    pub fn icon(&self) -> Signal<&'static str> {
+        self.theme_icon
+    }
 }
 
 #[derive(Clone, Debug)]

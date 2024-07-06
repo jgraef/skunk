@@ -35,8 +35,7 @@ a {
     max-height: 100%;
     overflow-x: scroll;
     overflow-y: scroll;
-    padding-top: 1em;
-    padding-left: 1em;
+    padding: 1em;
 
     h1 {
         font-size: x-large;
@@ -54,4 +53,9 @@ a {
     p {
         margin-left: 1em;
     }
+}
+
+:global(.form-select) {
+    font-size: smaller;
+    padding: 2px;
 }
