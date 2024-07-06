@@ -1,25 +1,11 @@
 use std::{
     collections::HashSet,
-    net::SocketAddr,
-    path::PathBuf,
     sync::Arc,
 };
 
-use clap::{
-    builder::{
-        styling::{
-            AnsiColor,
-            Color,
-            Style,
-        },
-        Styles,
-    },
-    Parser,
-};
-use color_eyre::eyre::{
-    bail,
-    Error,
-};
+use axum::Router;
+use color_eyre::eyre::Error;
+use reverse_proxy_service::rewrite;
 use skunk::{
     address::TcpAddress,
     protocol::{
@@ -45,127 +31,14 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::config::Config;
-
-/// skunk - 🦨 A person-in-the-middle proxy
-#[derive(Debug, Parser)]
-#[clap(styles(Args::STYLES))]
-pub struct Args {
-    /// General options for the skunk command-line.
-    #[clap(flatten)]
-    pub options: Options,
-
-    /// The specific command to run.
-    #[clap(subcommand)]
-    pub command: Command,
-}
-
-impl Args {
-    const STYLES: Styles = Styles::styled()
-        .header(Style::new().bold())
-        .usage(Style::new().bold())
-        .literal(
-            Style::new()
-                .italic()
-                .fg_color(Some(Color::Ansi(AnsiColor::Magenta))),
-        )
-        .placeholder(
-            Style::new()
-                .italic()
-                .fg_color(Some(Color::Ansi(AnsiColor::BrightGreen))),
-        )
-        .valid(Style::new().italic())
-        .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))));
-}
-
-#[derive(Debug, Parser)]
-pub enum Command {
-    /// Generates key and root certificate for the certificate authority used to
-    /// intercept TLS traffic.
-    Ca {
-        /// Overwrite existing files.
-        #[clap(short, long)]
-        force: bool,
+use crate::{
+    args::{
+        Command,
+        Options,
+        ProxyArgs,
     },
-    /// Example command to log (possibly decrypted) HTTP traffic to console.
-    LogHttp {
-        #[clap(flatten)]
-        socks: SocksArgs,
-
-        #[clap(flatten)]
-        pcap: PcapArgs,
-
-        /// Target host:port addresses.
-        ///
-        /// This can be used to only selectively inspect traffic. By default all
-        /// traffic is inspected. Currently only ports 80 and 443 are supported.
-        target: Vec<TcpAddress>,
-    },
-    Proxy {
-        #[clap(flatten)]
-        socks: SocksArgs,
-
-        #[clap(short, long)]
-        rule: Vec<PathBuf>,
-    },
-}
-
-#[derive(Debug, Parser)]
-pub struct SocksArgs {
-    /// Enable socks proxy
-    #[clap(name = "socks", long = "socks")]
-    enabled: bool,
-
-    /// Bind address for the SOCKS proxy.
-    #[clap(long = "socks-bind-address", default_value = "127.0.0.1:9090")]
-    bind_address: SocketAddr,
-
-    /// Username for the SOCKS proxy. If this is specified, --socks-password
-    /// needs to be specified as well.
-    #[clap(long = "socks-username")]
-    username: Option<String>,
-
-    /// Password for the SOCKS proxy. If this is specified, --socks-username
-    /// needs to be specified as well.
-    #[clap(long = "socks-password")]
-    password: Option<String>,
-}
-
-impl SocksArgs {
-    pub fn builder(self) -> Result<socks::Builder, Error> {
-        let mut builder = socks::Builder::default().with_bind_address(self.bind_address);
-
-        match (self.username, self.password) {
-            (Some(username), Some(password)) => builder = builder.with_password(username, password),
-            (None, None) => {}
-            _ => bail!("Either both username and password or neither must be specified"),
-        }
-
-        Ok(builder)
-    }
-}
-
-#[derive(Debug, Parser)]
-pub struct PcapArgs {
-    #[clap(name = "pcap", long = "pcap")]
-    enabled: bool,
-
-    #[clap(long = "pcap-interface")]
-    interface: Option<String>,
-
-    #[clap(long = "pcap-ap")]
-    ap: bool,
-}
-
-/// Skunk app command-line options (i.e. command-line arguments without the
-/// actual command to run).
-#[derive(Debug, Parser)]
-pub struct Options {
-    /// Path to the skunk configuration directory. Defaults to
-    /// `~/.config/gocksec/skunk/`.
-    #[clap(short, long, env = "SKUNK_CONFIG")]
-    config: Option<PathBuf>,
-}
+    config::Config,
+};
 
 pub struct App {
     options: Options,
@@ -184,15 +57,8 @@ impl App {
             Command::Ca { force } => {
                 self.generate_ca(force).await?;
             }
-            Command::LogHttp {
-                socks,
-                pcap,
-                target,
-            } => {
-                self.log_http(socks, pcap, target).await?;
-            }
-            Command::Proxy { socks, rule } => {
-                self.proxy(socks, rule).await?;
+            Command::Proxy(args) => {
+                self.proxy(args).await?;
             }
         }
 
@@ -225,13 +91,8 @@ impl App {
     }
 
     /// Example command to log (possibly decrypted) HTTP traffic to console.
-    async fn log_http(
-        &self,
-        socks: SocksArgs,
-        pcap: PcapArgs,
-        target: Vec<TcpAddress>,
-    ) -> Result<(), Error> {
-        let pcap_interface = if pcap.enabled {
+    async fn proxy(&self, args: ProxyArgs) -> Result<(), Error> {
+        let pcap_interface = if args.pcap.enabled {
             fn print_interfaces() -> Result<(), Error> {
                 println!("available interfaces:");
                 for interface in Interface::list()? {
@@ -240,7 +101,7 @@ impl App {
                 Ok(())
             }
 
-            if let Some(interface) = pcap.interface {
+            if let Some(interface) = args.pcap.interface {
                 let interface_opt = Interface::from_name(&interface)?;
                 if interface_opt.is_none() {
                     eprintln!("interface '{interface}' not found");
@@ -268,28 +129,32 @@ impl App {
         let tls = tls::Context::new(ca).await?;
 
         // target filters
-        let filter = Arc::new(if target.is_empty() {
+        let filter = Arc::new(if args.targets.is_empty() {
             tracing::info!("matching all flows");
             TargetFilter::All
         }
         else {
-            tracing::info!("matching: {target:?}");
-            TargetFilter::Set(target.into_iter().collect())
+            tracing::info!("matching: {:?}", args.targets);
+            TargetFilter::Set(args.targets.into_iter().collect())
         });
 
-        // debug: for debugging it's more convenient to kill the process on Ctrl-C
-        //let shutdown = CancellationToken::default();
-        let shutdown = cancel_on_ctrlc_or_sigterm();
+        // shutdown token
+        let shutdown = if args.no_graceful_shutdown {
+            CancellationToken::default()
+        }
+        else {
+            cancel_on_ctrlc_or_sigterm()
+        };
 
         let mut join_set = JoinSet::new();
 
-        if socks.enabled {
+        if args.socks.enabled {
             let shutdown = shutdown.clone();
             join_set.spawn(async move {
                 // run the SOCKS server. `proxy` will handle connections. The default
                 // [`Connect`][skunk::connect::Connect] (i.e.
                 // [`ConnectTcp`][skunk::connect::ConnectTcp]) is used.
-                socks
+                args.socks
                     .builder()?
                     .with_graceful_shutdown(shutdown)
                     .with_proxy(fn_proxy(move |incoming, outgoing| {
@@ -306,7 +171,7 @@ impl App {
                 let shutdown = shutdown.clone();
                 let interface = interface.clone();
                 async move {
-                    if pcap.enabled {
+                    if args.pcap.enabled {
                         let country_code = std::env::var("HOSTAPD_CC")
                         .expect("Environment variable `HOSTAPD_CC` not set. You need to set this variable to your country code.");
 
@@ -328,13 +193,40 @@ impl App {
             });
         }
 
+        if args.api.enabled {
+            join_set.spawn({
+                let shutdown = shutdown.clone();
+                async move {
+                    tracing::info!(bind_address = ?args.api.bind_address, "Starting API");
+
+                    let mut router = Router::new().nest("/api", skunk_api::server::router());
+
+                    if let Some(ui_address) = args.api.ui_address {
+                        // note: this is only here for development, so that we can forward
+                        // everything else to trunk
+                        router = router.fallback_service(
+                            reverse_proxy_service::builder_http(ui_address)?
+                                .build(rewrite::Identity),
+                        );
+                    }
+                    else {
+                        router = router.fallback(|| async { "404 - Not found" });
+                    }
+
+                    let listener = tokio::net::TcpListener::bind(args.api.bind_address).await?;
+                    axum::serve(listener, router)
+                        .with_graceful_shutdown(shutdown.cancelled_owned())
+                        .await?;
+
+                    Ok::<(), Error>(())
+                }
+            });
+        }
+
+        // join all tasks
         while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}
 
         Ok(())
-    }
-
-    async fn proxy(&self, _socks: SocksArgs, _rules: Vec<PathBuf>) -> Result<(), Error> {
-        todo!();
     }
 }
 

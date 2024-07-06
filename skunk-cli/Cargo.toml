@@ -25,11 +25,13 @@ features = ["server"]
 path = "../byst"
 
 [dependencies]
+axum = "0.7.5"
 clap = { version = "4.5.8", features = ["derive", "env"] }
 color-eyre = "0.6.3"
 dirs = "5.0.1"
 dotenvy = "0.15.7"
 futures = "0.3.30"
+reverse-proxy-service = { git = "https://github.com/jgraef/reverse-proxy-service.git", branch = "switch/update", features = ["axum"] }
 serde = { version = "1.0.201", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal"] }
 toml = "0.8.12"

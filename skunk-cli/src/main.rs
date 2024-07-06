@@ -1,15 +1,16 @@
 #![allow(dead_code)]
 
 mod app;
+mod args;
 mod config;
 
 use clap::Parser;
 use color_eyre::eyre::Error;
 use tracing_subscriber::EnvFilter;
 
-use crate::app::{
-    App,
-    Args,
+use crate::{
+    app::App,
+    args::Args,
 };
 
 #[tokio::main]

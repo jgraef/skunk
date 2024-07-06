@@ -6,3 +6,6 @@ dist = "dist/"
 stage = "pre_build"
 command = "stylance"
 command_arguments = ["."]
+
+[[proxy]]
+backend = "http://localhost:8081/api"

@@ -31,7 +31,7 @@ pub fn router() -> Router {
                 ws.on_upgrade(move |socket| {
                     async move {
                         if let Err(e) = handle_websocket(socket.into()).await {
-                            tracing::error!("{e}");
+                            tracing::error!("{e:?}");
                         }
                     }
                     .instrument(span)
