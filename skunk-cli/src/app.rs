@@ -68,8 +68,8 @@ impl App {
     /// Generates the CA.
     async fn generate_ca(&self, force: bool) -> Result<(), Error> {
         let ca = tls::Ca::generate().await?;
-        let key_file = self.config.relative_path(&self.config.ca.key_file);
-        let cert_file = self.config.relative_path(&self.config.ca.cert_file);
+        let key_file = self.config.config_relative_path(&self.config.tls.key_file);
+        let cert_file = self.config.config_relative_path(&self.config.tls.cert_file);
 
         if !force {
             if key_file.exists() {
@@ -119,14 +119,8 @@ impl App {
             None
         };
 
-        // open CA
-        let ca = tls::Ca::open(
-            self.config.path.join(&self.config.config.ca.key_file),
-            self.config.path.join(&self.config.config.ca.cert_file),
-        )?;
-
         // create TLS context
-        let tls = tls::Context::new(ca).await?;
+        let tls = self.tls_context().await?;
 
         // target filters
         let filter = Arc::new(if args.targets.is_empty() {
@@ -194,25 +188,23 @@ impl App {
         }
 
         if args.api.enabled {
-            join_set.spawn({
-                let shutdown = shutdown.clone();
-                async move {
-                    tracing::info!(bind_address = ?args.api.bind_address, "Starting API");
+            let shutdown = shutdown.clone();
+            let mut api = skunk_api::server::builder();
+            let serve_ui = ServeUi::from_config(&self.config, &mut api);
 
-                    let mut api = skunk_api::server::builder();
-                    let hot_reload = api.with_hot_reload();
+            join_set.spawn(async move {
+                tracing::info!(bind_address = ?args.api.bind_address, "Starting API");
 
-                    let router = Router::new()
-                        .nest("/api", api.finish())
-                        .fallback_service(ServeUi::new_dev(hot_reload));
+                let router = Router::new()
+                    .nest("/api", api.finish())
+                    .fallback_service(serve_ui);
 
-                    let listener = tokio::net::TcpListener::bind(args.api.bind_address).await?;
-                    axum::serve(listener, router)
-                        .with_graceful_shutdown(shutdown.cancelled_owned())
-                        .await?;
+                let listener = tokio::net::TcpListener::bind(args.api.bind_address).await?;
+                axum::serve(listener, router)
+                    .with_graceful_shutdown(shutdown.cancelled_owned())
+                    .await?;
 
-                    Ok::<(), Error>(())
-                }
+                Ok::<(), Error>(())
             });
         }
 
@@ -220,6 +212,16 @@ impl App {
         while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}
 
         Ok(())
+    }
+
+    async fn tls_context(&self) -> Result<tls::Context, Error> {
+        let ca = tls::Ca::open(
+            self.config
+                .config_relative_path(&self.config.config.tls.key_file),
+            self.config
+                .config_relative_path(&self.config.config.tls.cert_file),
+        )?;
+        Ok(tls::Context::new(ca).await?)
     }
 }
 

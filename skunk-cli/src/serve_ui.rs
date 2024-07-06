@@ -31,6 +31,8 @@ use tower_http::services::{
 };
 use tower_service::Service;
 
+use crate::config::Config;
+
 #[derive(Clone, Debug)]
 pub struct ServeUi {
     inner: ServeDir<ServeFile>,
@@ -58,14 +60,24 @@ impl ServeUi {
         Self { inner, watcher }
     }
 
-    // Only for development. Remove for release.
-    pub fn new_dev(hot_reload: HotReload) -> Self {
-        let path = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("skunk-ui")
-            .join("dist");
+    pub fn from_config(config: &Config, api_builder: &mut skunk_api::server::Builder) -> Self {
+        if std::env::var("SKUNK_UI_DEV").is_ok() {
+            let path = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("skunk-ui")
+                .join("dist")
+                .canonicalize().unwrap();
+            let hot_reload = api_builder.with_hot_reload();
 
-        Self::new(path, Some(hot_reload))
+            tracing::info!(path = %path.display(), "serving ui from workspace with hot-reload");
+            Self::new(path, Some(hot_reload))
+        }
+        else {
+            let path = config.data_relative_path(&config.ui.path);
+
+            tracing::info!(path = %path.display(), "serving ui");
+            Self::new(path, None)
+        }
     }
 }
 
