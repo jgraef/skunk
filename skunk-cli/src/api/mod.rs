@@ -80,9 +80,10 @@ impl Builder {
                 }),
             )
             .route(
-                "/settings/tls/ca-cert.pem",
+                "/settings/tls/ca.cert.pem",
                 routing::get(|| async { "TODO" }),
             )
+            .fallback(|| async { "404 - Not found" })
     }
 }
 

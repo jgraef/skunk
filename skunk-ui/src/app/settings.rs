@@ -119,7 +119,7 @@ fn Tls() -> impl IntoView {
             </p>
             <h2>"Root certificate"</h2>
             <p>
-                "Even skunk can't break TLS encryption :( At least not without your help :3c" <br />
+                "Even skunk can't break TLS encryption :( At least not without your help >:3c" <br />
                 "You'll have to install skunk's root certificate on the device you want to monitor. This allows skunk to decrypt its traffic. This certificate is generated for your install, so only you can decrypt your traffic."
             </p>
             <ul>
