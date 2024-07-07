@@ -7,6 +7,7 @@ members = [
   "skunk-api-client",
   "skunk-api-protocol",
   "skunk-cli",
+  "skunk-flows-store",
   "skunk-macros",
   "skunk-ui",
 ]
