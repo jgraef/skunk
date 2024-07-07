@@ -19,7 +19,7 @@ fn main() {
 
     std::fs::write(&db_file, b"").unwrap();
 
-    Command::new("sqlx")
+    let exit_status = Command::new("sqlx")
         .arg("migrate")
         .arg("run")
         .arg("--source")
@@ -30,6 +30,10 @@ fn main() {
         .unwrap()
         .wait()
         .unwrap();
+
+    if !exit_status.success() {
+        panic!("sqlx failed: {exit_status}");
+    }
 
     println!("cargo::rustc-env=DATABASE_URL={}", db_url,);
 }

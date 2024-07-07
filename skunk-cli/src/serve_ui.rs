@@ -3,11 +3,11 @@ use std::{
         Path,
         PathBuf,
     },
-    sync::Arc,
     task::{
         Context,
         Poll,
     },
+    time::Duration,
 };
 
 use axum::{
@@ -17,11 +17,6 @@ use axum::{
         WebSocket,
     },
     http::Request,
-};
-use notify::{
-    RecommendedWatcher,
-    RecursiveMode,
-    Watcher as _,
 };
 use tokio::sync::watch;
 use tower_http::services::{
@@ -33,33 +28,35 @@ use tower_service::Service;
 use crate::{
     api,
     config::Config,
+    util::watch::watch_modified,
 };
 
 #[derive(Clone, Debug)]
 pub struct ServeUi {
     inner: ServeDir<ServeFile>,
-    watcher: Option<Arc<RecommendedWatcher>>,
 }
 
 impl ServeUi {
     pub fn new(path: impl AsRef<Path>, hot_reload: Option<api::HotReload>) -> Self {
         let path = path.as_ref();
 
-        let watcher = if let Some(hot_reload) = hot_reload {
-            Some(Arc::new(
-                setup_hot_reload(path, hot_reload).expect("Failed to setup hot-reload"),
-            ))
+        if let Some(hot_reload) = hot_reload {
+            let mut watch = watch_modified(path, Duration::from_secs(2))
+                .expect("Failed to watch for file changes");
+            tokio::spawn(async move {
+                while let Ok(()) = watch.wait().await {
+                    tracing::info!("UI modified. Triggering reload");
+                    hot_reload.trigger();
+                }
+            });
         }
-        else {
-            None
-        };
 
         let inner = ServeDir::new(path).fallback(ServeFile::new_with_mime(
             path.join("index.html"),
             &mime::TEXT_HTML_UTF_8,
         ));
 
-        Self { inner, watcher }
+        Self { inner }
     }
 
     pub fn from_config(config: &Config, api_builder: &mut api::Builder) -> Self {
@@ -100,24 +97,6 @@ impl Service<Request<Body>> for ServeUi {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         <ServeDir<ServeFile> as Service<Request<Body>>>::call(&mut self.inner, req)
     }
-}
-
-fn setup_hot_reload(
-    path: &Path,
-    hot_reload: api::HotReload,
-) -> Result<RecommendedWatcher, notify::Error> {
-    // note: the watcher is shutdown when it's dropped.
-    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-        if let Ok(event) = result {
-            if event.kind.is_modify() {
-                //tracing::debug!("UI modified. Sending reload notification.");
-                hot_reload.trigger();
-            }
-        }
-    })?;
-    watcher.watch(path, RecursiveMode::Recursive)?;
-
-    Ok(watcher)
 }
 
 async fn reload_handler(mut socket: WebSocket, mut reload_rx: watch::Receiver<()>) {

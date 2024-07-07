@@ -8,7 +8,8 @@ CREATE TABLE flow (
     destination_address TEXT NOT NULL,
     destination_port INT NOT NULL,
     protocol SMALLINT NOT NULL,
-    timestamp DATETIME NOT NULL
+    timestamp DATETIME NOT NULL,
+    metadata JSONB
 );
 
 CREATE TABLE message (
@@ -17,20 +18,28 @@ CREATE TABLE message (
     kind TINYINT NOT NULL,
     timestamp DATETIME NOT NULL,
     data JSONB NOT NULL,
+    metadata JSONB,
 
     FOREIGN KEY(flow_id) REFERENCES flow(flow_id)
 );
 
 CREATE TABLE artifact (
     artifact_id UUID NOT NULL PRIMARY KEY,
-    from_message UUID,
-    from_flow UUID,
+    message_id UUID,
+    flow_id UUID,
     mime_type TEXT,
     file_name TEXT,
     timestamp DATETIME NOT NULL,
+    hash BLOB NOT NULL,
+
+    FOREIGN KEY(message_id) REFERENCES flow(message_id),
+    FOREIGN KEY(flow_id) REFERENCES flow(flow_id),
+    FOREIGN KEY(hash) REFERENCES artifact_blob(hash)
+);
+
+CREATE TABLE artifact_blob (
+    hash BLOB NOT NULL PRIMARY KEY,
     size INT NOT NULL,
     data BLOB NOT NULL,
-
-    FOREIGN KEY(from_message) REFERENCES flow(message_id),
-    FOREIGN KEY(from_flow) REFERENCES flow(flow_id)
+    metadata JSONB
 );

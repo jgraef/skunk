@@ -93,12 +93,33 @@ impl<'a> Transaction<'a> {
 
     pub async fn create_flow(
         &mut self,
-        _flow_id: Uuid,
-        _destination_address: &str,
-        _destination_port: u16,
-        _protocol: u16,
-        _timestamp: DateTime<FixedOffset>,
+        flow_id: Uuid,
+        destination_address: &str,
+        destination_port: u16,
+        protocol: u16,
+        timestamp: DateTime<FixedOffset>,
+        metadata: Metadata,
     ) -> Result<(), Error> {
-        todo!();
+        let metadata = serde_json::to_value(metadata)?;
+        sqlx::query!(
+            r#"
+            INSERT INTO flow (flow_id, destination_address, destination_port, protocol, timestamp, metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+            flow_id,
+            destination_address,
+            destination_port,
+            protocol,
+            timestamp,
+            metadata,
+        )
+        .execute(&mut *self.transaction)
+        .await?;
+        Ok(())
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Metadata {
+    // todo
 }
