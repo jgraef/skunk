@@ -39,7 +39,7 @@ use crate::{
         ProxyArgs,
     },
     config::Config,
-    serve_ui::ServeUi,
+    util::serve_ui::ServeUi,
 };
 
 pub const APP_NAME: &'static str = std::env!("CARGO_PKG_NAME");

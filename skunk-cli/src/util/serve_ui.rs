@@ -12,13 +12,8 @@ use std::{
 
 use axum::{
     body::Body,
-    extract::ws::{
-        Message,
-        WebSocket,
-    },
     http::Request,
 };
-use tokio::sync::watch;
 use tower_http::services::{
     ServeDir,
     ServeFile,
@@ -66,7 +61,7 @@ impl ServeUi {
                 .join("skunk-ui")
                 .join("dist")
                 .canonicalize()
-                .unwrap();
+                .expect("Could not get absolute path for UI");
             let hot_reload = api_builder.with_hot_reload();
 
             tracing::info!(path = %path.display(), "serving ui from workspace with hot-reload");
@@ -97,36 +92,4 @@ impl Service<Request<Body>> for ServeUi {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         <ServeDir<ServeFile> as Service<Request<Body>>>::call(&mut self.inner, req)
     }
-}
-
-async fn reload_handler(mut socket: WebSocket, mut reload_rx: watch::Receiver<()>) {
-    let reload_message = "{\"reload\": true}";
-
-    tracing::debug!("connected");
-
-    loop {
-        tokio::select! {
-            message_res = socket.recv() => {
-                if message_res.transpose().ok().flatten().is_none() {
-                    //tracing::debug!("peer disconnected");
-                    break;
-                }
-            },
-            changed_res = reload_rx.changed() => {
-                tracing::debug!("sending reload-notification");
-
-                if let Err(_e) = changed_res {
-                    tracing::warn!("reload_tx dropped"); // why does it drop????
-                    break;
-                }
-                tracing::debug!("notify");
-                if socket.send(Message::Text(reload_message.to_owned())).await.is_err() {
-                    //tracing::debug!("send failed");
-                    break;
-                }
-            }
-        }
-    }
-
-    tracing::debug!("disconnected");
 }

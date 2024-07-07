@@ -5,7 +5,6 @@ mod app;
 mod args;
 mod config;
 mod proxy;
-mod serve_ui;
 mod util;
 
 use clap::Parser;

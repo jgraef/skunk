@@ -1,4 +1,11 @@
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    ops::{
+        Deref,
+        DerefMut,
+    },
+    path::Path,
+};
 
 use chrono::{
     DateTime,
@@ -98,7 +105,7 @@ impl<'a> Transaction<'a> {
         destination_port: u16,
         protocol: u16,
         timestamp: DateTime<FixedOffset>,
-        metadata: Metadata,
+        metadata: &Metadata,
     ) -> Result<(), Error> {
         let metadata = serde_json::to_value(metadata)?;
         sqlx::query!(
@@ -119,7 +126,22 @@ impl<'a> Transaction<'a> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(transparent)]
 pub struct Metadata {
-    // todo
+    inner: HashMap<String, serde_json::Value>,
+}
+
+impl Deref for Metadata {
+    type Target = HashMap<String, serde_json::Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for Metadata {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
 }
