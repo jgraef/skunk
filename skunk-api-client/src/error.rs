@@ -8,8 +8,6 @@ pub enum Error {
     Websocket(#[from] reqwest_websocket::Error),
     Decode(#[from] rmp_serde::decode::Error),
     Encode(#[from] rmp_serde::encode::Error),
-    #[error("protocol error")]
-    Protocol,
     ApiError {
         status_code: StatusCode,
         #[source]

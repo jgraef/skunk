@@ -2,9 +2,6 @@ mod flows;
 mod home;
 mod settings;
 
-use std::time::Duration;
-
-use gloo_timers::future::sleep;
 use leptos::{
     component,
     create_node_ref,
@@ -124,11 +121,7 @@ impl Context {
         let (client, connection) = Client::new(api_url().expect("Could not determine API url"));
 
         // poll the connection in a separate task
-        leptos::spawn_local(async move {
-            if let Err(e) = connection.await {
-                tracing::error!("client connection failed: {e}");
-            }
-        });
+        leptos::spawn_local(connection);
 
         // reload page on hot-reload signal
         let mut reload_ui = client.reload_ui();

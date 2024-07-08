@@ -35,6 +35,7 @@ pub struct ServerHello {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     HotReload,
+    Pong,
     // todo
     Interrupt {
         message_id: Uuid,
@@ -47,6 +48,7 @@ pub enum ServerMessage {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
+    Ping,
     SubscribeFlows,
     Start,
     Stop,

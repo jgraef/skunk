@@ -129,13 +129,16 @@ impl Reactor {
 
     async fn handle_message(&mut self, message: ClientMessage) -> Result<(), Error> {
         match message {
+            ClientMessage::Ping => {
+                self.socket.send(&ServerMessage::Pong).await?;
+            }
             ClientMessage::SubscribeFlows => todo!(),
             ClientMessage::Start => todo!(),
             ClientMessage::Stop => todo!(),
             ClientMessage::Continue { .. } => todo!(),
         }
 
-        //Ok(())
+        Ok(())
     }
 }
 
