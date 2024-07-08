@@ -22,7 +22,7 @@ pub struct FileWatcher {
 
 impl FileWatcher {
     pub fn new() -> notify::Result<Self> {
-        let (event_tx, event_rx) = mpsc::channel(1);
+        let (event_tx, event_rx) = mpsc::channel(16);
 
         // note: the watcher is shutdown when it's dropped.
         let watcher = notify::recommended_watcher(move |result: Result<Event, Error>| {

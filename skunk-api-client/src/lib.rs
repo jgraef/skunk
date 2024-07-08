@@ -1,11 +1,11 @@
 mod client;
 mod error;
+mod util;
 
 pub use self::{
     client::{
         Client,
         Connection,
-        HotReload,
         Status,
     },
     error::Error,

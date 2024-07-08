@@ -9,7 +9,7 @@ members = [
   "skunk-cli",
   "skunk-flows-store",
   "skunk-macros",
-  "skunk-ui",
+  "skunk-ui", "skunk-util",
 ]
 
 [patch.crates-io]

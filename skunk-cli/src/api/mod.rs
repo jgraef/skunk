@@ -1,14 +1,14 @@
-mod websocket;
+mod context;
+mod flows;
+mod socket;
 
 use axum::{
-    extract::WebSocketUpgrade,
     routing,
     Router,
 };
-use tokio::sync::watch;
+use skunk_util::trigger;
 
-pub use self::websocket::HotReload;
-use crate::util::msgpack::Msgpack;
+pub use self::context::Context;
 
 pub const SERVER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
 
@@ -27,33 +27,27 @@ pub fn builder() -> Builder {
 
 #[derive(Debug, Default)]
 pub struct Builder {
-    reload_rx: Option<watch::Receiver<()>>,
+    reload_rx: trigger::Receiver,
 }
 
 impl Builder {
-    pub fn with_hot_reload(&mut self) -> HotReload {
-        let (reload_tx, reload_rx) = watch::channel(());
-        self.reload_rx = Some(reload_rx);
-        HotReload { reload_tx }
+    pub fn with_reload_ui(&mut self) -> trigger::Sender {
+        let (reload_tx, reload_rx) = trigger::new();
+        self.reload_rx = reload_rx;
+        reload_tx
     }
 
     pub fn finish(self) -> Router {
-        let Self { reload_rx } = self;
+        let context = Context::new(self.reload_rx);
 
         Router::default()
-            .route(
-                "/ws",
-                routing::get(move |ws: WebSocketUpgrade| websocket::handle(ws, reload_rx)),
-            )
-            .route("/flows", routing::get(get_flows))
+            .route("/ws", routing::get(socket::handle))
+            .nest("/flows", flows::router())
             .route(
                 "/settings/tls/ca.cert.pem",
                 routing::get(|| async { "TODO" }),
             )
             .fallback(|| async { "404 - Not found" })
+            .with_state(context)
     }
-}
-
-async fn get_flows() -> Msgpack<()> {
-    ().into() // todo
 }

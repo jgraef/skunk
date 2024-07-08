@@ -9,7 +9,7 @@ fn main() {
 
     let migrations_dir = crate_dir.join("migrations");
     let db_file = out_dir.join("schema.db");
-    let db_url = format!("sqlite:{}", db_file.display());
+    let db_url = format!("sqlite://{}", db_file.display());
 
     println!("cargo::rerun-if-changed={}", migrations_dir.display());
 

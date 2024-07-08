@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies.skunk-api-protocol]
 path = "../skunk-api-protocol"
 
+[dependencies.skunk-util]
+path = "../skunk-util"
+features = ["trigger"]
+
 [dependencies]
 futures-util = "0.3.30"
 lazy_static = "1.5.0"

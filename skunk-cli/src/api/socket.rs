@@ -1,6 +1,7 @@
 use axum::{
     extract::{
         ws::Message,
+        State,
         WebSocketUpgrade,
     },
     response::IntoResponse,
@@ -10,7 +11,7 @@ use serde::{
     Serialize,
 };
 use skunk_api_protocol::{
-    protocol::{
+    socket::{
         ClientHello,
         ClientMessage,
         ServerHello,
@@ -18,10 +19,13 @@ use skunk_api_protocol::{
     },
     PROTOCOL_VERSION,
 };
-use tokio::sync::watch;
+use tokio::sync::mpsc;
 use tracing::Instrument;
 
-use super::Error;
+use super::{
+    Context,
+    Error,
+};
 use crate::app::{
     APP_NAME,
     APP_VERSION,
@@ -29,14 +33,14 @@ use crate::app::{
 
 pub(super) async fn handle(
     ws: WebSocketUpgrade,
-    reload_rx: Option<watch::Receiver<()>>,
+    State(context): State<Context>,
 ) -> impl IntoResponse {
     let span = tracing::info_span!("websocket");
     ws.on_upgrade(move |socket| {
         async move {
             let reactor = Reactor {
                 socket: socket.into(),
-                reload_rx,
+                context,
             };
 
             if let Err(e) = reactor.run().await {
@@ -49,34 +53,49 @@ pub(super) async fn handle(
 
 struct Reactor {
     socket: WebSocket,
-    reload_rx: Option<watch::Receiver<()>>,
+    context: Context,
 }
 
 impl Reactor {
     async fn run(mut self) -> Result<(), Error> {
-        // when we start a websocket connection, we want to make sure any previous
-        // reloads are ignored.
-        if let Some(reload_rx) = &mut self.reload_rx {
-            reload_rx.mark_unchanged();
-        }
+        // register command sender in context
+        let (command_tx, mut command_rx) = mpsc::channel(16);
+        let socket_id = self.context.connect_socket(Sender { tx: command_tx });
 
+        // send hello
         self.socket
             .send(&ServerHello {
                 server_agent: APP_NAME.into(),
                 app_version: APP_VERSION.clone(),
                 protocol_version: PROTOCOL_VERSION,
+                socket_id,
             })
             .await?;
 
+        // receive hello
         let client_hello: ClientHello = self
             .socket
             .receive()
             .await?
             .ok_or_else(|| Error::Protocol)?;
+
+        let mut reload_ui = self.context.reload_ui();
+
         tracing::debug!(user_agent = %client_hello.user_agent, "client connected");
 
         loop {
             tokio::select! {
+                // command
+                command_opt = command_rx.recv() => {
+                    if let Some(command) = command_opt {
+                        self.handle_command(command).await?;
+                    }
+                    else {
+                        tracing::warn!("websocket disconnected from command sender");
+                        break;
+                    }
+                }
+
                 // message from client
                 message_res = self.socket.receive::<ClientMessage>() => {
                     if let Some(message) = message_res? {
@@ -89,20 +108,20 @@ impl Reactor {
                 }
 
                 // hot-reload signal
-                _ = async {
-                    if let Some(reload_rx) = &mut self.reload_rx {
-                        if reload_rx.changed().await.is_err() {
-                            // sender dropped, so we just set this to None, so in future this future will be pending forever.
-                            self.reload_rx = None;
-                        }
-                    }
-                    else {
-                        futures_util::future::pending::<()>().await;
-                    }
-                } => {
+                _ = reload_ui.triggered() => {
                     self.socket.send(&ServerMessage::HotReload).await?;
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_command(&mut self, command: Command) -> Result<(), Error> {
+        match command {
+            Command::SendMessage(message) => {
+                self.socket.send(&message).await?;
+            } // todo
         }
 
         Ok(())
@@ -113,12 +132,41 @@ impl Reactor {
             ClientMessage::SubscribeFlows => todo!(),
             ClientMessage::Start => todo!(),
             ClientMessage::Stop => todo!(),
-            ClientMessage::Continue { continue_tx: _ } => todo!(),
+            ClientMessage::Continue { .. } => todo!(),
         }
 
         //Ok(())
     }
 }
+
+#[derive(Debug)]
+pub enum Command {
+    SendMessage(ServerMessage),
+    // todo
+}
+
+#[derive(Clone, Debug)]
+pub struct Sender {
+    tx: mpsc::Sender<Command>,
+}
+
+impl Sender {
+    async fn send_command(&mut self, command: Command) -> Result<(), Closed> {
+        self.tx.send(command).await.map_err(|_| Closed)
+    }
+
+    pub async fn send_message(&mut self, message: ServerMessage) -> Result<(), Closed> {
+        self.send_command(Command::SendMessage(message)).await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Websocket connection closed")]
+pub struct Closed;
 
 // Wrapper around axum's WebSocket to send and receive msgpack-encoded messages
 struct WebSocket {
@@ -151,16 +199,5 @@ impl WebSocket {
         let data = rmp_serde::to_vec(item)?;
         self.inner.send(Message::Binary(data)).await?;
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct HotReload {
-    pub(super) reload_tx: watch::Sender<()>,
-}
-
-impl HotReload {
-    pub fn trigger(&self) {
-        let _ = self.reload_tx.send(());
     }
 }

@@ -18,13 +18,21 @@ path = "src/main.rs"
 
 [dependencies.skunk-api-protocol]
 path = "../skunk-api-protocol"
+features = ["axum"]
+
+[dependencies.skunk-flows-store]
+path = "../skunk-flows-store"
+
+[dependencies.skunk-util]
+path = "../skunk-util"
+features = ["trigger"]
 
 [dependencies.byst]
 #version = "0.1.0"
 path = "../byst"
 
 [dependencies]
-axum = { version = "0.7.5", features = ["ws"] }
+axum = { version = "0.7.5", features = ["ws", "macros"] }
 clap = { version = "4.5.8", features = ["derive", "env"] }
 color-eyre = "0.6.3"
 dirs = "5.0.1"
@@ -44,7 +52,7 @@ tower-layer = "0.3.2"
 tower-service = "0.3.2"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-utoipa = { version = "4.2.3", features = ["axum_extras"] }
+uuid = { version = "1.9.1", features = ["v4"] }
 
 [dependencies.skunk]
 #version = "0.1.0"

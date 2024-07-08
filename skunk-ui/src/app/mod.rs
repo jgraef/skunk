@@ -131,11 +131,10 @@ impl Context {
         });
 
         // reload page on hot-reload signal
-        let mut hot_reload = client.hot_reload();
+        let mut reload_ui = client.reload_ui();
         leptos::spawn_local(async move {
-            hot_reload.wait().await;
-            tracing::info!("Reloading page in 2s");
-            sleep(Duration::from_secs(2)).await;
+            // the server debounces this signal by 2s, so we don't need to wait here.
+            reload_ui.triggered().await;
             let _ = gloo_utils::window().location().reload();
         });
 

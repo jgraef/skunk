@@ -25,16 +25,16 @@ use serde::{
     Serialize,
 };
 use skunk_api_protocol::{
-    protocol::{
+    socket::{
         ClientHello,
         ClientMessage,
         ServerHello,
         ServerMessage,
         Version,
     },
-    util::Ids,
     PROTOCOL_VERSION,
 };
+use skunk_util::trigger;
 use tokio::sync::{
     mpsc,
     watch,
@@ -54,7 +54,7 @@ pub struct Client {
     client: reqwest::Client,
     base_url: UrlBuilder,
     command_tx: mpsc::Sender<Command>,
-    reload_rx: watch::Receiver<()>,
+    reload_rx: trigger::Receiver,
     status_rx: watch::Receiver<Status>,
 }
 
@@ -63,7 +63,7 @@ impl Client {
         let client = reqwest::Client::new();
         let base_url = UrlBuilder { url: base_url };
         let (command_tx, command_rx) = mpsc::channel(4);
-        let (reload_tx, reload_rx) = watch::channel(());
+        let (reload_tx, reload_rx) = trigger::new();
         let (status_tx, status_rx) = watch::channel(Default::default());
 
         let connection = Connection {
@@ -91,10 +91,8 @@ impl Client {
         (client, connection)
     }
 
-    pub fn hot_reload(&self) -> HotReload {
-        HotReload {
-            reload_rx: self.reload_rx.clone(),
-        }
+    pub fn reload_ui(&self) -> trigger::Receiver {
+        self.reload_rx.clone()
     }
 
     pub fn status(&self) -> watch::Receiver<Status> {
@@ -145,9 +143,8 @@ impl Debug for Connection {
 struct Reactor {
     socket: WebSocket,
     command_rx: mpsc::Receiver<Command>,
-    reload_tx: watch::Sender<()>,
+    reload_tx: trigger::Sender,
     status_tx: watch::Sender<Status>,
-    ids: Ids,
     flows_tx: Option<mpsc::Sender<()>>,
 }
 
@@ -156,7 +153,7 @@ impl Reactor {
         client: reqwest::Client,
         base_url: UrlBuilder,
         command_rx: mpsc::Receiver<Command>,
-        reload_tx: watch::Sender<()>,
+        reload_tx: trigger::Sender,
         status_tx: watch::Sender<Status>,
     ) -> Result<Self, Error> {
         let websocket = client
@@ -173,7 +170,6 @@ impl Reactor {
             command_rx,
             reload_tx,
             status_tx,
-            ids: Ids::new(Ids::SCOPE_CLIENT),
             flows_tx: None,
         })
     }
@@ -224,13 +220,13 @@ impl Reactor {
 
         match message {
             ServerMessage::HotReload => {
-                let _ = self.reload_tx.send(());
+                let _ = self.reload_tx.trigger();
             }
-            ServerMessage::Interrupt { continue_tx } => {
+            ServerMessage::Interrupt { message_id } => {
                 // todo: for now we'll just send a Continue back
                 // eventually we want to send the interrupt to the user with a oneshot channel.
                 self.socket
-                    .send(&ClientMessage::Continue { continue_tx })
+                    .send(&ClientMessage::Continue { message_id })
                     .await?;
             }
             ServerMessage::Flow { .. } => {
@@ -288,20 +284,6 @@ impl WebSocket {
         let data = rmp_serde::to_vec(item)?;
         self.inner.send(Message::Binary(data)).await?;
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct HotReload {
-    reload_rx: watch::Receiver<()>,
-}
-
-impl HotReload {
-    pub async fn wait(&mut self) {
-        if self.reload_rx.changed().await.is_err() {
-            tracing::debug!("hot_reload sender dropped");
-            futures_util::future::pending::<()>().await;
-        }
     }
 }
 

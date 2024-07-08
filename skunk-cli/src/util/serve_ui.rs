@@ -14,6 +14,7 @@ use axum::{
     body::Body,
     http::Request,
 };
+use skunk_util::trigger;
 use tower_http::services::{
     ServeDir,
     ServeFile,
@@ -32,16 +33,16 @@ pub struct ServeUi {
 }
 
 impl ServeUi {
-    pub fn new(path: impl AsRef<Path>, hot_reload: Option<api::HotReload>) -> Self {
+    pub fn new(path: impl AsRef<Path>, reload_ui: Option<trigger::Sender>) -> Self {
         let path = path.as_ref();
 
-        if let Some(hot_reload) = hot_reload {
+        if let Some(reload_ui) = reload_ui {
             let mut watch = watch_modified(path, Duration::from_secs(2))
                 .expect("Failed to watch for file changes");
             tokio::spawn(async move {
                 while let Ok(()) = watch.wait().await {
                     tracing::info!("UI modified. Triggering reload");
-                    hot_reload.trigger();
+                    reload_ui.trigger();
                 }
             });
         }
@@ -62,10 +63,10 @@ impl ServeUi {
                 .join("dist")
                 .canonicalize()
                 .expect("Could not get absolute path for UI");
-            let hot_reload = api_builder.with_hot_reload();
+            let reload_ui = api_builder.with_reload_ui();
 
             tracing::info!(path = %path.display(), "serving ui from workspace with hot-reload");
-            Self::new(path, Some(hot_reload))
+            Self::new(path, Some(reload_ui))
         }
         else {
             let path = config.data_relative_path(&config.ui.path);

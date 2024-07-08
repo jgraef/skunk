@@ -22,12 +22,20 @@ use axum::{
         Response,
     },
 };
+use mime::Mime;
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use super::content_type;
+fn content_type(headers: &HeaderMap) -> Option<Mime> {
+    headers
+        .get(header::CONTENT_TYPE)?
+        .to_str()
+        .ok()?
+        .parse::<Mime>()
+        .ok()
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Msgpack<T>(pub T);

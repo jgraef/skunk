@@ -1,3 +1,6 @@
+use reqwest::StatusCode;
+use skunk_api_protocol::error::ApiError;
+
 #[derive(Debug, thiserror::Error)]
 #[error("API client error")]
 pub enum Error {
@@ -7,4 +10,9 @@ pub enum Error {
     Encode(#[from] rmp_serde::encode::Error),
     #[error("protocol error")]
     Protocol,
+    ApiError {
+        status_code: StatusCode,
+        #[source]
+        error: ApiError,
+    },
 }

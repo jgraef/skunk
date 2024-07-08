@@ -5,8 +5,17 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use uuid::Uuid;
 
-pub type Id = u32;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SocketId(Uuid);
+
+impl From<Uuid> for SocketId {
+    fn from(value: Uuid) -> Self {
+        Self(value)
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClientHello {
@@ -20,6 +29,7 @@ pub struct ServerHello {
     pub server_agent: Cow<'static, str>,
     pub app_version: Version,
     pub protocol_version: Version,
+    pub socket_id: SocketId,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,7 +37,7 @@ pub enum ServerMessage {
     HotReload,
     // todo
     Interrupt {
-        continue_tx: Id,
+        message_id: Uuid,
         // todo: request/response/etc.
     },
     Flow {
@@ -41,7 +51,7 @@ pub enum ClientMessage {
     Start,
     Stop,
     Continue {
-        continue_tx: Id,
+        message_id: Uuid,
         // todo: modified request/response/etc.
     },
 }

@@ -1,0 +1,12 @@
+[package]
+name = "skunk-util"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+full = ["trigger"]
+trigger = ["dep:tokio"]
+
+[dependencies]
+tokio = { version = "1.37.0", default-features = false, features = ["sync"], optional = true }

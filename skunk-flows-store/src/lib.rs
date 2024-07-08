@@ -15,6 +15,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use sqlx::sqlite::SqliteConnectOptions;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -31,12 +32,26 @@ pub struct FlowStore {
 }
 
 impl FlowStore {
+    pub async fn in_memory() -> Result<Self, Error> {
+        Self::open_with(SqliteConnectOptions::new()).await
+    }
+
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let pool =
-            sqlx::SqlitePool::connect(&format!("sqlite:{}", path.as_ref().display())).await?;
+        Self::open_with(SqliteConnectOptions::new().filename(path)).await
+    }
 
+    pub async fn create(path: impl AsRef<Path>) -> Result<Self, Error> {
+        Self::open_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(true),
+        )
+        .await
+    }
+
+    async fn open_with(options: SqliteConnectOptions) -> Result<Self, Error> {
+        let pool = sqlx::SqlitePool::connect_with(options).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-
         Ok(Self { pool })
     }
 
