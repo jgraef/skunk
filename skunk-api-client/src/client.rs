@@ -24,6 +24,7 @@ use crate::{
         Reactor,
         ReactorHandle,
     },
+    util::platform::spawn_local,
     Status,
 };
 
@@ -35,25 +36,20 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(base_url: Url) -> (Self, Connection) {
+    pub fn new(base_url: Url) -> Self {
         let client = reqwest::Client::new();
         let base_url = UrlBuilder { url: base_url };
 
         let (reactor, reactor_handle) =
             Reactor::new(client.clone(), base_url.clone().push("ws").finish());
         let span = tracing::info_span!("socket");
+        spawn_local(reactor.run().instrument(span));
 
-        let connection = Connection {
-            inner: Box::pin(reactor.run().instrument(span)),
-        };
-
-        let client = Self {
+        Self {
             client,
             base_url,
             reactor: reactor_handle,
-        };
-
-        (client, connection)
+        }
     }
 
     async fn send_command(&mut self, command: Command) {
@@ -70,12 +66,6 @@ impl Client {
 
     pub fn status(&self) -> watch::Receiver<Status> {
         self.reactor.status_rx.clone()
-    }
-
-    pub async fn ping(&mut self) {
-        let mut pong_rx = self.reactor.pong_rx.clone();
-        self.send_command(Command::Ping).await;
-        pong_rx.triggered().await;
     }
 }
 

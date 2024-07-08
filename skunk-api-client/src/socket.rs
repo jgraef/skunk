@@ -1,6 +1,16 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    pin::Pin,
+    task::{
+        Context,
+        Poll,
+    },
+    time::Duration,
+};
 
 use futures_util::{
+    Future,
+    FutureExt,
     SinkExt,
     TryStreamExt,
 };
@@ -30,7 +40,14 @@ use tokio::sync::{
 };
 use url::Url;
 
-use crate::Status;
+use crate::{
+    util::platform::{
+        interval,
+        sleep,
+        Sleep,
+    },
+    Status,
+};
 
 pub const USER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
 lazy_static! {
@@ -44,6 +61,8 @@ enum Error {
     Disconnected,
     #[error("Handshake failed")]
     Handshake,
+    #[error("Ping timed out")]
+    PingTimeout,
     Reqwest(#[from] reqwest::Error),
     Websocket(#[from] reqwest_websocket::Error),
     Decode(#[from] rmp_serde::decode::Error),
@@ -55,7 +74,6 @@ pub(crate) struct ReactorHandle {
     pub command_tx: mpsc::Sender<Command>,
     pub reload_rx: trigger::Receiver,
     pub status_rx: watch::Receiver<Status>,
-    pub pong_rx: trigger::Receiver,
 }
 
 /// Reactor that handles the websocket connection to the server.
@@ -67,7 +85,6 @@ pub(crate) struct Reactor {
     command_rx: mpsc::Receiver<Command>,
     reload_tx: trigger::Sender,
     status_tx: watch::Sender<Status>,
-    pong_tx: trigger::Sender,
     flows_tx: Option<mpsc::Sender<()>>,
 }
 
@@ -76,7 +93,6 @@ impl Reactor {
         let (command_tx, command_rx) = mpsc::channel(16);
         let (reload_tx, reload_rx) = trigger::new();
         let (status_tx, status_rx) = watch::channel(Default::default());
-        let (pong_tx, pong_rx) = trigger::new();
 
         let this = Self {
             client,
@@ -84,7 +100,6 @@ impl Reactor {
             command_rx,
             reload_tx,
             status_tx,
-            pong_tx,
             flows_tx: None,
         };
 
@@ -92,7 +107,6 @@ impl Reactor {
             command_tx,
             reload_rx,
             status_rx,
-            pong_rx,
         };
 
         (this, handle)
@@ -103,21 +117,25 @@ impl Reactor {
             let Ok(connection) = ReactorConnection::connect(&mut self).await
             else {
                 // connection failed
-                // we should retry after some time, but since we don't have a reliable sleep,
-                // we'll panic for now
-                todo!();
+                tracing::warn!("Connection failed: {}", self.url);
+                sleep(Duration::from_secs(5)).await;
+                continue;
             };
 
             match connection.run().await {
                 Ok(()) => {
                     // ReactorConnection returns Ok(()) when the command sender has been dropped, so
                     // we should terminate
+                    tracing::info!("Shutting down");
                     let _ = self.status_tx.send(Status::Disconnected);
                     break;
                 }
-                Err(Error::Disconnected) => {
+                Err(Error::Disconnected) | Err(Error::PingTimeout) => {
                     // the websocket connection was disconnected for some reason. so, we'll try to
-                    // reconnect todo: wait for some time
+                    // reconnect
+                    //
+                    // todo: should we wait here?
+                    tracing::info!("Disconnected");
                     let _ = self.status_tx.send(Status::Disconnected);
                 }
                 Err(e) => {
@@ -132,6 +150,7 @@ impl Reactor {
 struct ReactorConnection<'a> {
     socket: WebSocket,
     reactor: &'a mut Reactor,
+    ping_timeout: PingTimeout,
 }
 
 impl<'a> ReactorConnection<'a> {
@@ -158,10 +177,16 @@ impl<'a> ReactorConnection<'a> {
 
         let _ = reactor.status_tx.send(Status::Connected);
 
-        Ok(Self { socket, reactor })
+        Ok(Self {
+            socket,
+            reactor,
+            ping_timeout: PingTimeout::new(Duration::from_secs(5)),
+        })
     }
 
     async fn run(mut self) -> Result<(), Error> {
+        let mut ping_interval = interval(Duration::from_secs(10));
+
         loop {
             tokio::select! {
                 message_res = self.socket.receive() => {
@@ -178,6 +203,13 @@ impl<'a> ReactorConnection<'a> {
                     };
                     self.handle_command(command).await?;
                 }
+                _ = ping_interval.tick() => {
+                    self.socket.send(&ClientMessage::Ping).await?;
+                    self.ping_timeout.start();
+                }
+                _ = &mut self.ping_timeout => {
+                    break Err(Error::PingTimeout);
+                }
             }
         }
     }
@@ -190,7 +222,7 @@ impl<'a> ReactorConnection<'a> {
                 self.reactor.reload_tx.trigger();
             }
             ServerMessage::Pong => {
-                self.reactor.pong_tx.trigger();
+                self.ping_timeout.clear();
             }
             ServerMessage::Interrupt { message_id } => {
                 // todo: for now we'll just send a Continue back
@@ -214,18 +246,16 @@ impl<'a> ReactorConnection<'a> {
 
     async fn handle_command(&mut self, command: Command) -> Result<(), Error> {
         match command {
-            Command::Ping => {
-                self.socket.send(&ClientMessage::Ping).await?;
-            }
+            // todo
         }
 
-        Ok(())
+        //Ok(())
     }
 }
 
 #[derive(Debug)]
 pub(crate) enum Command {
-    Ping,
+    // todo
 }
 
 /// Wrapper around [`reqwest_websocket::WebSocket`] that sends and receives
@@ -261,5 +291,41 @@ impl WebSocket {
         let data = rmp_serde::to_vec(item)?;
         self.inner.send(Message::Binary(data)).await?;
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct PingTimeout {
+    sleep: Option<Sleep>,
+    timeout: Duration,
+}
+
+impl PingTimeout {
+    pub fn new(timeout: Duration) -> Self {
+        Self {
+            sleep: None,
+            timeout,
+        }
+    }
+
+    pub fn start(&mut self) {
+        self.sleep = Some(sleep(self.timeout))
+    }
+
+    pub fn clear(&mut self) {
+        self.sleep = None;
+    }
+}
+
+impl Future for PingTimeout {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Some(sleep) = &mut self.sleep {
+            sleep.poll_unpin(cx)
+        }
+        else {
+            Poll::Pending
+        }
     }
 }
