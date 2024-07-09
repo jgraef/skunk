@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use serde::{
     Deserialize,
     Serialize,
@@ -19,6 +21,14 @@ pub enum ApiError {
     NoSuchSocket(#[from] NoSuchSocket),
 }
 api_error!(ApiError);
+
+impl ApiError {
+    pub fn internal(error: impl Display) -> Self {
+        Self::Internal(InternalError {
+            message: error.to_string(),
+        })
+    }
+}
 
 impl StatusCode for ApiError {
     fn status_code(&self) -> http::StatusCode {

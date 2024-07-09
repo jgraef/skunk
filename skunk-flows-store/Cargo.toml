@@ -3,6 +3,9 @@ name = "skunk-flows-store"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies.skunk-api-protocol]
+path = "../skunk-api-protocol"
+
 [dependencies]
 chrono = "0.4.38"
 serde = { version = "1.0.204", features = ["derive"] }

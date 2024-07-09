@@ -196,14 +196,14 @@ impl App {
 
         if args.api.enabled {
             let shutdown = shutdown.clone();
-            let mut api = super::api::builder();
-            let serve_ui = ServeUi::from_config(&self.config, &mut api);
+            let mut api_builder = super::api::builder();
+            let serve_ui = ServeUi::from_config(&self.config, &mut api_builder);
 
             join_set.spawn(async move {
                 tracing::info!(bind_address = ?args.api.bind_address, "Starting API");
 
                 let router = Router::new()
-                    .nest("/api", api.finish())
+                    .nest("/api", api_builder.finish())
                     .fallback_service(serve_ui);
 
                 let listener = tokio::net::TcpListener::bind(args.api.bind_address).await?;

@@ -1,11 +1,4 @@
-use std::{
-    collections::HashMap,
-    ops::{
-        Deref,
-        DerefMut,
-    },
-    path::Path,
-};
+use std::path::Path;
 
 use chrono::{
     DateTime,
@@ -14,6 +7,12 @@ use chrono::{
 use serde::{
     Deserialize,
     Serialize,
+};
+use skunk_api_protocol::flows::{
+    Flow,
+    FlowId,
+    Metadata,
+    ProtocolId,
 };
 use sqlx::sqlite::SqliteConnectOptions;
 use uuid::Uuid;
@@ -89,7 +88,7 @@ impl<'a> Transaction<'a> {
             "#,
             key
         )
-        .fetch_optional(&mut *self.transaction)
+        .fetch_optional(self.transaction.as_mut())
         .await?
         else {
             return Ok(None);
@@ -108,55 +107,73 @@ impl<'a> Transaction<'a> {
             key,
             value,
         )
-        .execute(&mut *self.transaction)
+        .execute(self.transaction.as_mut())
         .await?;
         Ok(())
     }
 
-    pub async fn create_flow(
-        &mut self,
-        flow_id: Uuid,
-        destination_address: &str,
-        destination_port: u16,
-        protocol: u16,
-        timestamp: DateTime<FixedOffset>,
-        metadata: &Metadata,
-    ) -> Result<(), Error> {
-        let metadata = serde_json::to_value(metadata)?;
+    pub async fn create_flow(&mut self, flow: &Flow) -> Result<(), Error> {
+        let protocol = flow.protocol.map(|protocol| protocol.0);
+        let metadata = serde_json::to_value(&flow.metadata)?;
         sqlx::query!(
             r#"
             INSERT INTO flow (flow_id, destination_address, destination_port, protocol, timestamp, metadata)
             VALUES (?, ?, ?, ?, ?, ?)
             "#,
-            flow_id,
-            destination_address,
-            destination_port,
+            flow.flow_id.0,
+            flow.destination_address,
+            flow.destination_port,
             protocol,
-            timestamp,
+            flow.timestamp,
             metadata,
         )
-        .execute(&mut *self.transaction)
+        .execute(self.transaction.as_mut())
         .await?;
         Ok(())
     }
-}
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-#[serde(transparent)]
-pub struct Metadata {
-    inner: HashMap<String, serde_json::Value>,
-}
-
-impl Deref for Metadata {
-    type Target = HashMap<String, serde_json::Value>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    pub async fn get_flows(
+        &mut self,
+        after: Option<DateTime<FixedOffset>>,
+        before: Option<DateTime<FixedOffset>>,
+    ) -> Result<Vec<Flow>, Error> {
+        sqlx::query!(
+            r#"
+            SELECT
+                flow_id as "flow_id: Uuid",
+                destination_address,
+                destination_port as "destination_port: u16",
+                protocol as "protocol: Uuid",
+                timestamp as "timestamp: DateTime<FixedOffset>",
+                metadata as "metadata: serde_json::Value"
+            FROM flow
+            WHERE
+                ? > timestamp
+                AND timestamp < ?
+            "#,
+            after,
+            before,
+        )
+        .fetch_all(self.transaction.as_mut())
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(Flow {
+                flow_id: FlowId(row.flow_id),
+                destination_address: row.destination_address,
+                destination_port: row.destination_port,
+                protocol: row.protocol.map(ProtocolId),
+                timestamp: row.timestamp,
+                metadata: metadata_from_row(row.metadata)?,
+            })
+        })
+        .collect::<Result<Vec<Flow>, Error>>()
     }
 }
 
-impl DerefMut for Metadata {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
+fn metadata_from_row(metadata: Option<serde_json::Value>) -> Result<Metadata, Error> {
+    Ok(metadata
+        .map(|metadata| serde_json::from_value(metadata))
+        .transpose()?
+        .unwrap_or_default())
 }

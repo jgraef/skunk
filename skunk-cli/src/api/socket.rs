@@ -16,11 +16,13 @@ use skunk_api_protocol::{
         ClientMessage,
         ServerHello,
         ServerMessage,
+        SocketId,
     },
     PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc;
 use tracing::Instrument;
+use uuid::Uuid;
 
 use super::{
     Context,
@@ -60,7 +62,11 @@ impl Reactor {
     async fn run(mut self) -> Result<(), Error> {
         // register command sender in context
         let (command_tx, mut command_rx) = mpsc::channel(16);
-        let socket_id = self.context.connect_socket(Sender { tx: command_tx });
+        let socket_id = SocketId::__from_uuid(Uuid::new_v4());
+        self.context.connect_socket(Sender {
+            tx: command_tx,
+            socket_id,
+        });
 
         // send hello
         self.socket
@@ -151,6 +157,7 @@ pub enum Command {
 #[derive(Clone, Debug)]
 pub struct Sender {
     tx: mpsc::Sender<Command>,
+    socket_id: SocketId,
 }
 
 impl Sender {
@@ -164,6 +171,10 @@ impl Sender {
 
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
+    }
+
+    pub fn socket_id(&self) -> SocketId {
+        self.socket_id
     }
 }
 

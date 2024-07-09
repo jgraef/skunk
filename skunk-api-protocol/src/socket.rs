@@ -11,9 +11,11 @@ use uuid::Uuid;
 #[serde(transparent)]
 pub struct SocketId(Uuid);
 
-impl From<Uuid> for SocketId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
+impl SocketId {
+    /// This is a private API
+    #[doc(hidden)]
+    pub fn __from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
     }
 }
 

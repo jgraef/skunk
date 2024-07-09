@@ -7,7 +7,7 @@ CREATE TABLE flow (
     flow_id UUID NOT NULL PRIMARY KEY,
     destination_address TEXT NOT NULL,
     destination_port INT NOT NULL,
-    protocol SMALLINT NOT NULL,
+    protocol UUID,
     timestamp DATETIME NOT NULL,
     metadata JSONB
 );

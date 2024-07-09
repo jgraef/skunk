@@ -54,7 +54,11 @@ pub mod platform {
         time::Duration,
     };
 
-    use futures_util::{Future, FutureExt, Stream};
+    use futures_util::{
+        Future,
+        FutureExt,
+        Stream,
+    };
 
     pub fn spawn_local<F>(future: F)
     where
@@ -96,7 +100,7 @@ pub mod platform {
 
     impl Interval {
         pub fn poll_tick(&mut self, cx: &mut Context) -> Poll<()> {
-            Pin::new(&mut self.inner).poll_next(cx).map(|_|())
+            Pin::new(&mut self.inner).poll_next(cx).map(|_| ())
         }
     }
 }
