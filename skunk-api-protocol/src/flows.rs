@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use chrono::{
     DateTime,
     FixedOffset,
@@ -16,6 +14,7 @@ use crate::{
     util::{
         api_request,
         api_response,
+        sqlx_json_type,
     },
 };
 
@@ -23,6 +22,7 @@ use crate::{
 pub struct GetFlowsRequest {
     pub after: Option<DateTime<FixedOffset>>,
     pub before: Option<DateTime<FixedOffset>>,
+    pub limit: Option<usize>,
     pub subscribe: Option<SocketId>,
 }
 
@@ -36,9 +36,11 @@ pub struct GetFlowsResponse {
 api_response!(GetFlowsResponse);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type), sqlx(transparent))]
 pub struct FlowId(pub Uuid);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type), sqlx(transparent))]
 pub struct ProtocolId(pub Uuid);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,3 +58,5 @@ pub struct Flow {
 pub struct Metadata {
     inner: IndexMap<String, serde_json::Value>,
 }
+
+sqlx_json_type!(Metadata);

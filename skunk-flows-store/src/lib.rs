@@ -14,7 +14,10 @@ use skunk_api_protocol::flows::{
     Metadata,
     ProtocolId,
 };
-use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{
+    sqlite::SqliteConnectOptions,
+    types::Json,
+};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -76,13 +79,18 @@ impl<'a> Transaction<'a> {
         Ok(())
     }
 
-    pub async fn get_metadata<T: for<'de> Deserialize<'de>>(
+    pub async fn get_metadata<T: for<'de> Deserialize<'de> + Unpin + Send>(
         &mut self,
         key: &str,
     ) -> Result<Option<T>, Error> {
-        let Some(row) = sqlx::query!(
+        struct Row<T> {
+            value: Json<T>,
+        }
+
+        Ok(sqlx::query_as!(
+            Row,
             r#"
-            SELECT value as "value: serde_json::Value"
+            SELECT value as "value: _"
             FROM metadata
             WHERE key = ?
             "#,
@@ -90,14 +98,16 @@ impl<'a> Transaction<'a> {
         )
         .fetch_optional(self.transaction.as_mut())
         .await?
-        else {
-            return Ok(None);
-        };
-        Ok(serde_json::from_value(row.value)?)
+        .map(|row| row.value.0))
     }
 
-    pub async fn put_metadata<T: Serialize>(&mut self, key: &str, value: &T) -> Result<(), Error> {
-        let value = serde_json::to_value(value)?;
+    pub async fn put_metadata<T: Serialize + Sync>(
+        &mut self,
+        key: &str,
+        value: &T,
+    ) -> Result<(), Error> {
+        let value = Json(value);
+
         sqlx::query!(
             r#"
             INSERT INTO metadata (key, value)
@@ -109,12 +119,13 @@ impl<'a> Transaction<'a> {
         )
         .execute(self.transaction.as_mut())
         .await?;
+
         Ok(())
     }
 
     pub async fn create_flow(&mut self, flow: &Flow) -> Result<(), Error> {
         let protocol = flow.protocol.map(|protocol| protocol.0);
-        let metadata = serde_json::to_value(&flow.metadata)?;
+
         sqlx::query!(
             r#"
             INSERT INTO flow (flow_id, destination_address, destination_port, protocol, timestamp, metadata)
@@ -125,7 +136,7 @@ impl<'a> Transaction<'a> {
             flow.destination_port,
             protocol,
             flow.timestamp,
-            metadata,
+            flow.metadata,
         )
         .execute(self.transaction.as_mut())
         .await?;
@@ -136,7 +147,14 @@ impl<'a> Transaction<'a> {
         &mut self,
         after: Option<DateTime<FixedOffset>>,
         before: Option<DateTime<FixedOffset>>,
+        limit: Option<usize>,
     ) -> Result<Vec<Flow>, Error> {
+        // note: a negative value in the LIMIT clause will cause sqlite to ignore the
+        // limit
+        let limit = limit
+            .and_then(|limit| i32::try_from(limit).ok())
+            .unwrap_or(-1);
+
         sqlx::query!(
             r#"
             SELECT
@@ -145,14 +163,18 @@ impl<'a> Transaction<'a> {
                 destination_port as "destination_port: u16",
                 protocol as "protocol: Uuid",
                 timestamp as "timestamp: DateTime<FixedOffset>",
-                metadata as "metadata: serde_json::Value"
+                metadata as "metadata: Metadata"
             FROM flow
             WHERE
-                ? > timestamp
-                AND timestamp < ?
+                (?1 > timestamp OR ?1 IS NULL)
+                AND
+                (timestamp < ?2 OR ?2 IS NULL)
+            ORDER BY timestamp
+            LIMIT ?3
             "#,
             after,
             before,
+            limit,
         )
         .fetch_all(self.transaction.as_mut())
         .await?
@@ -164,16 +186,9 @@ impl<'a> Transaction<'a> {
                 destination_port: row.destination_port,
                 protocol: row.protocol.map(ProtocolId),
                 timestamp: row.timestamp,
-                metadata: metadata_from_row(row.metadata)?,
+                metadata: row.metadata.unwrap_or_default(),
             })
         })
         .collect::<Result<Vec<Flow>, Error>>()
     }
-}
-
-fn metadata_from_row(metadata: Option<serde_json::Value>) -> Result<Metadata, Error> {
-    Ok(metadata
-        .map(|metadata| serde_json::from_value(metadata))
-        .transpose()?
-        .unwrap_or_default())
 }

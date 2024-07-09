@@ -54,6 +54,46 @@ macro_rules! api_response {
     };
 }
 
+macro_rules! sqlx_json_type {
+    ($ty:ty) => {
+        #[cfg(feature = "sqlx")]
+        impl<DB: sqlx::Database> sqlx::Type<DB> for $ty
+        where
+            sqlx::types::Json<$ty>: sqlx::Type<DB>,
+        {
+            fn type_info() -> <DB as sqlx::Database>::TypeInfo {
+                <sqlx::types::Json<$ty> as sqlx::Type<DB>>::type_info()
+            }
+        }
+
+        #[cfg(feature = "sqlx")]
+        impl<'q, DB: sqlx::Database> sqlx::Encode<'q, DB> for $ty
+        where
+            for<'a> sqlx::types::Json<&'a $ty>: sqlx::Encode<'q, DB>,
+        {
+            fn encode_by_ref(
+                &self,
+                buf: &mut <DB as sqlx::database::HasArguments<'q>>::ArgumentBuffer,
+            ) -> sqlx::encode::IsNull {
+                sqlx::Encode::<'q, DB>::encode_by_ref(&sqlx::types::Json(self), buf)
+            }
+        }
+
+        #[cfg(feature = "sqlx")]
+        impl<'r, DB: sqlx::Database> sqlx::Decode<'r, DB> for $ty
+        where
+            sqlx::types::Json<$ty>: sqlx::Decode<'r, DB>,
+        {
+            fn decode(
+                value: <DB as sqlx::database::HasValueRef<'r>>::ValueRef,
+            ) -> Result<Self, sqlx::error::BoxDynError> {
+                Ok(<sqlx::types::Json<$ty> as sqlx::Decode<'r, DB>>::decode(value)?.0)
+            }
+        }
+    };
+}
+
 pub(crate) use api_error;
 pub(crate) use api_request;
 pub(crate) use api_response;
+pub(crate) use sqlx_json_type;

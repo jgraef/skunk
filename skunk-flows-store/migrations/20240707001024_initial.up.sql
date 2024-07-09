@@ -12,6 +12,8 @@ CREATE TABLE flow (
     metadata JSONB
 );
 
+CREATE INDEX index_flow_timestamp ON flow(timestamp);
+
 CREATE TABLE message (
     message_id UUID NOT NULL PRIMARY KEY,
     flow_id UUID NOT NULL,
@@ -22,6 +24,8 @@ CREATE TABLE message (
 
     FOREIGN KEY(flow_id) REFERENCES flow(flow_id)
 );
+
+CREATE INDEX index_message_timestamp ON message(timestamp);
 
 CREATE TABLE artifact (
     artifact_id UUID NOT NULL PRIMARY KEY,
@@ -36,6 +40,9 @@ CREATE TABLE artifact (
     FOREIGN KEY(flow_id) REFERENCES flow(flow_id),
     FOREIGN KEY(hash) REFERENCES artifact_blob(hash)
 );
+
+CREATE INDEX index_artifact_mime_type ON artifact(mime_type);
+CREATE INDEX index_artifact_file_name ON artifact(file_name);
 
 CREATE TABLE artifact_blob (
     hash BLOB NOT NULL PRIMARY KEY,

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies.skunk-api-protocol]
 path = "../skunk-api-protocol"
+features = ["sqlx"]
 
 [dependencies]
 chrono = "0.4.38"

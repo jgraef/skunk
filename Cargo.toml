@@ -13,4 +13,4 @@ members = [
 ]
 
 [patch.crates-io]
-reqwest-websocket = { git = "https://github.com/jgraef/reqwest-websocket.git" }
+reqwest-websocket = { git = "https://github.com/jgraef/reqwest-websocket.git", branch = "wasm-rewrite" }
