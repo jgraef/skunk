@@ -7,17 +7,15 @@ use serde::{
 };
 use uuid::Uuid;
 
+use crate::flow::Flow;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SocketId(Uuid);
+pub struct SocketId(pub Uuid);
 
-impl SocketId {
-    /// This is a private API
-    #[doc(hidden)]
-    pub fn __from_uuid(uuid: Uuid) -> Self {
-        Self(uuid)
-    }
-}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SubscriptionId(pub Uuid);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClientHello {
@@ -36,15 +34,16 @@ pub struct ServerHello {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
-    HotReload,
+    ReloadUi,
     Pong,
+    BeginFlow {
+        subscription_id: SubscriptionId,
+        flow: Flow,
+    },
     // todo
     Interrupt {
         message_id: Uuid,
         // todo: request/response/etc.
-    },
-    Flow {
-        // todo
     },
 }
 

@@ -1,4 +1,4 @@
-mod flows;
+mod flow;
 mod socket;
 
 use std::{
@@ -10,7 +10,7 @@ use axum::{
     routing,
     Router,
 };
-use flows::Flows;
+use flow::Flows;
 use parking_lot::RwLock;
 use skunk_api_protocol::{
     error::{
@@ -73,7 +73,7 @@ impl Builder {
 
         Router::default()
             .route("/ws", routing::get(socket::handle))
-            .nest("/flows", flows::router())
+            .nest("/flows", flow::router())
             .route(
                 "/settings/tls/ca.cert.pem",
                 routing::get(|| async { "TODO" }),

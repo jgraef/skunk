@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::{
     extract::{
         ws::Message,
@@ -11,12 +13,14 @@ use serde::{
     Serialize,
 };
 use skunk_api_protocol::{
+    flow::Flow,
     socket::{
         ClientHello,
         ClientMessage,
         ServerHello,
         ServerMessage,
         SocketId,
+        SubscriptionId,
     },
     PROTOCOL_VERSION,
 };
@@ -62,7 +66,7 @@ impl Reactor {
     async fn run(mut self) -> Result<(), Error> {
         // register command sender in context
         let (command_tx, mut command_rx) = mpsc::channel(16);
-        let socket_id = SocketId::__from_uuid(Uuid::new_v4());
+        let socket_id = SocketId(Uuid::new_v4());
         self.context.connect_socket(Sender {
             tx: command_tx,
             socket_id,
@@ -115,7 +119,7 @@ impl Reactor {
 
                 // hot-reload signal
                 _ = reload_ui.triggered() => {
-                    self.socket.send(&ServerMessage::HotReload).await?;
+                    self.socket.send(&ServerMessage::ReloadUi).await?;
                 }
             }
         }
@@ -181,6 +185,49 @@ impl Sender {
 #[derive(Debug, thiserror::Error)]
 #[error("Websocket connection closed")]
 pub struct Closed;
+
+#[derive(Debug, Default)]
+pub struct Subscriptions {
+    inner: HashMap<(SocketId, SubscriptionId), Sender>,
+}
+
+impl Subscriptions {
+    pub fn insert(&mut self, subscription_id: SubscriptionId, socket: Sender) {
+        self.inner
+            .insert((socket.socket_id, subscription_id), socket);
+    }
+
+    async fn for_each(
+        &mut self,
+        mut f: impl FnMut(SubscriptionId) -> ServerMessage,
+    ) -> Result<(), Error> {
+        let mut remove = vec![];
+
+        for ((socket_id, subscription_id), sender) in self.inner.iter_mut() {
+            let message = f(*subscription_id);
+
+            if let Err(Closed) = sender.send_message(message).await {
+                remove.push((*socket_id, *subscription_id));
+            }
+        }
+
+        for key in remove {
+            self.inner.remove(&key);
+        }
+
+        Ok(())
+    }
+
+    pub async fn begin_flow(&mut self, flow: &Flow) -> Result<(), Error> {
+        self.for_each(|subscription_id| {
+            ServerMessage::BeginFlow {
+                subscription_id,
+                flow: flow.clone(),
+            }
+        })
+        .await
+    }
+}
 
 // Wrapper around axum's WebSocket to send and receive msgpack-encoded messages
 struct WebSocket {

@@ -8,17 +8,15 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use skunk_api_protocol::flows::{
+use skunk_api_protocol::flow::{
     Flow,
     FlowId,
     Metadata,
-    ProtocolId,
 };
 use sqlx::{
     sqlite::SqliteConnectOptions,
     types::Json,
 };
-use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 #[error("flows store error")]
@@ -90,7 +88,7 @@ impl<'a> Transaction<'a> {
         Ok(sqlx::query_as!(
             Row,
             r#"
-            SELECT value as "value: _"
+            SELECT value AS "value: _"
             FROM metadata
             WHERE key = ?
             "#,
@@ -124,17 +122,14 @@ impl<'a> Transaction<'a> {
     }
 
     pub async fn create_flow(&mut self, flow: &Flow) -> Result<(), Error> {
-        let protocol = flow.protocol.map(|protocol| protocol.0);
-
         sqlx::query!(
             r#"
-            INSERT INTO flow (flow_id, destination_address, destination_port, protocol, timestamp, metadata)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO flow (flow_id, parent_id, protocol, timestamp, metadata)
+            VALUES (?, ?, ?, ?, ?)
             "#,
-            flow.flow_id.0,
-            flow.destination_address,
-            flow.destination_port,
-            protocol,
+            flow.flow_id,
+            flow.parent,
+            flow.protocol,
             flow.timestamp,
             flow.metadata,
         )
@@ -145,6 +140,7 @@ impl<'a> Transaction<'a> {
 
     pub async fn get_flows(
         &mut self,
+        parent_id: Option<FlowId>,
         after: Option<DateTime<FixedOffset>>,
         before: Option<DateTime<FixedOffset>>,
         limit: Option<usize>,
@@ -158,20 +154,22 @@ impl<'a> Transaction<'a> {
         sqlx::query!(
             r#"
             SELECT
-                flow_id as "flow_id: Uuid",
-                destination_address,
-                destination_port as "destination_port: u16",
-                protocol as "protocol: Uuid",
-                timestamp as "timestamp: DateTime<FixedOffset>",
-                metadata as "metadata: Metadata"
+                flow_id AS "flow_id: FlowId",
+                parent_id AS "parent_id: FlowId",
+                protocol AS "protocol: String",
+                timestamp AS "timestamp: DateTime<FixedOffset>",
+                metadata AS "metadata: Metadata"
             FROM flow
             WHERE
-                (?1 > timestamp OR ?1 IS NULL)
+                (parent_id = ?1 OR ?1 IS NULL)
                 AND
-                (timestamp < ?2 OR ?2 IS NULL)
-            ORDER BY timestamp
-            LIMIT ?3
+                (?2 > timestamp OR ?2 IS NULL)
+                AND
+                (timestamp < ?3 OR ?3 IS NULL)
+            ORDER BY timestamp ASC
+            LIMIT ?4
             "#,
+            parent_id,
             after,
             before,
             limit,
@@ -181,10 +179,9 @@ impl<'a> Transaction<'a> {
         .into_iter()
         .map(|row| {
             Ok(Flow {
-                flow_id: FlowId(row.flow_id),
-                destination_address: row.destination_address,
-                destination_port: row.destination_port,
-                protocol: row.protocol.map(ProtocolId),
+                flow_id: row.flow_id,
+                parent: row.parent_id,
+                protocol: row.protocol,
                 timestamp: row.timestamp,
                 metadata: row.metadata.unwrap_or_default(),
             })

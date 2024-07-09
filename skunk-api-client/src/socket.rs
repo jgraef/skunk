@@ -41,6 +41,7 @@ use tokio::sync::{
 use url::Url;
 
 use crate::{
+    flow,
     util::platform::{
         interval,
         sleep,
@@ -85,7 +86,7 @@ pub(crate) struct Reactor {
     command_rx: mpsc::Receiver<Command>,
     reload_tx: trigger::Sender,
     status_tx: watch::Sender<Status>,
-    flows_tx: Option<mpsc::Sender<()>>,
+    flows_tx: Option<mpsc::Sender<flow::Event>>,
 }
 
 impl Reactor {
@@ -218,11 +219,24 @@ impl<'a> ReactorConnection<'a> {
         tracing::debug!(?message, "received");
 
         match message {
-            ServerMessage::HotReload => {
+            ServerMessage::ReloadUi => {
                 self.reactor.reload_tx.trigger();
             }
             ServerMessage::Pong => {
                 self.ping_timeout.clear();
+            }
+            ServerMessage::BeginFlow {
+                subscription_id: _,
+                flow,
+            } => {
+                // todo: Our implementation only supports one subscription at a time right now.
+
+                if let Some(flows_tx) = &mut self.reactor.flows_tx {
+                    if let Err(_) = flows_tx.send(flow::Event::BeginFlow { flow }).await {
+                        // the flows receiver has been dropped.
+                        self.reactor.flows_tx = None;
+                    }
+                }
             }
             ServerMessage::Interrupt { message_id } => {
                 // todo: for now we'll just send a Continue back
@@ -230,14 +244,6 @@ impl<'a> ReactorConnection<'a> {
                 self.socket
                     .send(&ClientMessage::Continue { message_id })
                     .await?;
-            }
-            ServerMessage::Flow { .. } => {
-                if let Some(flows_tx) = &mut self.reactor.flows_tx {
-                    if let Err(_) = flows_tx.send(()).await {
-                        // the flows receiver has been dropped.
-                        self.reactor.flows_tx = None;
-                    }
-                }
             }
         }
 

@@ -10,7 +10,10 @@ use serde::{
 use uuid::Uuid;
 
 use crate::{
-    socket::SocketId,
+    socket::{
+        SocketId,
+        SubscriptionId,
+    },
     util::{
         api_request,
         api_response,
@@ -20,13 +23,20 @@ use crate::{
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetFlowsRequest {
+    pub parent: Option<FlowId>,
     pub after: Option<DateTime<FixedOffset>>,
     pub before: Option<DateTime<FixedOffset>>,
     pub limit: Option<usize>,
-    pub subscribe: Option<SocketId>,
+    pub subscribe: Option<Subscribe>,
 }
 
 api_request!(GetFlowsRequest);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Subscribe {
+    pub socket_id: SocketId,
+    pub subscription_id: SubscriptionId,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetFlowsResponse {
@@ -39,16 +49,11 @@ api_response!(GetFlowsResponse);
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type), sqlx(transparent))]
 pub struct FlowId(pub Uuid);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type), sqlx(transparent))]
-pub struct ProtocolId(pub Uuid);
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Flow {
     pub flow_id: FlowId,
-    pub destination_address: String,
-    pub destination_port: u16,
-    pub protocol: Option<ProtocolId>,
+    pub parent: Option<FlowId>,
+    pub protocol: Option<String>,
     pub timestamp: DateTime<FixedOffset>,
     pub metadata: Metadata,
 }

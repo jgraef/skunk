@@ -67,6 +67,10 @@ impl Client {
     pub fn status(&self) -> watch::Receiver<Status> {
         self.reactor.status_rx.clone()
     }
+
+    pub async fn flows(&self) {
+        todo!();
+    }
 }
 
 #[derive(Clone, Debug)]

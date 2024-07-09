@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
 mod client;
 mod error;
+mod flow;
 mod socket;
 mod util;
 
