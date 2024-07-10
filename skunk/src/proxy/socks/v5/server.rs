@@ -1,3 +1,7 @@
+//! SOCKS Protocol Version 5
+//!
+//! [RFC 1928](https://datatracker.ietf.org/doc/html/rfc1928)
+
 use std::{
     net::{
         IpAddr,
@@ -255,6 +259,7 @@ where
 /// # TODO
 ///
 /// implement this.
+#[derive(Debug)]
 pub struct Associate<S, A>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -285,6 +290,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Connected<S, A>
 where
     S: AsyncRead + AsyncWrite + Unpin,

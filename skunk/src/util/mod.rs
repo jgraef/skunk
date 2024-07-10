@@ -2,7 +2,7 @@
 
 pub(crate) mod boolean;
 pub mod crc;
-pub(crate) mod error;
+pub mod error;
 pub mod io;
 pub mod ordered_multimap;
 

@@ -9,12 +9,15 @@ use lazy_static::lazy_static;
 use semver::Version;
 use skunk::{
     address::TcpAddress,
+    connect::{
+        Connect,
+        ConnectTcp,
+    },
     protocol::{
         http,
         tls,
     },
     proxy::{
-        fn_proxy,
         pcap::{
             self,
             interface::Interface,
@@ -25,7 +28,10 @@ use skunk::{
         Passthrough,
         Proxy,
     },
-    util::CancellationToken,
+    util::{
+        error::ResultExt,
+        CancellationToken,
+    },
 };
 use tokio::{
     net::TcpStream,
@@ -151,18 +157,46 @@ impl App {
 
         if args.socks.enabled {
             let shutdown = shutdown.clone();
+
             join_set.spawn(async move {
                 // run the SOCKS server. `proxy` will handle connections. The default
                 // [`Connect`][skunk::connect::Connect] (i.e.
                 // [`ConnectTcp`][skunk::connect::ConnectTcp]) is used.
-                args.socks
-                    .builder()?
-                    .with_graceful_shutdown(shutdown)
-                    .with_proxy(fn_proxy(move |incoming, outgoing| {
-                        proxy(tls.clone(), filter.clone(), incoming, outgoing)
-                    }))
-                    .serve()
-                    .await?;
+                let mut listener = args.socks.builder()?.listen().await?;
+
+                let mut join_set = JoinSet::default();
+
+                loop {
+                    let request = tokio::select! {
+                        _ = shutdown.cancelled() => break,
+                        request_res = listener.next() => request_res?,
+                    };
+
+                    match ConnectTcp.connect(request.destination_address()).await {
+                        Ok(outgoing) => {
+                            let bind_address = outgoing.local_addr().unwrap().into();
+                            let incoming = request.accept(bind_address).await?;
+                            let tls = tls.clone();
+                            let filter = filter.clone();
+                            let shutdown = shutdown.clone();
+
+                            join_set.spawn(async move {
+                                tokio::select! {
+                                    _ = shutdown.cancelled() => {},
+                                    result = proxy(tls, filter, incoming, outgoing) => {
+                                        let _ = result.log_error();
+                                    }
+                                }
+                            });
+                        }
+                        Err(_) => {
+                            request.reject(None);
+                        }
+                    }
+                }
+
+                while let Some(_) = join_set.join_next().await {}
+
                 Ok::<(), Error>(())
             });
         }
@@ -216,7 +250,9 @@ impl App {
         }
 
         // join all tasks
-        while let Some(()) = join_set.join_next().await.transpose()?.transpose()? {}
+        while let Some(result) = join_set.join_next().await {
+            let _ = result.log_error();
+        }
 
         Ok(())
     }

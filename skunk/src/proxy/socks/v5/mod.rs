@@ -145,6 +145,7 @@ impl From<AddressType> for u8 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reply {
     Succeeded,
     Failure(RejectReason),
@@ -185,6 +186,7 @@ impl From<RejectReason> for Reply {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RejectReason {
     GeneralFailure,
     NotAllowed,

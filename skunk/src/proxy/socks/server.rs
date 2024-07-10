@@ -5,7 +5,6 @@
 use std::{
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{
         Context,
         Poll,
@@ -23,8 +22,11 @@ use tokio::{
         TcpListener,
         TcpStream,
     },
+    sync::{
+        mpsc,
+        oneshot,
+    },
 };
-use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::{
@@ -45,16 +47,7 @@ use super::{
 };
 use crate::{
     address::TcpAddress,
-    connect::{
-        Connect,
-        ConnectTcp,
-    },
-    proxy::{
-        DestinationAddress,
-        Passthrough,
-        Proxy,
-    },
-    util::error::ResultExt,
+    proxy::DestinationAddress,
 };
 
 /// An incoming connection.
@@ -66,6 +59,7 @@ use crate::{
 /// actually sent.
 ///
 /// [`flush`]: tokio::io::AsyncWriteExt::flush
+#[derive(Debug)]
 pub struct Incoming {
     inner: Connected<BufStream<TcpStream>, MaybeAuth>,
     destination_address: TcpAddress,
@@ -112,41 +106,33 @@ impl AsyncWrite for Incoming {
 }
 
 /// Builder used to create a SOCKS server.
-pub struct Builder<C = ConnectTcp, P = Passthrough> {
+pub struct Builder {
     bind_address: SocketAddr,
-    shutdown: CancellationToken,
     auth: MaybeAuth,
-    connect: C,
-    proxy: P,
 }
 
-impl<C: Default, P: Default> Default for Builder<C, P> {
+impl Default for Builder {
     fn default() -> Self {
         Self {
             bind_address: ([127, 0, 0, 1], DEFAULT_PORT).into(),
-            shutdown: Default::default(),
             auth: MaybeAuth::NoAuth,
-            connect: Default::default(),
-            proxy: Default::default(),
         }
     }
 }
 
-impl<C, P> Builder<C, P> {
+impl Builder {
     /// Specify a bind address. Defaults to `127.0.0.1:9090`.
     pub fn with_bind_address(mut self, bind_address: impl Into<SocketAddr>) -> Self {
         self.bind_address = bind_address.into();
         self
     }
 
-    /// Pass in a [`CancellationToken`] that can be used to shutdown the server.
-    pub fn with_graceful_shutdown(mut self, shutdown: CancellationToken) -> Self {
-        self.shutdown = shutdown;
-        self
-    }
-
     /// Specify username and password for authentication. By default no
     /// authentication is used.
+    ///
+    /// # TODO
+    ///
+    /// This is not implemented yet.
     pub fn with_password(mut self, username: String, password: String) -> Self {
         self.auth = MaybeAuth::Password {
             username: username.into_bytes(),
@@ -155,116 +141,112 @@ impl<C, P> Builder<C, P> {
         self
     }
 
-    /// Specify a [connector][Connect]. This is used to establish connections to
-    /// the destination as requested by the proxy client. By default
-    /// [`ConnectTcp`] will be used.
-    pub fn with_connect<C2>(self, connect: C2) -> Builder<C2, P>
-    where
-        C2: Connect + Clone + Send + 'static,
-    {
-        Builder {
-            bind_address: self.bind_address,
-            shutdown: self.shutdown,
-            auth: self.auth,
-            connect,
-            proxy: self.proxy,
-        }
-    }
+    /// Listen for connection requests
+    pub async fn listen(self) -> Result<ConnectionRequests, Error> {
+        let listener = TcpListener::bind(&self.bind_address).await?;
 
-    /// Specify a [`Proxy`] that is used to forward incoming data to the
-    /// destination and vice-versa. By default this uses [`Passthrough`] that
-    /// just blindly passes through the data without inspecting or altering it.
-    pub fn with_proxy<P2>(self, proxy: P2) -> Builder<C, P2>
-    where
-        C: Connect,
-        P2: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
-    {
-        Builder {
-            bind_address: self.bind_address,
-            shutdown: self.shutdown,
-            auth: self.auth,
-            connect: self.connect,
-            proxy,
-        }
-    }
+        let (connection_requests_tx, connection_requests_rx) = mpsc::channel(16);
 
-    /// Run the server.
-    pub async fn serve(self) -> Result<(), Error>
-    where
-        C: Connect + Clone + Send + 'static,
-        P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
-    {
-        run(
-            self.bind_address,
-            self.shutdown,
-            Arc::new(self.auth),
-            self.connect,
-            self.proxy,
-        )
-        .await?;
-        Ok(())
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((connection, address)) => {
+                        if connection_requests_tx.is_closed() {
+                            break;
+                        }
+
+                        let span = tracing::info_span!("socks", %address);
+                        let connection_requests_tx = connection_requests_tx.clone();
+                        let auth = self.auth.clone();
+
+                        tokio::spawn(
+                            async move {
+                                if let Err(e) =
+                                    handle_connection(connection, auth, connection_requests_tx)
+                                        .await
+                                {
+                                    tracing::error!("{e}");
+                                }
+                            }
+                            .instrument(span),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = connection_requests_tx.send(Err(e.into())).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(ConnectionRequests {
+            connection_requests_rx,
+        })
     }
 }
 
-/// Function that actually runs the server.
-async fn run<C, P>(
-    bind_address: SocketAddr,
-    shutdown: CancellationToken,
-    auth: Arc<MaybeAuth>,
-    connect: C,
-    proxy: P,
-) -> Result<(), Error>
-where
-    P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
-    C: Connect + Clone + Send + 'static,
-{
-    // todo: this should take a `crate::accept::Listen`
+/// Stream of connection requests
+#[derive(Debug)]
+pub struct ConnectionRequests {
+    connection_requests_rx: mpsc::Receiver<Result<ConnectionRequest, Error>>,
+}
 
-    let listener = TcpListener::bind(bind_address).await?;
-
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                let (connection, address) = result?;
-
-                let auth = auth.clone();
-                let shutdown = shutdown.clone();
-                let connect = connect.clone();
-                let proxy = proxy.clone();
-
-                let span = tracing::info_span!("socks", ?address);
-
-                tokio::spawn(async move {
-                    tokio::select!{
-                        result = handle_connection(connection, auth, connect, proxy) => {
-                            let _ = result.log_error();
-                        },
-                        _ = shutdown.cancelled() => {},
-                    }
-                }.instrument(span));
-            },
-            _ = shutdown.cancelled() => {
-                break;
-            },
+impl ConnectionRequests {
+    pub async fn next(&mut self) -> Result<ConnectionRequest, Error> {
+        if let Some(result) = self.connection_requests_rx.recv().await {
+            result
+        }
+        else {
+            Err(Error::Io(std::io::ErrorKind::NotConnected.into()))
         }
     }
+}
 
-    Ok(())
+/// A request to connect to a destination address
+///
+/// Either [`accept`] or [`reject`] the request, taking into account the
+/// [`destination_address`]. If this is dropped, the request will be rejected
+/// with a generic reason.
+///
+/// [`accept`]: [Self::accept]
+/// [`reject`]: [Self::reject]
+/// [`destination_address`]: [Self::destination_address]
+#[derive(Debug)]
+pub struct ConnectionRequest {
+    destination_address: TcpAddress,
+    ack_tx: oneshot::Sender<Result<TcpAddress, RejectReason>>,
+    connection_rx: oneshot::Receiver<Result<Incoming, Error>>,
+}
+
+impl ConnectionRequest {
+    pub fn destination_address(&self) -> &TcpAddress {
+        &self.destination_address
+    }
+
+    pub async fn accept(self, bind_address: TcpAddress) -> Result<Incoming, Error> {
+        let _ = self.ack_tx.send(Ok(bind_address));
+        let connection = self
+            .connection_rx
+            .await
+            .expect("connection_tx dropped without error")?;
+        Ok(connection)
+    }
+
+    pub fn reject(self, reason: impl Into<Option<RejectReason>>) {
+        let _ = self.ack_tx.send(Err(reason
+            .into()
+            .unwrap_or(RejectReason::ConnectionRefused)));
+    }
 }
 
 /// Handle a single connection
-async fn handle_connection<C, P>(
+async fn handle_connection(
     connection: TcpStream,
-    auth: Arc<MaybeAuth>,
-    connect: C,
-    proxy: P,
-) -> Result<(), Error>
-where
-    C: Connect + Clone + Send + 'static,
-    P: Proxy<Incoming, C::Connection> + Clone + Send + 'static,
-{
+    auth: MaybeAuth,
+    connection_requests_tx: mpsc::Sender<Result<ConnectionRequest, Error>>,
+) -> Result<(), Error> {
     let connection = BufStream::new(connection);
-    let request = serve(connection, auth.as_ref()).await?;
+    let request = serve(connection, &auth).await?;
 
     match request {
         Request::Associate(request) => request.reject(RejectReason::CommandNotSupported).await?,
@@ -272,32 +254,38 @@ where
         Request::Connect(request) => {
             let destination_address = request.destination_address().clone();
 
-            // connect to destination
-            let outgoing = match connect.connect(&destination_address).await {
-                Ok(connection) => connection,
-                Err(error) => {
-                    tracing::error!("{error}");
-                    // todo: reply depending on error
-                    request.reject(RejectReason::ConnectionRefused).await?;
-                    return Ok(());
+            let (ack_tx, ack_rx) = oneshot::channel();
+            let (connection_tx, connection_rx) = oneshot::channel();
+
+            // doesn't matter if receiver was dropped, since the ACK will fail
+            let _ = connection_requests_tx
+                .send(Ok(ConnectionRequest {
+                    destination_address: destination_address.clone(),
+                    ack_tx,
+                    connection_rx,
+                }))
+                .await;
+
+            match ack_rx.await {
+                Ok(Ok(bind_address)) => {
+                    // connection request accepted
+                    let result = request.accept(&bind_address).await.map(|connection| {
+                        Incoming {
+                            inner: connection,
+                            destination_address,
+                        }
+                    });
+                    let _ = connection_tx.send(result);
                 }
-            };
-
-            // send reply, that we successfully connected to the target
-            // todo: actually give it the bind address
-            let incoming = request.accept(&destination_address).await?;
-
-            // run proxy
-            let _ = proxy
-                .proxy(
-                    Incoming {
-                        inner: incoming,
-                        destination_address,
-                    },
-                    outgoing,
-                )
-                .await
-                .log_error_with_message("Layer returned an error");
+                Ok(Err(reason)) => {
+                    // connection request rejected with reason
+                    request.reject(reason).await?;
+                }
+                Err(_) => {
+                    // ACK sender dropped
+                    request.reject(RejectReason::ConnectionRefused).await?;
+                }
+            }
         }
     }
 
@@ -305,6 +293,7 @@ where
 }
 
 /// Authentication configuration.
+#[derive(Clone, Debug)]
 pub enum MaybeAuth {
     NoAuth,
     Password {
@@ -344,7 +333,7 @@ impl AuthProvider for MaybeAuth {
                 username: _,
                 password: _,
             } => {
-                todo!();
+                todo!("Implement SOCKS authentication");
             }
         };
 

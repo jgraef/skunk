@@ -57,26 +57,11 @@ pub trait Listen {
     fn accept(&self) -> impl Future<Output = Result<Self::Connection, std::io::Error>> + Send;
 }
 
-/// Accept connections by listening for connections using Tokio.
-pub struct ListenTcp {
-    listener: TcpListener,
-}
-
-impl ListenTcp {
-    pub fn new(listener: TcpListener) -> Self {
-        Self { listener }
-    }
-
-    pub fn into_inner(self) -> TcpListener {
-        self.listener
-    }
-}
-
-impl Listen for ListenTcp {
+impl Listen for TcpListener {
     type Connection = TcpStream;
 
     async fn accept(&self) -> Result<Self::Connection, std::io::Error> {
-        let (conn, _) = self.listener.accept().await?;
+        let (conn, _) = TcpListener::accept(self).await?;
         Ok(conn)
     }
 }

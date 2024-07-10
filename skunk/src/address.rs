@@ -8,6 +8,7 @@ use std::{
         IpAddr,
         Ipv4Addr,
         Ipv6Addr,
+        SocketAddr,
     },
     ops::RangeInclusive,
     str::FromStr,
@@ -138,6 +139,15 @@ impl<'de> Deserialize<'de> for TcpAddress {
     {
         let s: Cow<'de, str> = Deserialize::deserialize(deserializer)?;
         Ok(s.parse().map_err(serde::de::Error::custom)?)
+    }
+}
+
+impl From<SocketAddr> for TcpAddress {
+    fn from(value: SocketAddr) -> Self {
+        Self {
+            host: value.ip().into(),
+            port: value.port(),
+        }
     }
 }
 
