@@ -149,12 +149,16 @@ impl Builder {
 
         tokio::spawn(async move {
             loop {
-                match listener.accept().await {
-                    Ok((connection, address)) => {
-                        if connection_requests_tx.is_closed() {
-                            break;
-                        }
+                let result = tokio::select! {
+                    // terminate, if receiver half is dropped
+                    _ = connection_requests_tx.closed() => break,
 
+                    // wait for connection (or error)
+                    result = listener.accept() => result,
+                };
+
+                match result {
+                    Ok((connection, address)) => {
                         let span = tracing::info_span!("socks", %address);
                         let connection_requests_tx = connection_requests_tx.clone();
                         let auth = self.auth.clone();
