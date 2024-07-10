@@ -16,7 +16,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::Span;
+use tracing::Instrument;
 
 use super::interface::Interface;
 
@@ -166,17 +166,18 @@ impl<'a> Builder<'a> {
                 let _cfg_file = cfg_file;
 
                 tokio::select! {
-                    result = handle_stdout(&span, &mut process.stdout, ready_tx) => {
+                    result = handle_stdout(&mut process.stdout, ready_tx) => {
                         result?;
                     },
                     _ = self.shutdown.cancelled() => {},
                     _ = shutdown.cancelled() => {},
                 };
 
-                tracing::debug!(parent: span, "killing hostapd");
+                tracing::debug!("killing hostapd");
                 process.kill().await?;
                 Ok::<(), Error>(())
             }
+            .instrument(span)
         });
 
         Ok(HostApd {
@@ -217,7 +218,6 @@ impl HostApd {
 }
 
 async fn handle_stdout<S: AsyncRead + Unpin>(
-    span: &Span,
     stream_opt: &mut Option<S>,
     ready_tx: watch::Sender<bool>,
 ) -> Result<(), Error> {
@@ -229,7 +229,7 @@ async fn handle_stdout<S: AsyncRead + Unpin>(
             if line.ends_with("AP-ENABLED") {
                 let _ = ready_tx.send(true);
             }
-            tracing::debug!(parent: span, "{}", line);
+            tracing::debug!("{}", line);
         }
     }
     Ok(())

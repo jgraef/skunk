@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::Debug,
     pin::Pin,
     task::{
@@ -29,6 +30,7 @@ use skunk_api_protocol::{
         ClientMessage,
         ServerHello,
         ServerMessage,
+        SubscriptionId,
         Version,
     },
     PROTOCOL_VERSION,
@@ -86,7 +88,7 @@ pub(crate) struct Reactor {
     command_rx: mpsc::Receiver<Command>,
     reload_tx: trigger::Sender,
     status_tx: watch::Sender<Status>,
-    flows_tx: Option<mpsc::Sender<flow::Event>>,
+    flows_tx: HashMap<SubscriptionId, mpsc::Sender<flow::Event>>,
 }
 
 impl Reactor {
@@ -101,7 +103,7 @@ impl Reactor {
             command_rx,
             reload_tx,
             status_tx,
-            flows_tx: None,
+            flows_tx: HashMap::new(),
         };
 
         let handle = ReactorHandle {
@@ -225,17 +227,24 @@ impl<'a> ReactorConnection<'a> {
             ServerMessage::Pong => {
                 self.ping_timeout.clear();
             }
-            ServerMessage::BeginFlow {
-                subscription_id: _,
-                flow,
+            ServerMessage::FlowEvent {
+                subscription_id,
+                event,
             } => {
                 // todo: Our implementation only supports one subscription at a time right now.
 
-                if let Some(flows_tx) = &mut self.reactor.flows_tx {
-                    if let Err(_) = flows_tx.send(flow::Event::BeginFlow { flow }).await {
+                if let Some(flows_tx) = self.reactor.flows_tx.get_mut(&subscription_id) {
+                    if let Err(_) = flows_tx.send(event).await {
                         // the flows receiver has been dropped.
-                        self.reactor.flows_tx = None;
+                        self.reactor.flows_tx.remove(&subscription_id);
                     }
+                }
+                else {
+                    // we don't have anyone listening to that subscription ID, so we can tell the
+                    // server to unsubscribe us.
+                    self.socket
+                        .send(&ClientMessage::Unsubscribe { subscription_id })
+                        .await?;
                 }
             }
             ServerMessage::Interrupt { message_id } => {
@@ -252,16 +261,24 @@ impl<'a> ReactorConnection<'a> {
 
     async fn handle_command(&mut self, command: Command) -> Result<(), Error> {
         match command {
-            // todo
+            Command::SubscribeFlowEvents {
+                subscription_id,
+                event_tx,
+            } => {
+                self.reactor.flows_tx.insert(subscription_id, event_tx);
+            }
         }
 
-        //Ok(())
+        Ok(())
     }
 }
 
 #[derive(Debug)]
 pub(crate) enum Command {
-    // todo
+    SubscribeFlowEvents {
+        subscription_id: SubscriptionId,
+        event_tx: mpsc::Sender<flow::Event>,
+    },
 }
 
 /// Wrapper around [`reqwest_websocket::WebSocket`] that sends and receives

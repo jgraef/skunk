@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
 use axum::{
     extract::{
@@ -18,24 +21,25 @@ use skunk_api_protocol::{
         NoSuchSocket,
     },
     flow::{
+        Event,
         Flow,
         FlowId,
         GetFlowsRequest,
         GetFlowsResponse,
-        Metadata,
+        Message,
         Subscribe,
     },
-    socket::SubscriptionId,
+    socket::{
+        ServerMessage,
+        SocketId,
+        SubscriptionId,
+    },
 };
 use skunk_flows_store::FlowStore;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use super::{
-    socket::{
-        self,
-        Subscriptions,
-    },
+    socket,
     Context,
     Error,
 };
@@ -90,36 +94,37 @@ impl Flows {
         }
     }
 
-    pub async fn begin_flow(
-        &self,
-        parent: Option<FlowId>,
-        protocol: Option<String>,
-        timestamp: DateTime<FixedOffset>,
-        metadata: Metadata,
-    ) -> Result<FlowId, Error> {
-        let flow_id = FlowId(Uuid::new_v4());
+    pub async fn unsubscribe(&self, socket_id: SocketId, subscription_id: SubscriptionId) {
+        let mut subscriptions = self.subscriptions.write().await;
+        subscriptions.remove(socket_id, subscription_id);
+    }
 
-        let flow = Flow {
-            flow_id,
-            parent,
-            protocol,
-            timestamp,
-            metadata,
-        };
-
+    pub async fn begin_flow(&self, flow: &Flow) -> Result<(), Error> {
         // todo: is this the right ordering, in regards to get_flows?
 
         let mut transaction = self.flow_store.transaction().await?;
-
-        transaction.create_flow(&flow).await?;
-
+        transaction.insert_flow(&flow).await?;
         let mut subscriptions = self.subscriptions.write().await;
-
         transaction.commit().await?;
-
         subscriptions.begin_flow(&flow).await?;
 
-        Ok(flow_id)
+        Ok(())
+    }
+
+    pub async fn emit_message(&self, message: Message) -> Result<(), Error> {
+        let mut transaction = self.flow_store.transaction().await?;
+        transaction.insert_message(&message).await?;
+        let mut subscriptions = self.subscriptions.write().await;
+        transaction.commit().await?;
+        subscriptions.flow_message(&message).await?;
+
+        Ok(())
+    }
+
+    pub async fn end_flow(&self, flow_id: FlowId) -> Result<(), Error> {
+        let mut subscriptions = self.subscriptions.write().await;
+        subscriptions.end_flow(flow_id).await?;
+        Ok(())
     }
 
     pub async fn get_flows(
@@ -142,7 +147,7 @@ impl Flows {
         match (subscriptions, subscribe) {
             (None, None) => {}
             (Some(mut subscriptions), Some((sender, subscription_id))) => {
-                subscriptions.insert(subscription_id, sender);
+                subscriptions.insert(sender, subscription_id);
             }
             _ => unreachable!(),
         }
@@ -152,5 +157,74 @@ impl Flows {
         transaction.commit().await?;
 
         Ok(flows)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Subscriptions {
+    inner: HashMap<(SocketId, SubscriptionId), socket::Sender>,
+}
+
+impl Subscriptions {
+    pub fn insert(&mut self, socket: socket::Sender, subscription_id: SubscriptionId) {
+        self.inner
+            .insert((socket.socket_id(), subscription_id), socket);
+    }
+
+    pub fn remove(&mut self, socket_id: SocketId, subscription_id: SubscriptionId) {
+        self.inner.remove(&(socket_id, subscription_id));
+    }
+
+    async fn for_each(
+        &mut self,
+        mut f: impl FnMut(SubscriptionId) -> ServerMessage,
+    ) -> Result<(), Error> {
+        let mut remove = vec![];
+
+        for ((socket_id, subscription_id), sender) in self.inner.iter_mut() {
+            let message = f(*subscription_id);
+
+            if let Err(socket::Closed) = sender.send_message(message).await {
+                remove.push((*socket_id, *subscription_id));
+            }
+        }
+
+        for key in remove {
+            self.inner.remove(&key);
+        }
+
+        Ok(())
+    }
+
+    pub async fn begin_flow(&mut self, flow: &Flow) -> Result<(), Error> {
+        self.for_each(|subscription_id| {
+            ServerMessage::FlowEvent {
+                subscription_id,
+                event: Event::BeginFlow { flow: flow.clone() },
+            }
+        })
+        .await
+    }
+
+    pub async fn end_flow(&mut self, flow_id: FlowId) -> Result<(), Error> {
+        self.for_each(|subscription_id| {
+            ServerMessage::FlowEvent {
+                subscription_id,
+                event: Event::EndFlow { flow_id },
+            }
+        })
+        .await
+    }
+
+    pub async fn flow_message(&mut self, message: &Message) -> Result<(), Error> {
+        self.for_each(|subscription_id| {
+            ServerMessage::FlowEvent {
+                subscription_id,
+                event: Event::Message {
+                    message: message.clone(),
+                },
+            }
+        })
+        .await
     }
 }

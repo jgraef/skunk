@@ -7,7 +7,10 @@ use serde::{
 };
 use uuid::Uuid;
 
-use crate::flow::Flow;
+use crate::flow::{
+    self,
+    MessageId,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -36,13 +39,12 @@ pub struct ServerHello {
 pub enum ServerMessage {
     ReloadUi,
     Pong,
-    BeginFlow {
+    FlowEvent {
         subscription_id: SubscriptionId,
-        flow: Flow,
+        event: flow::Event,
     },
-    // todo
     Interrupt {
-        message_id: Uuid,
+        message_id: MessageId,
         // todo: request/response/etc.
     },
 }
@@ -50,11 +52,13 @@ pub enum ServerMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     Ping,
-    SubscribeFlows,
+    Unsubscribe {
+        subscription_id: SubscriptionId,
+    },
     Start,
     Stop,
     Continue {
-        message_id: Uuid,
+        message_id: MessageId,
         // todo: modified request/response/etc.
     },
 }

@@ -36,6 +36,8 @@ CREATE TABLE message (
 
 CREATE INDEX index_message_timestamp ON message(timestamp);
 
+
+-- artifacts
 CREATE TABLE artifact (
     artifact_id UUID NOT NULL PRIMARY KEY,
     message_id UUID,
@@ -55,6 +57,5 @@ CREATE INDEX index_artifact_timestamp ON artifact(timestamp);
 CREATE TABLE artifact_blob (
     hash BLOB NOT NULL PRIMARY KEY,
     size INT NOT NULL,
-    data BLOB NOT NULL,
-    metadata JSONB
+    data BLOB NOT NULL
 );

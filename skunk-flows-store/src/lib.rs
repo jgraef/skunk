@@ -11,6 +11,7 @@ use serde::{
 use skunk_api_protocol::flow::{
     Flow,
     FlowId,
+    Message,
     Metadata,
 };
 use sqlx::{
@@ -121,7 +122,7 @@ impl<'a> Transaction<'a> {
         Ok(())
     }
 
-    pub async fn create_flow(&mut self, flow: &Flow) -> Result<(), Error> {
+    pub async fn insert_flow(&mut self, flow: &Flow) -> Result<(), Error> {
         sqlx::query!(
             r#"
             INSERT INTO flow (flow_id, parent_id, protocol, timestamp, metadata)
@@ -132,6 +133,24 @@ impl<'a> Transaction<'a> {
             flow.protocol,
             flow.timestamp,
             flow.metadata,
+        )
+        .execute(self.transaction.as_mut())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_message(&mut self, message: &Message) -> Result<(), Error> {
+        sqlx::query!(
+            r#"
+            INSERT INTO message (message_id, flow_id, kind, timestamp, data, metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+            message.message_id,
+            message.flow_id,
+            message.kind,
+            message.timestamp,
+            message.data,
+            message.metadata,
         )
         .execute(self.transaction.as_mut())
         .await?;

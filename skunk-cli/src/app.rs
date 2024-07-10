@@ -234,7 +234,7 @@ impl App {
 
 /// Proxy connections.
 ///
-/// This will first check if that connection matches any filters. Then it will
+/// This will first check if the connection matches any filters. Then it will
 /// decide using the port whether to decrypt TLS for that connection. Finally it
 /// will run a HTTP server and client to proxy HTTP requests.
 async fn proxy(
