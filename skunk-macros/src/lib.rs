@@ -55,6 +55,7 @@ macro_rules! heck_alias {
     } => {
         $(
             $(#[doc = $doc])?
+            #[proc_macro_error]
             #[proc_macro]
             pub fn $from(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 $to(input)
