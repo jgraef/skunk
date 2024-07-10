@@ -5,8 +5,8 @@ use std::{
 
 use axum::Router;
 use color_eyre::eyre::Error;
-use lazy_static::lazy_static;
 use semver::Version;
+use semver_macro::env_version;
 use skunk::{
     address::TcpAddress,
     connect::{
@@ -49,9 +49,7 @@ use crate::{
 };
 
 pub const APP_NAME: &'static str = std::env!("CARGO_PKG_NAME");
-lazy_static! {
-    pub static ref APP_VERSION: Version = std::env!("CARGO_PKG_VERSION").parse().unwrap();
-}
+pub const APP_VERSION: Version = env_version!("CARGO_PKG_VERSION");
 
 pub struct App {
     options: Options,

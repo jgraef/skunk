@@ -20,8 +20,8 @@ path = "src/main.rs"
 path = "../skunk-api-protocol"
 features = ["axum"]
 
-[dependencies.skunk-flows-store]
-path = "../skunk-flows-store"
+[dependencies.skunk-flow-store]
+path = "../skunk-flow-store"
 
 [dependencies.skunk-util]
 path = "../skunk-util"
@@ -39,12 +39,12 @@ color-eyre = "0.6.3"
 dirs = "5.0.1"
 dotenvy = "0.15.7"
 futures-util = "0.3.30"
-lazy_static = "1.5.0"
 mime = "0.3.17"
 notify = { version = "6.1.1", default-features = false, features = ["fsevent-sys", "macos_fsevent"] }
 parking_lot = "0.12.3"
 rmp-serde = "1.3.0"
 semver = "1.0.23"
+semver-macro = "0.1.0"
 serde = { version = "1.0.201", features = ["derive"] }
 thiserror = "1.0.61"
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal"] }

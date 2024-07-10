@@ -1,3 +1,4 @@
+mod capture;
 mod flow;
 mod socket;
 
@@ -19,7 +20,7 @@ use skunk_api_protocol::{
     },
     socket::SocketId,
 };
-use skunk_flows_store::FlowStore;
+use skunk_flow_store::FlowStore;
 use skunk_util::trigger;
 
 pub const SERVER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
@@ -31,7 +32,7 @@ pub enum Error {
     Decode(#[from] rmp_serde::decode::Error),
     Encode(#[from] rmp_serde::encode::Error),
     Protocol,
-    FlowStore(#[from] skunk_flows_store::Error),
+    FlowStore(#[from] skunk_flow_store::Error),
 }
 
 impl From<Error> for ApiError {
@@ -73,7 +74,8 @@ impl Builder {
 
         Router::default()
             .route("/ws", routing::get(socket::handle))
-            .nest("/flows", flow::router())
+            .nest("/flow", flow::router())
+            .nest("/capture", capture::router())
             .route(
                 "/settings/tls/ca.cert.pem",
                 routing::get(|| async { "TODO" }),

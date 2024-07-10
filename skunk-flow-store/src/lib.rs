@@ -4,6 +4,8 @@ use chrono::{
     DateTime,
     FixedOffset,
 };
+use semver::Version;
+use semver_macro::version;
 use serde::{
     Deserialize,
     Serialize,
@@ -18,6 +20,8 @@ use sqlx::{
     sqlite::SqliteConnectOptions,
     types::Json,
 };
+
+pub const FORMAT_VERSION: Version = version!("0.1.0");
 
 #[derive(Debug, thiserror::Error)]
 #[error("flows store error")]

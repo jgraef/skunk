@@ -15,11 +15,12 @@ use futures_util::{
     SinkExt,
     TryStreamExt,
 };
-use lazy_static::lazy_static;
 use reqwest_websocket::{
     Message,
     RequestBuilderExt,
 };
+use semver::Version;
+use semver_macro::env_version;
 use serde::{
     Deserialize,
     Serialize,
@@ -31,7 +32,6 @@ use skunk_api_protocol::{
         ServerHello,
         ServerMessage,
         SubscriptionId,
-        Version,
     },
     PROTOCOL_VERSION,
 };
@@ -53,9 +53,7 @@ use crate::{
 };
 
 pub const USER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
-lazy_static! {
-    pub static ref CLIENT_VERSION: Version = std::env!("CARGO_PKG_VERSION").parse().unwrap();
-}
+pub const CLIENT_VERSION: Version = env_version!("CARGO_PKG_VERSION");
 
 #[derive(Debug, thiserror::Error)]
 #[error("Reactor error")]

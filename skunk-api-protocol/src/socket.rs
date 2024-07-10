@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-pub use semver::Version;
+use semver::Version;
 use serde::{
     Deserialize,
     Serialize,

@@ -35,7 +35,7 @@ use skunk_api_protocol::{
         SubscriptionId,
     },
 };
-use skunk_flows_store::FlowStore;
+use skunk_flow_store::FlowStore;
 use tokio::sync::RwLock;
 
 use super::{

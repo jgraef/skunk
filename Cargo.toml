@@ -7,10 +7,11 @@ members = [
   "skunk-api-client",
   "skunk-api-protocol",
   "skunk-cli",
-  "skunk-flows-store",
+  "skunk-flow-store",
   "skunk-macros",
   "skunk-ui", "skunk-util",
 ]
 
 [patch.crates-io]
 reqwest-websocket = { git = "https://github.com/jgraef/reqwest-websocket.git", branch = "wasm-rewrite" }
+semver-macro = { git = "https://github.com/jgraef/semver-macro.git" }
