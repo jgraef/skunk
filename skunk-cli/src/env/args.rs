@@ -164,7 +164,7 @@ pub struct ApiArgs {
 
 /// Skunk app command-line options (i.e. command-line arguments without the
 /// actual command to run).
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 pub struct Options {
     /// Path to the skunk configuration directory. Defaults to
     /// `~/.config/gocksec/skunk/`.

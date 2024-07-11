@@ -1,4 +1,5 @@
-mod config_file;
+pub mod args;
+pub mod config;
 mod error;
 
 use std::{
@@ -9,10 +10,17 @@ use std::{
     },
 };
 
-use config_file::ConfigFile;
+use config::ConfigFile;
 use murmur3::murmur3_x64_128;
+use serde::Deserialize;
 
-pub use self::error::Error;
+pub use self::{
+    args::{
+        Args,
+        Options,
+    },
+    error::Error,
+};
 
 /// Default configuration directory relative to the OS's local configuration
 /// directory (e.g. `~/.config`` on Linux).
@@ -25,19 +33,24 @@ pub const CONFIG_FILE: &'static str = "skunk.toml";
 
 pub const DEFAULT_CONFIG: &'static str = include_str!("skunk.default.toml");
 
-pub struct Config {
+#[derive(Clone, Debug)]
+pub struct Environment {
+    options: Options,
     config_dir: PathBuf,
     data_dir: PathBuf,
     config_file: ConfigFile,
 }
 
-impl Config {
-    /// Open the configuration, either with the given `path` as path to the
-    /// configuration directory, or using the default [`CONFIG_DIR_NAME`].
-    pub fn open(config_dir: Option<impl AsRef<Path>>) -> Result<Self, Error> {
+impl Environment {
+    /// Open the configuration, either with the command-line-specified path to
+    /// the configuration directory, or using the default
+    /// [`CONFIG_DIR_NAME`].
+    pub fn from_options(options: Options) -> Result<Self, Error> {
         // determine path to configuration directory.
-        let config_dir = config_dir
-            .map(|path| path.as_ref().to_owned())
+        let config_dir = options
+            .config
+            .as_ref()
+            .map(|path| path.to_owned())
             .or_else(|| dirs::config_local_dir().map(|path| path.join(CONFIG_DIR_NAME)))
             .ok_or(Error::ConfigDirectory)?;
 
@@ -50,18 +63,33 @@ impl Config {
 
         // determine path to data directory
         let data_dir = config_file
-            .data_dir()
-            .map(ToOwned::to_owned)
+            .data_dir()?
             .or_else(|| dirs::data_local_dir().map(|path| path.join(DATA_DIR_NAME)))
             .ok_or(Error::DataDirectory)?;
 
         create_dir_all(&data_dir)?;
 
         Ok(Self {
+            options,
             config_dir,
             data_dir,
             config_file: config_file.load(),
         })
+    }
+
+    pub async fn get_untracked<T: for<'de> Deserialize<'de>>(
+        &self,
+        key: &str,
+    ) -> Result<Option<T>, Error> {
+        self.config_file.get_untracked(key).await
+    }
+
+    pub fn config_relative_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.config_dir.join(path)
+    }
+
+    pub fn data_relative_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.data_dir.join(path)
     }
 }
 

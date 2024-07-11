@@ -39,12 +39,15 @@ use tokio::{
 };
 
 use crate::{
-    args::{
-        Command,
-        Options,
-        ProxyArgs,
+    env::{
+        args::{
+            Command,
+            Options,
+            ProxyArgs,
+        },
+        config::TlsConfig,
+        Environment,
     },
-    config::Config,
     util::serve_ui::ServeUi,
 };
 
@@ -52,14 +55,13 @@ pub const APP_NAME: &'static str = std::env!("CARGO_PKG_NAME");
 pub const APP_VERSION: Version = env_version!("CARGO_PKG_VERSION");
 
 pub struct App {
-    options: Options,
-    config: Config,
+    environment: Environment,
 }
 
 impl App {
     pub fn new(options: Options) -> Result<Self, Error> {
-        let config = Config::open(options.config.as_ref())?;
-        Ok(Self { options, config })
+        let environment = Environment::from_options(options)?;
+        Ok(Self { environment })
     }
 
     /// Runs the given command-line command.
@@ -78,9 +80,14 @@ impl App {
 
     /// Generates the CA.
     async fn generate_ca(&self, force: bool) -> Result<(), Error> {
+        let tls_config = self
+            .environment
+            .get_untracked::<TlsConfig>("tls")
+            .await?
+            .unwrap_or_default();
         let ca = tls::Ca::generate().await?;
-        let key_file = self.config.config_relative_path(&self.config.tls.key_file);
-        let cert_file = self.config.config_relative_path(&self.config.tls.cert_file);
+        let key_file = self.environment.config_relative_path(&tls_config.key_file);
+        let cert_file = self.environment.config_relative_path(&tls_config.cert_file);
 
         if !force {
             if key_file.exists() {
@@ -230,7 +237,7 @@ impl App {
         if args.api.enabled {
             let shutdown = shutdown.clone();
             let mut api_builder = super::api::builder();
-            let serve_ui = ServeUi::from_config(&self.config, &mut api_builder);
+            let serve_ui = ServeUi::from_environment(&self.environment, &mut api_builder).await?;
 
             join_set.spawn(async move {
                 tracing::info!(bind_address = ?args.api.bind_address, "Starting API");
@@ -259,12 +266,14 @@ impl App {
     }
 
     async fn tls_context(&self) -> Result<tls::Context, Error> {
-        let ca = tls::Ca::open(
-            self.config
-                .config_relative_path(&self.config.config.tls.key_file),
-            self.config
-                .config_relative_path(&self.config.config.tls.cert_file),
-        )?;
+        let tls_config = self
+            .environment
+            .get_untracked::<TlsConfig>("tls")
+            .await?
+            .unwrap_or_default();
+        let key_file = self.environment.config_relative_path(&tls_config.key_file);
+        let cert_file = self.environment.config_relative_path(&tls_config.cert_file);
+        let ca = tls::Ca::open(key_file, cert_file)?;
         Ok(tls::Context::new(ca).await?)
     }
 }

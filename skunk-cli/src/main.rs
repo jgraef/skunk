@@ -2,10 +2,7 @@
 
 mod api;
 mod app;
-mod args;
-mod config;
-mod config_new;
-mod proxy;
+mod env;
 mod util;
 
 use clap::Parser;
@@ -14,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::{
     app::App,
-    args::Args,
+    env::Args,
 };
 
 #[tokio::main]

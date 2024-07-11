@@ -23,7 +23,11 @@ use tower_service::Service;
 
 use crate::{
     api,
-    config::Config,
+    env::{
+        config::UiConfig,
+        Environment,
+        Error,
+    },
     util::watch::watch_modified,
 };
 
@@ -55,29 +59,33 @@ impl ServeUi {
         Self { inner }
     }
 
-    pub fn from_config(config: &Config, api_builder: &mut api::Builder) -> Self {
-        if std::env::var("SKUNK_UI_DEV").is_ok() {
-            let path = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
+    pub async fn from_environment(
+        environment: &Environment,
+        api_builder: &mut api::Builder,
+    ) -> Result<Self, Error> {
+        let ui_config = environment
+            .get_untracked::<UiConfig>("ui")
+            .await?
+            .unwrap_or_default();
+        let ui_dev_env_var_set = std::env::var("SKUNK_UI_DEV").is_ok();
+
+        let ui_path = if ui_dev_env_var_set {
+            PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("skunk-ui")
                 .join("dist")
                 .canonicalize()
-                .expect("Could not get absolute path for UI");
-            let reload_ui = api_builder.with_reload_ui();
-
-            tracing::info!(path = %path.display(), "serving ui from workspace with hot-reload");
-            Self::new(path, Some(reload_ui))
+                .expect("Could not get absolute path for UI")
         }
         else {
-            let path = config.data_relative_path(&config.ui.path);
+            environment.data_relative_path(&ui_config.path)
+        };
 
-            if !path.exists() {
-                todo!("Install UI");
-            }
+        let reload_ui =
+            (ui_config.auto_reload || ui_dev_env_var_set).then(|| api_builder.with_reload_ui());
 
-            tracing::info!(path = %path.display(), "serving ui");
-            Self::new(path, None)
-        }
+        tracing::info!(path = %ui_path.display(), auto_reload = reload_ui.is_some(), "serving ui");
+        Ok(Self::new(ui_path, reload_ui))
     }
 }
 

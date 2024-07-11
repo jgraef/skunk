@@ -1,7 +1,0 @@
-
-[ca]
-# The private key for the CA
-# key_file = "ca.key.pem"
-
-# The public key for the CA
-# cert_file = "ca.cert.pem"
