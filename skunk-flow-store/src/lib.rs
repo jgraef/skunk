@@ -14,10 +14,10 @@ use skunk_api_protocol::flow::{
     Flow,
     FlowId,
     Message,
-    Metadata,
+    MessageData,
     MessageId,
     MessageKind,
-    MessageData
+    Metadata,
 };
 use sqlx::{
     sqlite::SqliteConnectOptions,
@@ -59,7 +59,20 @@ impl FlowStore {
 
     async fn open_with(options: SqliteConnectOptions) -> Result<Self, Error> {
         let pool = sqlx::SqlitePool::connect_with(options).await?;
+
         sqlx::migrate!("./migrations").run(&pool).await?;
+
+        let mut transaction = Transaction {
+            transaction: pool.begin().await?,
+        };
+
+        let _format_version = transaction
+            .get_or_set_metadata("format_version", || FORMAT_VERSION.clone())
+            .await?;
+        // todo: check format version
+
+        transaction.commit().await?;
+
         Ok(Self { pool })
     }
 
@@ -107,7 +120,7 @@ impl<'a> Transaction<'a> {
         .map(|row| row.value.0))
     }
 
-    pub async fn put_metadata<T: Serialize + Sync>(
+    pub async fn set_metadata<T: Serialize + Sync>(
         &mut self,
         key: &str,
         value: &T,
@@ -127,6 +140,21 @@ impl<'a> Transaction<'a> {
         .await?;
 
         Ok(())
+    }
+
+    pub async fn get_or_set_metadata<T, F>(&mut self, key: &str, f: F) -> Result<T, Error>
+    where
+        T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Unpin,
+        F: FnOnce() -> T,
+    {
+        if let Some(value) = self.get_metadata(key).await? {
+            Ok(value)
+        }
+        else {
+            let value = f();
+            self.set_metadata(key, &value).await?;
+            Ok(value)
+        }
     }
 
     pub async fn insert_flow(&mut self, flow: &Flow) -> Result<(), Error> {
