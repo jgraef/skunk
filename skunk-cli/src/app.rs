@@ -65,7 +65,7 @@ impl App {
     /// Runs the given command-line command.
     pub async fn run(&mut self, command: Command) -> Result<(), Error> {
         match command {
-            Command::Ca { force } => {
+            Command::GenerateCert { force } => {
                 self.generate_ca(force).await?;
             }
             Command::Proxy(args) => {
@@ -161,6 +161,7 @@ impl App {
                 // [`Connect`][skunk::connect::Connect] (i.e.
                 // [`ConnectTcp`][skunk::connect::ConnectTcp]) is used.
                 let mut listener = args.socks.builder()?.listen().await?;
+                tracing::info!("SOCKS server listening on: {}", args.socks.bind_address);
 
                 let mut join_set = JoinSet::default();
 
@@ -239,6 +240,8 @@ impl App {
                     .fallback_service(serve_ui);
 
                 let listener = tokio::net::TcpListener::bind(args.api.bind_address).await?;
+                tracing::info!(bind_address = ?args.api.bind_address, "UI and API being served at: http://{}", args.api.bind_address);
+
                 axum::serve(listener, router)
                     .with_graceful_shutdown(shutdown.cancelled_owned())
                     .await?;

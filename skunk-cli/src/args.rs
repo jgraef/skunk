@@ -59,7 +59,7 @@ impl Args {
 pub enum Command {
     /// Generates key and root certificate for the certificate authority used to
     /// intercept TLS traffic.
-    Ca {
+    GenerateCert {
         /// Overwrite existing files.
         #[clap(short, long)]
         force: bool,
@@ -116,11 +116,13 @@ pub struct SocksArgs {
 }
 
 impl SocksArgs {
-    pub fn builder(self) -> Result<socks::Builder, Error> {
+    pub fn builder(&self) -> Result<socks::Builder, Error> {
         let mut builder = socks::Builder::default().with_bind_address(self.bind_address);
 
-        match (self.username, self.password) {
-            (Some(username), Some(password)) => builder = builder.with_password(username, password),
+        match (&self.username, &self.password) {
+            (Some(username), Some(password)) => {
+                builder = builder.with_password(username.clone(), password.clone())
+            }
             (None, None) => {}
             _ => bail!("Either both username and password or neither must be specified"),
         }
