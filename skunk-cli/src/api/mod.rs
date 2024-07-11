@@ -8,6 +8,16 @@ use std::{
 };
 
 use axum::{
+    body::Body,
+    extract::State,
+    http::{
+        header,
+        StatusCode,
+    },
+    response::{
+        IntoResponse,
+        Response,
+    },
     routing,
     Router,
 };
@@ -22,6 +32,11 @@ use skunk_api_protocol::{
 };
 use skunk_flow_store::FlowStore;
 use skunk_util::trigger;
+
+use crate::env::{
+    config::TlsConfig,
+    Environment,
+};
 
 pub const SERVER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
 
@@ -41,12 +56,17 @@ impl From<Error> for ApiError {
     }
 }
 
-pub fn builder() -> Builder {
-    Builder::default()
+pub fn builder(env: Environment) -> Builder {
+    Builder {
+        env,
+        reload_ui: Default::default(),
+        flow_store: None,
+    }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Builder {
+    env: Environment,
     reload_ui: trigger::Receiver,
     flow_store: Option<FlowStore>,
 }
@@ -67,6 +87,7 @@ impl Builder {
 impl Builder {
     pub fn finish(self) -> Router {
         let context = Context {
+            env: self.env,
             sockets: Arc::new(RwLock::new(HashMap::new())),
             reload_ui: Arc::new(self.reload_ui),
             flows: Flows::new(self.flow_store),
@@ -76,10 +97,7 @@ impl Builder {
             .route("/ws", routing::get(socket::handle))
             .nest("/flow", flow::router())
             .nest("/capture", capture::router())
-            .route(
-                "/settings/tls/ca.cert.pem",
-                routing::get(|| async { "TODO" }),
-            )
+            .route("/feralsec-root-cert.pem", routing::get(get_tls_root_cert))
             .fallback(|| async { "404 - Not found" })
             .with_state(context)
     }
@@ -87,6 +105,7 @@ impl Builder {
 
 #[derive(Clone, Debug)]
 pub struct Context {
+    env: Environment,
     sockets: Arc<RwLock<HashMap<SocketId, socket::Sender>>>,
     reload_ui: Arc<trigger::Receiver>,
     flows: Flows,
@@ -121,5 +140,40 @@ impl Context {
 
     pub fn reload_ui(&self) -> trigger::Receiver {
         (*self.reload_ui).clone()
+    }
+}
+
+async fn get_tls_root_cert(State(context): State<Context>) -> impl IntoResponse {
+    async fn load_file(env: &Environment) -> Result<Option<Vec<u8>>, crate::Error> {
+        let tls_config = env
+            .get_untracked::<TlsConfig>("tls")
+            .await?
+            .unwrap_or_default();
+        let cert_file = env.config_relative_path(&tls_config.cert_file);
+        if cert_file.exists() {
+            Ok(Some(std::fs::read(&cert_file)?))
+        }
+        else {
+            Ok(None)
+        }
+    }
+
+    match load_file(&context.env).await {
+        Ok(None) => (StatusCode::NOT_FOUND, "Not found").into_response(),
+        Ok(Some(contents)) => {
+            Response::builder()
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"feralsec-root-cert.pem\"",
+                )
+                .header(header::CONTENT_LENGTH, contents.len())
+                .header(header::CONTENT_TYPE, mime::TEXT_PLAIN.as_ref())
+                .body(Body::from(contents))
+                .expect("Tried to construct an invalid HTTP response")
+        }
+        Err(e) => {
+            tracing::error!("Error while trying to serve root certificate: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+        }
     }
 }

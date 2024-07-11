@@ -175,7 +175,7 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
 
     if args.api.enabled {
         let shutdown = shutdown.clone();
-        let mut api_builder = super::api::builder();
+        let mut api_builder = super::api::builder(environment.clone());
         let serve_ui = ServeUi::from_environment(&environment, &mut api_builder).await?;
 
         join_set.spawn(async move {
