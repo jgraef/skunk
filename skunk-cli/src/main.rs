@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod env;
+mod proxy;
 mod util;
 
 use clap::Parser;

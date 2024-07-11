@@ -10,9 +10,13 @@ use std::{
     },
 };
 
-use config::ConfigFile;
+use config::{
+    ConfigFile,
+    TlsConfig,
+};
 use murmur3::murmur3_x64_128;
 use serde::Deserialize;
+use skunk::protocol::tls;
 
 pub use self::{
     args::{
@@ -90,6 +94,17 @@ impl Environment {
 
     pub fn data_relative_path(&self, path: impl AsRef<Path>) -> PathBuf {
         self.data_dir.join(path)
+    }
+
+    pub async fn tls_context(&self) -> Result<tls::Context, crate::Error> {
+        let tls_config = self
+            .get_untracked::<TlsConfig>("tls")
+            .await?
+            .unwrap_or_default();
+        let key_file = self.config_relative_path(&tls_config.key_file);
+        let cert_file = self.config_relative_path(&tls_config.cert_file);
+        let ca = tls::Ca::open(key_file, cert_file)?;
+        Ok(tls::Context::new(ca).await?)
     }
 }
 
