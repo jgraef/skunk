@@ -1,10 +1,4 @@
-use std::{
-    io::Error,
-    os::fd::{
-        AsRawFd,
-        RawFd,
-    },
-};
+use std::io::Error;
 
 use tokio::io::ReadBuf;
 
@@ -40,12 +34,6 @@ impl Socket {
     }
 
     pub async fn send(&self, _buf: &[u8]) -> Result<(), Error> {
-        unreachable!();
-    }
-}
-
-impl AsRawFd for Socket {
-    fn as_raw_fd(&self) -> RawFd {
         unreachable!();
     }
 }
