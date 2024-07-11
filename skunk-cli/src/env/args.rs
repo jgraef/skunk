@@ -82,11 +82,12 @@ pub struct ProxyArgs {
     #[clap(long)]
     pub no_graceful_shutdown: bool,
 
-    /// Target host:port addresses.
+    /// Only intercept specified addresses.
     ///
-    /// This can be used to only selectively inspect traffic. By default all
-    /// traffic is inspected. Currently only ports 80 and 443 are supported.
-    pub targets: Vec<TcpAddress>,
+    /// `host:port` pairs. Multiple can be specified. This can be used to only
+    /// selectively inspect traffic. By default all traffic is inspected.
+    /// Currently only ports 80 and 443 are supported.
+    pub filter: Vec<TcpAddress>,
 }
 
 #[derive(Debug, Parser)]

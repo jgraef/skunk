@@ -29,7 +29,7 @@ CREATE TABLE message (
     kind TINYINT NOT NULL,
     timestamp DATETIME NOT NULL,
     data JSONB NOT NULL,
-    metadata JSONB,
+    metadata JSONB NOT NULL,
 
     FOREIGN KEY(flow_id) REFERENCES flow(flow_id)
 );

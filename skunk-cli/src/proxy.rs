@@ -35,6 +35,7 @@ use tokio::{
     net::TcpStream,
     task::JoinSet,
 };
+use tracing::Instrument;
 
 use crate::{
     env::{
@@ -50,9 +51,9 @@ use crate::{
 pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error> {
     let pcap_interface = if args.pcap.enabled {
         fn print_interfaces() -> Result<(), Error> {
-            println!("available interfaces:");
+            println!("Available interfaces:");
             for interface in Interface::list()? {
-                println!("{interface:#?}\n");
+                println!("{}\n", interface.name());
             }
             Ok(())
         }
@@ -60,7 +61,7 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
         if let Some(interface) = args.pcap.interface {
             let interface_opt = Interface::from_name(&interface)?;
             if interface_opt.is_none() {
-                eprintln!("interface '{interface}' not found");
+                eprintln!("Interface '{interface}' not found");
                 print_interfaces()?;
                 return Ok(());
             }
@@ -79,13 +80,13 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
     let tls = environment.tls_context().await?;
 
     // target filters
-    let filter = Arc::new(if args.targets.is_empty() {
-        tracing::info!("matching all flows");
-        TargetFilter::All
+    let filter = Arc::new(if args.filter.is_empty() {
+        tracing::info!("Matching all flows");
+        Filter::All
     }
     else {
-        tracing::info!("matching: {:?}", args.targets);
-        TargetFilter::Set(args.targets.into_iter().collect())
+        tracing::info!("Matching: {:?}", args.filter);
+        Filter::Set(args.filter.into_iter().collect())
     });
 
     // shutdown token
@@ -154,13 +155,13 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
                     let country_code = std::env::var("HOSTAPD_CC")
                     .expect("Environment variable `HOSTAPD_CC` not set. You need to set this variable to your country code.");
 
-                    tracing::info!("starting hostapd");
+                    tracing::info!("Starting hostapd");
                     let mut hostapd = pcap::ap::Builder::new(&interface, &country_code)
                             .with_channel(11)
                             .with_graceful_shutdown(shutdown.clone())
                             .start()?;
 
-                    tracing::info!("waiting for hostapd to configure the interface...");
+                    tracing::info!("Waiting for hostapd to configure the interface...");
                     hostapd.ready().await?;
                     tracing::info!("hostapd ready");
                 }
@@ -210,7 +211,7 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
 /// will run a HTTP server and client to proxy HTTP requests.
 async fn proxy(
     tls: tls::Context,
-    filter: Arc<TargetFilter>,
+    filter: Arc<Filter>,
     incoming: socks::Incoming,
     outgoing: TcpStream,
 ) -> Result<(), skunk::Error> {
@@ -232,22 +233,19 @@ async fn proxy(
 
             async move {
                 // log request
-                tracing::info!(
-                    parent: &span,
-                    ">"
-                );
+                tracing::info!("Request");
 
                 let response = send_request.send(request).await?;
 
                 // log response
                 tracing::info!(
-                    parent: &span,
                     status = %response.status(),
-                    "<"
+                    "Response"
                 );
 
                 Ok(response)
             }
+            .instrument(span)
         })
         .await?;
     }
@@ -260,21 +258,20 @@ async fn proxy(
 
 /// A simple filter to decide which target addresses should be intercepted.
 #[derive(Clone, Debug)]
-enum TargetFilter {
+enum Filter {
     All,
     Set(HashSet<TcpAddress>),
 }
 
-impl TargetFilter {
+impl Filter {
     pub fn matches(&self, address: &TcpAddress) -> bool {
         if address.port != 80 && address.port != 443 {
-            tracing::info!(%address, "connection to ignored");
             return false;
         }
 
         match self {
-            TargetFilter::All => true,
-            TargetFilter::Set(targets) => targets.contains(address),
+            Filter::All => true,
+            Filter::Set(targets) => targets.contains(address),
         }
     }
 }

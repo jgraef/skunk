@@ -15,6 +15,9 @@ use skunk_api_protocol::flow::{
     FlowId,
     Message,
     Metadata,
+    MessageId,
+    MessageKind,
+    MessageData
 };
 use sqlx::{
     sqlite::SqliteConnectOptions,
@@ -181,7 +184,7 @@ impl<'a> Transaction<'a> {
                 parent_id AS "parent_id: FlowId",
                 protocol AS "protocol: String",
                 timestamp AS "timestamp: DateTime<FixedOffset>",
-                metadata AS "metadata: Metadata"
+                metadata AS "metadata!: Metadata"
             FROM flow
             WHERE
                 (parent_id = ?1 OR ?1 IS NULL)
@@ -206,9 +209,62 @@ impl<'a> Transaction<'a> {
                 parent: row.parent_id,
                 protocol: row.protocol,
                 timestamp: row.timestamp,
-                metadata: row.metadata.unwrap_or_default(),
+                metadata: row.metadata,
             })
         })
         .collect::<Result<Vec<Flow>, Error>>()
+    }
+
+    pub async fn get_messages(
+        &mut self,
+        flow_id: Option<FlowId>,
+        after: Option<DateTime<FixedOffset>>,
+        before: Option<DateTime<FixedOffset>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Message>, Error> {
+        // note: a negative value in the LIMIT clause will cause sqlite to ignore the
+        // limit
+        let limit = limit
+            .and_then(|limit| i32::try_from(limit).ok())
+            .unwrap_or(-1);
+
+        sqlx::query!(
+            r#"
+            SELECT
+                message_id AS "message_id: MessageId",
+                flow_id AS "flow_id: FlowId",
+                kind AS "kind: MessageKind",
+                timestamp AS "timestamp: DateTime<FixedOffset>",
+                data as "data: MessageData",
+                metadata AS "metadata: Metadata"
+            FROM message
+            WHERE
+                (flow_id = ?1 OR ?1 IS NULL)
+                AND
+                (?2 > timestamp OR ?2 IS NULL)
+                AND
+                (timestamp < ?3 OR ?3 IS NULL)
+            ORDER BY timestamp ASC
+            LIMIT ?4
+            "#,
+            flow_id,
+            after,
+            before,
+            limit,
+        )
+        .fetch_all(self.transaction.as_mut())
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(Message {
+                message_id: row.message_id,
+                flow_id: row.flow_id,
+                kind: row.kind,
+                timestamp: row.timestamp,
+                data: row.data,
+                metadata: row.metadata,
+            })
+        })
+        .collect::<Result<Vec<Message>, Error>>()
     }
 }
