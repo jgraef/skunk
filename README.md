@@ -1,5 +1,7 @@
 # `skunk` - 🦨 A person-in-the-middle proxy
 
+[![Build](https://github.com/jgraef/skunk/actions/workflows/build.yaml/badge.svg)](https://github.com/jgraef/skunk/actions/workflows/build.yaml)
+
 **work in progress**
 
 This crate is going to move to another Github namespace, once it's usable. See [issues][2] for our progress.
