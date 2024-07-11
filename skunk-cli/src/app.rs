@@ -358,7 +358,7 @@ fn cancel_on_ctrlc_or_sigterm() -> CancellationToken {
             .await;
 
         #[cfg(not(unix))]
-        futures::future::pending().await;
+        std::future::pending::<()>().await;
     }
 
     tokio::spawn({

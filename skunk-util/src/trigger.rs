@@ -1,11 +1,4 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{
-        Context,
-        Poll,
-    },
-};
+use std::future::pending;
 
 use tokio::sync::watch;
 
@@ -47,7 +40,7 @@ impl Receiver {
 
     pub async fn triggered(&mut self) {
         if let Err(Closed) = self.triggered_or_closed().await {
-            Pending.await;
+            pending::<()>().await;
         }
     }
 }
@@ -58,15 +51,4 @@ pub struct Closed;
 pub fn new() -> (Sender, Receiver) {
     let (tx, rx) = watch::channel(());
     (Sender { tx }, Receiver { rx })
-}
-
-// todo: we could also just import futures_util
-struct Pending;
-
-impl Future for Pending {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Pending
-    }
 }

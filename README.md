@@ -45,6 +45,9 @@ SKUNK_UI_DEV=1
 HOSTAPD_CC=US
 ```
 
+You can also put your environment variables in a `.env` file.
+
+
 [1]: https://en.wikipedia.org/wiki/Man-in-the-middle_attack
 [2]: https://github.com/jgraef/skunk/issues
 [3]: https://trunkrs.dev/
