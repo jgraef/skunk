@@ -41,15 +41,19 @@ impl Clone for Receiver {
 }
 
 impl Receiver {
+    pub async fn triggered_or_closed(&mut self) -> Result<(), Closed> {
+        self.rx.changed().await.map_err(|_| Closed)
+    }
+
     pub async fn triggered(&mut self) {
-        if let Ok(()) = self.rx.changed().await {
-            return;
-        }
-        else {
+        if let Err(Closed) = self.triggered_or_closed().await {
             Pending.await;
         }
     }
 }
+
+#[derive(Debug)]
+pub struct Closed;
 
 pub fn new() -> (Sender, Receiver) {
     let (tx, rx) = watch::channel(());

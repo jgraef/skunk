@@ -3,12 +3,6 @@ use crate::{
     Error,
 };
 
-pub enum Capture {
-    SocksProxy,
-    HttpProxy,
-    Interface,
-}
-
 pub struct Proxy {}
 
 impl Proxy {

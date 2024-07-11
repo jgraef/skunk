@@ -4,6 +4,7 @@ mod api;
 mod app;
 mod args;
 mod config;
+mod config_new;
 mod proxy;
 mod util;
 
