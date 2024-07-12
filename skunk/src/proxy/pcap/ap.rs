@@ -8,14 +8,15 @@ use tempfile::NamedTempFile;
 use tokio::{
     io::{
         AsyncBufReadExt,
-        AsyncRead,
         BufReader,
     },
     process::Command,
-    sync::watch,
+    sync::{
+        oneshot,
+        watch,
+    },
     task::JoinHandle,
 };
-use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::interface::Interface;
@@ -65,7 +66,6 @@ pub struct Builder<'a> {
     hw_mode: HwMode,
     channel: Option<u8>,
     password: Option<&'a str>,
-    shutdown: CancellationToken,
     ready: Option<watch::Sender<bool>>,
 }
 
@@ -80,7 +80,6 @@ impl<'a> Builder<'a> {
             hw_mode: Default::default(),
             channel: None,
             password: None,
-            shutdown: Default::default(),
             ready: None,
         }
     }
@@ -112,11 +111,6 @@ impl<'a> Builder<'a> {
 
     pub fn with_password(mut self, password: &'a str) -> Self {
         self.password = Some(password);
-        self
-    }
-
-    pub fn with_graceful_shutdown(mut self, shutdown: CancellationToken) -> Self {
-        self.shutdown = shutdown;
         self
     }
 
@@ -156,33 +150,49 @@ impl<'a> Builder<'a> {
         tracing::debug!(parent: &span, "spawning hostapd");
 
         let (ready_tx, ready_rx) = watch::channel(false);
-        let shutdown = CancellationToken::new();
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
 
-        let join_handle = tokio::spawn({
-            let shutdown = shutdown.clone();
+        let join_handle = tokio::spawn(
             async move {
                 // move temp config file here, so it is only deleted once the process
                 // terminates.
                 let _cfg_file = cfg_file;
 
-                tokio::select! {
-                    result = handle_stdout(&mut process.stdout, ready_tx) => {
-                        result?;
-                    },
-                    _ = self.shutdown.cancelled() => {},
-                    _ = shutdown.cancelled() => {},
-                };
+                let reader = BufReader::new(process.stdout.as_mut().expect("no stdout"));
+                let mut lines = reader.lines();
+
+                loop {
+                    tokio::select! {
+                        result = lines.next_line() => {
+                            if let Some(line) = result? {
+                                if line.contains("AP-ENABLED") {
+                                    let _ = ready_tx.send(true);
+                                }
+                                tracing::debug!("{}", line);
+                            }
+                            else {
+                                // EOF on stdout
+                                break;
+                            }
+                        },
+                        _ = &mut shutdown_rx => {
+                            // either the user sent a shutdown Signal through [`HostApd::stop`], or the sender was dropped.
+                            // either case, we're done.
+                            break;
+                        },
+                    };
+                }
 
                 tracing::debug!("killing hostapd");
                 process.kill().await?;
                 Ok::<(), Error>(())
             }
-            .instrument(span)
-        });
+            .instrument(span),
+        );
 
         Ok(HostApd {
             join_handle,
-            shutdown,
+            shutdown_tx,
             ready_rx,
         })
     }
@@ -190,7 +200,7 @@ impl<'a> Builder<'a> {
 
 pub struct HostApd {
     join_handle: JoinHandle<Result<(), Error>>,
-    shutdown: CancellationToken,
+    shutdown_tx: oneshot::Sender<()>,
     ready_rx: watch::Receiver<bool>,
 }
 
@@ -206,31 +216,9 @@ impl HostApd {
             })
     }
 
-    pub async fn wait(self) -> Result<(), Error> {
+    pub async fn stop(self) -> Result<(), Error> {
+        let _ = self.shutdown_tx.send(());
         self.join_handle.await.ok().transpose()?;
         Ok(())
     }
-
-    pub async fn stop(self) -> Result<(), Error> {
-        self.shutdown.cancel();
-        self.wait().await
-    }
-}
-
-async fn handle_stdout<S: AsyncRead + Unpin>(
-    stream_opt: &mut Option<S>,
-    ready_tx: watch::Sender<bool>,
-) -> Result<(), Error> {
-    if let Some(stream) = stream_opt {
-        let stream = BufReader::new(stream);
-        let mut lines = stream.lines();
-        while let Some(line) = lines.next_line().await? {
-            let line = line.trim_end();
-            if line.ends_with("AP-ENABLED") {
-                let _ = ready_tx.send(true);
-            }
-            tracing::debug!("{}", line);
-        }
-    }
-    Ok(())
 }

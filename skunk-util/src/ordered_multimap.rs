@@ -503,14 +503,12 @@ impl<'a, K, V, H> OccupiedEntryMut<'a, K, V, H> {
 
     pub fn append(&mut self, key: K, value: V) -> &mut V {
         let tail = self.list().tail;
-        let bucket = self.map.buckets.get_index(&self.bucket);
 
         let index = self.map.pairs.push(Pair {
             key,
             value,
             next: None,
             prev: Some(tail),
-            bucket,
         });
 
         self.map.pairs.get_mut(tail).next = Some(index);
@@ -582,14 +580,12 @@ impl<'a, K, V, H> VacantEntryMut<'a, K, V, H> {
                 count: 1,
             },
         );
-        let bucket_index = self.map.buckets.get_index(&bucket);
 
         let index2 = self.map.pairs.push(Pair {
             key,
             value,
             next: None,
             prev: None,
-            bucket: bucket_index,
         });
         assert_eq!(index, index2);
 
@@ -878,16 +874,12 @@ impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct PairIndex(usize);
 
-#[derive(Clone, Copy)]
-struct BucketIndex(usize);
-
 #[derive(Clone)]
 struct Pair<K, V> {
     key: K,
     value: V,
     next: Option<PairIndex>,
     prev: Option<PairIndex>,
-    bucket: BucketIndex,
 }
 
 #[derive(Clone, Copy)]
@@ -978,10 +970,6 @@ impl<H: BuildHasher> Buckets<H> {
 }
 
 impl<H> Buckets<H> {
-    pub fn get_index(&self, bucket: &Bucket<List>) -> BucketIndex {
-        BucketIndex(unsafe { self.inner.bucket_index(bucket) })
-    }
-
     pub fn remove(&mut self, bucket: Bucket<List>) -> (List, InsertSlot) {
         unsafe { self.inner.remove(bucket) }
     }

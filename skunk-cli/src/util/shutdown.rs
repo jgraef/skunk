@@ -1,4 +1,4 @@
-use skunk::util::CancellationToken;
+use tokio_util::sync::CancellationToken;
 
 /// Resolves when the application receives SIGTERM on unix systems, or never on
 /// other systems.

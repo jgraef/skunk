@@ -12,6 +12,7 @@ use std::{
 };
 
 use futures::TryFutureExt;
+use skunk_util::error::ResultExt;
 use smallvec::SmallVec;
 use tokio::{
     sync::{
@@ -29,12 +30,9 @@ use super::{
     SendError,
 };
 pub use crate::protocol::inet::arp::Packet;
-use crate::{
-    protocol::inet::{
-        arp::Operation,
-        MacAddress,
-    },
-    util::error::ResultExt,
+use crate::protocol::inet::{
+    arp::Operation,
+    MacAddress,
 };
 
 #[derive(Debug)]

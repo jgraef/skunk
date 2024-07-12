@@ -5,8 +5,12 @@ edition = "2021"
 
 [features]
 default = []
-full = ["trigger"]
 trigger = ["dep:tokio"]
+ordered-multimap = ["dep:ahash", "dep:hashbrown"]
+error = []
 
 [dependencies]
+ahash = { version = "0.8.11", optional = true }
+hashbrown = { version = "0.14.5", optional = true }
 tokio = { version = "1.37.0", default-features = false, features = ["sync"], optional = true }
+tracing = "0.1.40"

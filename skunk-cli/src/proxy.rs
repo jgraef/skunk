@@ -26,15 +26,13 @@ use skunk::{
         Passthrough,
         Proxy,
     },
-    util::{
-        error::ResultExt,
-        CancellationToken,
-    },
 };
+use skunk_util::error::ResultExt;
 use tokio::{
     net::TcpStream,
     task::JoinSet,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::{
@@ -151,20 +149,24 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
             let shutdown = shutdown.clone();
             let interface = interface.clone();
             async move {
-                if args.pcap.enabled {
+                let _hostapd = if args.pcap.ap {
                     let country_code = std::env::var("HOSTAPD_CC")
                     .expect("Environment variable `HOSTAPD_CC` not set. You need to set this variable to your country code.");
 
                     tracing::info!("Starting hostapd");
                     let mut hostapd = pcap::ap::Builder::new(&interface, &country_code)
                             .with_channel(11)
-                            .with_graceful_shutdown(shutdown.clone())
                             .start()?;
 
                     tracing::info!("Waiting for hostapd to configure the interface...");
                     hostapd.ready().await?;
                     tracing::info!("hostapd ready");
+
+                    Some(hostapd)
                 }
+                else {
+                    None
+                };
 
                 let _network = VirtualNetwork::new(&interface)?;
                 shutdown.cancelled().await;

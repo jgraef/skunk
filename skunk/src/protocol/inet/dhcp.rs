@@ -15,11 +15,9 @@ use byst::{
     },
     util::for_tuple,
 };
+use skunk_util::ordered_multimap::OrderedMultiMap;
 
-use crate::util::{
-    network_enum,
-    ordered_multimap::OrderedMultiMap,
-};
+use crate::util::network_enum;
 
 /// A [DHCP message][1]
 ///

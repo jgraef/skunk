@@ -2,9 +2,7 @@
 
 pub(crate) mod boolean;
 pub mod crc;
-pub mod error;
 pub mod io;
-pub mod ordered_multimap;
 
 use std::{
     fmt::{
@@ -21,9 +19,7 @@ use std::{
     },
 };
 
-pub use byst::util::for_tuple;
 use parking_lot::Mutex;
-pub use tokio_util::sync::CancellationToken;
 
 /// [`Oncelock`](std::sync::OnceLock::get_or_try_init) is not stabilized yet, so
 /// we implement it ourselves. Also we inclose the `Arc`, because why not.

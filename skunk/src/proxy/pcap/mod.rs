@@ -29,6 +29,7 @@ use skunk_macros::{
     ipv4_address,
     ipv4_network,
 };
+use skunk_util::error::ResultExt;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -39,13 +40,10 @@ use self::{
         ReceiveError,
     },
 };
-use crate::{
-    protocol::inet::{
-        ethernet,
-        ipv4,
-        MacAddress,
-    },
-    util::error::ResultExt,
+use crate::protocol::inet::{
+    ethernet,
+    ipv4,
+    MacAddress,
 };
 
 #[derive(Debug)]
