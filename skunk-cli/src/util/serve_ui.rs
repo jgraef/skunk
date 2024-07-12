@@ -14,6 +14,7 @@ use axum::{
     body::Body,
     http::Request,
 };
+use notify_async::watch_modified;
 use skunk_util::trigger;
 use tower_http::services::{
     ServeDir,
@@ -28,7 +29,6 @@ use crate::{
         Environment,
         Error,
     },
-    util::watch::watch_modified,
 };
 
 #[derive(Clone, Debug)]
@@ -44,7 +44,7 @@ impl ServeUi {
             let mut watch = watch_modified(path, Duration::from_secs(2))
                 .expect("Failed to watch for file changes");
             tokio::spawn(async move {
-                while let Ok(()) = watch.wait().await {
+                while let Ok(()) = watch.modified().await {
                     tracing::info!("UI modified. Triggering reload");
                     reload_ui.trigger();
                 }

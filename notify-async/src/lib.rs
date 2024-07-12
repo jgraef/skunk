@@ -15,12 +15,12 @@ use notify::{
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
-pub struct FileWatcher {
+pub struct WatchFiles {
     watcher: RecommendedWatcher,
     event_rx: mpsc::Receiver<Event>,
 }
 
-impl FileWatcher {
+impl WatchFiles {
     pub fn new() -> notify::Result<Self> {
         let (event_tx, event_rx) = mpsc::channel(16);
 
@@ -46,44 +46,57 @@ impl FileWatcher {
     pub async fn next_event(&mut self) -> Result<Event, Closed> {
         self.event_rx.recv().await.ok_or(Closed)
     }
-
-    pub async fn modified(&mut self) -> Result<(), Closed> {
-        loop {
-            if self.next_event().await?.kind.is_modify() {
-                return Ok(());
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
 pub struct WatchModified {
-    watcher: FileWatcher,
-    debounce: Duration,
+    watch: WatchFiles,
+    debounce: Option<Duration>,
 }
 
 impl WatchModified {
-    pub fn new(watcher: FileWatcher, debounce: Duration) -> Result<Self, Error> {
-        Ok(Self { watcher, debounce })
+    pub fn new(watch: WatchFiles) -> Result<Self, Error> {
+        Ok(Self {
+            watch,
+            debounce: None,
+        })
     }
 
-    pub async fn wait(&mut self) -> Result<(), Closed> {
-        self.watcher.modified().await?;
+    pub fn with_debounce(mut self, debounce: Duration) -> Self {
+        self.debounce = Some(debounce);
+        self
+    }
 
-        loop {
-            match tokio::time::timeout(self.debounce, self.watcher.modified()).await {
-                Ok(Ok(())) => {}
-                Ok(Err(Closed)) => return Err(Closed),
-                Err(_) => return Ok(()),
+    pub async fn modified(&mut self) -> Result<(), Closed> {
+        pub async fn modified(watch: &mut WatchFiles) -> Result<(), Closed> {
+            loop {
+                if watch.next_event().await?.kind.is_modify() {
+                    return Ok(());
+                }
             }
+        }
+
+        modified(&mut self.watch).await?;
+
+        if let Some(debounce) = self.debounce {
+            loop {
+                match tokio::time::timeout(debounce, modified(&mut self.watch)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(Closed)) => return Err(Closed),
+                    Err(_) => return Ok(()),
+                }
+            }
+        }
+        else {
+            Ok(())
         }
     }
 }
 
 pub fn watch_modified(path: impl AsRef<Path>, debounce: Duration) -> Result<WatchModified, Error> {
-    let mut watcher = FileWatcher::new()?;
+    let mut watcher = WatchFiles::new()?;
     watcher.watch(path, RecursiveMode::Recursive)?;
-    WatchModified::new(watcher, debounce)
+    Ok(WatchModified::new(watcher)?.with_debounce(debounce))
 }
 
 #[derive(Debug)]

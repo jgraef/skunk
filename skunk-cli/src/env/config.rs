@@ -8,6 +8,10 @@ use std::{
     time::Duration,
 };
 
+use notify_async::{
+    watch_modified,
+    WatchModified,
+};
 use serde::{
     de::IntoDeserializer,
     Deserialize,
@@ -22,16 +26,11 @@ use super::{
     FileHash,
     DEFAULT_CONFIG,
 };
-use crate::util::watch::{
-    FileWatcher,
-    WatchModified,
-};
 
 #[derive(Clone, Debug)]
 pub struct ConfigFile {
     inner: Arc<RwLock<Inner>>,
 }
-
 
 impl ConfigFile {
     const DEBOUNCE: Duration = Duration::from_secs(1);
@@ -50,7 +49,7 @@ impl ConfigFile {
 
     pub async fn get<T: for<'de> Deserialize<'de>>(
         &self,
-        key: &str
+        key: &str,
     ) -> Result<ConfigValue<T>, Error> {
         let inner = self.inner.read().await;
         let value = inner.get_untracked(key)?;
@@ -63,14 +62,12 @@ impl ConfigFile {
     }
 }
 
-
 pub struct Loader {
     inner: Inner,
     watch: WatchModified,
     hash: FileHash,
     changed_tx: trigger::Sender,
 }
-
 
 impl Loader {
     pub fn load(self) -> ConfigFile {
@@ -132,7 +129,6 @@ impl Inner {
     }
 }
 
-
 fn open(path: &Path) -> Result<Loader, Error> {
     let mut toml: Option<Cow<'static, str>> = None;
 
@@ -147,14 +143,7 @@ fn open(path: &Path) -> Result<Loader, Error> {
         toml = Some(DEFAULT_CONFIG.into());
     }
 
-    let watcher = FileWatcher::new().map_err(|error| {
-        Error::WatchFile {
-            error,
-            path: path.to_owned(),
-        }
-    })?;
-
-    let watch = WatchModified::new(watcher, ConfigFile::DEBOUNCE).map_err(|error| {
+    let watch = watch_modified(path, ConfigFile::DEBOUNCE).map_err(|error| {
         Error::WatchFile {
             error,
             path: path.to_owned(),
@@ -218,14 +207,14 @@ struct WatchConfig {
 
 impl WatchConfig {
     async fn run(mut self) {
-        while let Ok(()) = self.watch.wait().await {
+        while let Ok(()) = self.watch.modified().await {
             match self.reload() {
                 Ok(None) => {}
                 Ok(Some(document)) => {
                     let mut inner = self.inner.write().await;
                     inner.document = document;
                     self.changed.trigger();
-                },
+                }
                 Err(_e) => todo!(),
             }
         }

@@ -3,13 +3,16 @@ resolver = "2"
 members = [
   "byst",
   "byst-macros",
+  "confix",
+  "notify-async",
   "skunk",
   "skunk-api-client",
   "skunk-api-protocol",
   "skunk-cli",
   "skunk-flow-store",
   "skunk-macros",
-  "skunk-ui", "skunk-util",
+  "skunk-ui",
+  "skunk-util",
 ]
 
 [patch.crates-io]

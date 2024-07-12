@@ -32,7 +32,7 @@ pub enum Error {
     #[error("Could not watch file: {path}")]
     WatchFile {
         #[source]
-        error: notify::Error,
+        error: notify_async::Error,
         path: PathBuf,
     },
 

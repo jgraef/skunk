@@ -1,0 +1,10 @@
+[package]
+name = "confix"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.notify-async]
+path = "../notify-async"
+
+[dependencies]
+toml_edit = "0.22.15"
