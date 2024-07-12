@@ -11,6 +11,10 @@ This crate is going to move to another Github namespace, once it's usable. See [
 `skunk` 🦨 is a [person-in-the-middle][1] proxy, mainly focussed on HTTP(S), but also open for other protocols.
 It's useful for API reverse engineering among other things.
 
+## Disclaimer
+
+The developers of this tool hereby state that its intended purpose is to inspect your own network traffic, or of people that have agreed to its usage. Using this tool by intercepting, monitoring, or manipulating another person's traffic without their explicit consent is illegal in many juristictions, and the developers prohibit anyone from using this tool under such circumstances.
+
 ## Development
 
 ### Generate root certificate
