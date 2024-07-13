@@ -7,4 +7,5 @@ edition = "2021"
 path = "../notify-async"
 
 [dependencies]
+thiserror = "1.0.62"
 toml_edit = "0.22.15"
