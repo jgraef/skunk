@@ -32,8 +32,8 @@ impl TryFrom<u8> for AuthMethod {
             0x00 => Ok(Self::NoAuthentication),
             0x01 => Ok(Self::GssApi),
             0x02 => Ok(Self::UsernamePassword),
-            _ if value >= 0x03 && value <= 0x7f => Ok(Self::Iana(value)),
-            _ if value >= 0x80 && value <= 0xfe => Ok(Self::Private(value)),
+            _ if (0x03..=0x7f).contains(&value) => Ok(Self::Iana(value)),
+            _ if (0x80..=0xfe).contains(&value) => Ok(Self::Private(value)),
             0xff => Err(InvalidAuthMethod { value }),
             _ => unreachable!(),
         }

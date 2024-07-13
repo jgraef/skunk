@@ -52,7 +52,7 @@ use crate::{
     Status,
 };
 
-pub const USER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
+pub const USER_AGENT: &str = std::env!("CARGO_PKG_NAME");
 pub const CLIENT_VERSION: Version = env_version!("CARGO_PKG_VERSION");
 
 #[derive(Debug, thiserror::Error)]
@@ -232,7 +232,7 @@ impl<'a> ReactorConnection<'a> {
                 // todo: Our implementation only supports one subscription at a time right now.
 
                 if let Some(flows_tx) = self.reactor.flows_tx.get_mut(&subscription_id) {
-                    if let Err(_) = flows_tx.send(event).await {
+                    if flows_tx.send(event).await.is_err() {
                         // the flows receiver has been dropped.
                         self.reactor.flows_tx.remove(&subscription_id);
                     }

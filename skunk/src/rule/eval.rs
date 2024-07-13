@@ -69,6 +69,7 @@ impl Builder {
     }
 
     #[inline]
+    #[allow(clippy::arc_with_non_send_sync)] // fixme
     pub fn build(self) -> Graph {
         Graph {
             inner: Arc::new(RwLock::new(Arc::new(RwLock::new(self.inner)))),
@@ -141,6 +142,7 @@ impl Graph {
     }
 
     #[inline]
+    #[allow(clippy::arc_with_non_send_sync)] // fixme
     pub fn replace(&self, builder: Builder) {
         let mut inner = self.inner.write();
         *inner = Arc::new(RwLock::new(builder.inner));
@@ -336,11 +338,11 @@ pub trait Extractor {
 }
 
 pub trait Match<E: Extractor> {
-    fn matches<'d>(&self, input: &E::Data<'d>) -> Maybe;
+    fn matches(&self, input: &E::Data<'_>) -> Maybe;
 }
 
 impl<E: Extractor> Match<E> for Box<dyn Match<E>> {
-    fn matches<'d>(&self, input: &E::Data<'d>) -> Maybe {
+    fn matches(&self, input: &E::Data<'_>) -> Maybe {
         self.deref().matches(input)
     }
 }
@@ -350,7 +352,7 @@ where
     E: Extractor,
     for<'d> F: Fn(&E::Data<'d>) -> Maybe,
 {
-    fn matches<'d>(&self, input: &E::Data<'d>) -> Maybe {
+    fn matches(&self, input: &E::Data<'_>) -> Maybe {
         self(input)
     }
 }

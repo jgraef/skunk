@@ -117,7 +117,7 @@ impl Range {
     }
 
     pub fn slice_get<'a>(&self, slice: &'a [u8]) -> Result<&'a [u8], RangeOutOfBounds> {
-        slice.get(self.as_slice_index()).ok_or_else(|| {
+        slice.get(self.as_slice_index()).ok_or({
             RangeOutOfBounds {
                 required: *self,
                 bounds: (0, slice.len()),
@@ -127,7 +127,7 @@ impl Range {
 
     pub fn slice_get_mut<'a>(&self, slice: &'a mut [u8]) -> Result<&'a mut [u8], RangeOutOfBounds> {
         let buf_length = slice.len();
-        slice.get_mut(self.as_slice_index()).ok_or_else(|| {
+        slice.get_mut(self.as_slice_index()).ok_or({
             RangeOutOfBounds {
                 required: *self,
                 bounds: (0, buf_length),
@@ -200,10 +200,10 @@ impl Range {
             (Some(left), Some(right)) if left > right => return false,
             _ => {}
         }
-        match (self.end, other.end) {
-            (Some(left), Some(right)) if left < right => false,
-            _ => true,
-        }
+        !matches!(
+            (self.end, other.end),
+            (Some(left), Some(right)) if left < right
+        )
     }
 
     #[inline]
@@ -216,10 +216,10 @@ impl Range {
             Some(start) if start > index => return false,
             _ => {}
         }
-        match self.end {
-            Some(end) if end < index => false,
-            _ => true,
-        }
+        !matches!(
+            self.end,
+            Some(end) if end < index
+        )
     }
 }
 

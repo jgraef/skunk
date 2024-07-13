@@ -8,10 +8,10 @@ use crate::components::icon::BootstrapIcon;
 
 stylance::import_crate_style!(style, "src/app/home.module.scss");
 
-pub const GITHUB_LINK: &'static str = "https://github.com/jgraef/skunk";
-pub const DISCORD_LINK: &'static str = "https://discord.gg/skunk-todo";
-pub const TWITTER_LINK: &'static str = "https://twitter.com/skunk-todo";
-pub const REDDIT_LINK: &'static str = "https://reddit.com/r/skunk-proxy";
+pub const GITHUB_LINK: &str = "https://github.com/jgraef/skunk";
+pub const DISCORD_LINK: &str = "https://discord.gg/skunk-todo";
+pub const TWITTER_LINK: &str = "https://twitter.com/skunk-todo";
+pub const REDDIT_LINK: &str = "https://reddit.com/r/skunk-proxy";
 
 #[component]
 pub fn Home() -> impl IntoView {

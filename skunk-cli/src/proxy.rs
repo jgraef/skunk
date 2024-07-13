@@ -138,7 +138,7 @@ pub async fn run(environment: Environment, args: ProxyArgs) -> Result<(), Error>
                 }
             }
 
-            while let Some(_) = join_set.join_next().await {}
+            while join_set.join_next().await.is_some() {}
 
             Ok::<(), Error>(())
         });

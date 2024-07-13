@@ -110,7 +110,7 @@ where
             }),
         )
         .without_shutdown()
-        .map_err(|e| Error::Hyper(e)) // why does `Error::from` not work here?
+        .map_err(Error::Hyper) // why does `Error::from` not work here?
         .map_err(crate::Error::from);
 
     let handler_fut = async move {

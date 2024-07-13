@@ -281,7 +281,7 @@ impl BufferRef {
     /// The caller must ensure that there are no mutable references to this
     /// portion of the buffer, and that the range is valid.
     #[inline]
-    unsafe fn uninitialized<'a>(&'a self) -> &'a [MaybeUninit<u8>] {
+    unsafe fn uninitialized(&self) -> &[MaybeUninit<u8>] {
         // SAFETY:
         // - `Buffer` is valid, since we have a `BufferRef` to it.
         // - The range is valid
@@ -296,7 +296,7 @@ impl BufferRef {
     /// portion of the buffer. Furthermore the caller must not write
     /// uninitialized values into the initialized portion of the buffer.
     #[inline]
-    unsafe fn uninitialized_mut<'a>(&'a self) -> &'a mut [MaybeUninit<u8>] {
+    unsafe fn uninitialized_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         // SAFETY:
         // - `Buffer` is valid, since we have a `BufferRef` to it.
         // - The range is valid
@@ -373,7 +373,7 @@ impl BufferRef {
     /// The caller must ensure that there are no mutable references to this
     /// portion of the buffer, and that the range is valid.
     #[inline]
-    unsafe fn initialized<'a>(&'a self) -> &'a [u8] {
+    unsafe fn initialized(&self) -> &[u8] {
         let initialized = self.initialized_end();
 
         // SAFETY:
@@ -392,7 +392,7 @@ impl BufferRef {
     /// valid. No other active references, mutable or not may exist to this
     /// portion of the buffer.
     #[inline]
-    unsafe fn initialized_mut<'a>(&'a self) -> &'a mut [u8] {
+    unsafe fn initialized_mut(&mut self) -> &mut [u8] {
         let initialized = self.initialized_end();
 
         // SAFETY:
@@ -929,7 +929,7 @@ impl ArcBufMut {
 
     /// Returns a mutable reference to the filled portion of the buffer.
     #[inline]
-    fn filled_mut(&self) -> &mut [u8] {
+    fn filled_mut(&mut self) -> &mut [u8] {
         unsafe {
             // SAFETY:
             //
@@ -993,7 +993,7 @@ impl ArcBufMut {
     /// [`set_filled_to`]: Self::set_filled_to
     /// [`fully_initialize`]: Self::fully_initialize
     #[inline]
-    pub fn initialized_mut(&self) -> &mut [u8] {
+    pub fn initialized_mut(&mut self) -> &mut [u8] {
         unsafe {
             // SAFETY:
             //
@@ -1127,7 +1127,7 @@ impl Buf for ArcBufMut {
 
     #[inline]
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-        Ok(range.into().slice_get(self.filled())?)
+        range.into().slice_get(self.filled())
     }
 
     #[inline]
@@ -1154,7 +1154,7 @@ impl BufMut for ArcBufMut {
 
     #[inline]
     fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-        Ok(range.into().slice_get_mut(self.filled_mut())?)
+        range.into().slice_get_mut(self.filled_mut())
     }
 
     #[inline]

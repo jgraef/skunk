@@ -106,8 +106,6 @@ impl<const N: usize> Clone for ArrayBuf<N> {
     }
 }
 
-impl<const N: usize> Copy for ArrayBuf<N> {}
-
 impl<const N: usize> Debug for ArrayBuf<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.inner, f)

@@ -130,7 +130,6 @@ impl Default for CommandProvider {
 
         Self {
             commands: (0..20)
-                .into_iter()
                 .map(|id| {
                     Command {
                         id,

@@ -103,10 +103,10 @@ impl Flows {
         // todo: is this the right ordering, in regards to get_flows?
 
         let mut transaction = self.flow_store.transaction().await?;
-        transaction.insert_flow(&flow).await?;
+        transaction.insert_flow(flow).await?;
         let mut subscriptions = self.subscriptions.write().await;
         transaction.commit().await?;
-        subscriptions.begin_flow(&flow).await?;
+        subscriptions.begin_flow(flow).await?;
 
         Ok(())
     }

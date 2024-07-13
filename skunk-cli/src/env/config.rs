@@ -61,7 +61,7 @@ impl Inner {
         let deserializer = value.into_deserializer();
         let value = T::deserialize(deserializer).map_err(|error| {
             Error::ParseToml {
-                error: error.into(),
+                error: Box::new(error.into()),
                 path: self.path.clone(),
                 toml: item.to_string(),
             }
@@ -157,7 +157,7 @@ fn open(path: &Path) -> Result<Loader, Error> {
 
     let document: DocumentMut = toml.parse().map_err(|error| {
         Error::ParseToml {
-            error,
+            error: Box::new(error),
             path: path.to_owned(),
             toml: toml.clone().into_owned(),
         }
@@ -206,7 +206,7 @@ impl WatchConfig {
         if hash != self.hash {
             let document: DocumentMut = toml.parse().map_err(|error| {
                 Error::ParseToml {
-                    error,
+                    error: Box::new(error),
                     path: self.path.to_owned(),
                     toml,
                 }

@@ -59,14 +59,14 @@ impl Default for BytesMut {
     }
 }
 
-impl<'b> Debug for BytesMut {
+impl Debug for BytesMut {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_as_hexdump(f, self)
     }
 }
 
-impl<'b, R: Buf> PartialEq<R> for BytesMut {
+impl<R: Buf> PartialEq<R> for BytesMut {
     #[inline]
     fn eq(&self, other: &R) -> bool {
         buf_eq(self, other)
@@ -91,7 +91,7 @@ impl Buf for BytesMut {
 
     #[inline]
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-        Ok(self.inner.view(range.into())?)
+        self.inner.view(range.into())
     }
 
     #[inline]

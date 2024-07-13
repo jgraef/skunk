@@ -47,9 +47,9 @@ impl Deriver for DeriveRead {
         }
         else {
             match &item.data {
-                Data::Struct(s) => Self::derive_for_struct(&s, &item, options),
-                Data::Enum(e) => Self::derive_for_enum(&e, &item, options),
-                Data::Union(u) => Self::derive_for_union(&u, &item, options),
+                Data::Struct(s) => Self::derive_for_struct(s, &item, options),
+                Data::Enum(e) => Self::derive_for_enum(e, &item, options),
+                Data::Union(u) => Self::derive_for_union(u, &item, options),
             }
         }
     }
@@ -107,7 +107,7 @@ impl Deriver for DeriveRead {
         let mut match_arms = Vec::with_capacity(data.variants.len());
 
         for variant in &data.variants {
-            let variant_options = VariantOptions::from_variant(&variant)?;
+            let variant_options = VariantOptions::from_variant(variant)?;
             let variant_name = &variant.ident;
             let pat = variant_options.pat();
 
@@ -178,7 +178,7 @@ fn make_struct_init(
             member: field_name,
             var: field_var,
         } = FieldName::from_field(i, field);
-        let field_options = FieldOptions::from_field(&field)?;
+        let field_options = FieldOptions::from_field(field)?;
         let field_ty = &field.ty;
 
         if let Some(skip_with) = field_options.skip() {
@@ -291,7 +291,7 @@ fn derive_read_for_struct_bitfield(
             member: field_name,
             var: _,
         } = FieldName::from_field(i, field);
-        let field_options = BitfieldFieldOptions::from_field(&field)?;
+        let field_options = BitfieldFieldOptions::from_field(field)?;
         let field_ty = &field.ty;
 
         let (start, bits) = match field_options {

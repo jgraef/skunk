@@ -69,14 +69,14 @@ impl Default for Bytes {
     }
 }
 
-impl<'b> Debug for Bytes {
+impl Debug for Bytes {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_as_hexdump(f, self)
     }
 }
 
-impl<'b, R: Buf> PartialEq<R> for Bytes {
+impl<R: Buf> PartialEq<R> for Bytes {
     #[inline]
     fn eq(&self, other: &R) -> bool {
         buf_eq(self, other)

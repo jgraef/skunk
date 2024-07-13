@@ -71,6 +71,12 @@ pub struct OrderedMultiMap<K, V, H = AHasher> {
     buckets: Buckets<H>,
 }
 
+impl<K, V> Default for OrderedMultiMap<K, V, AHasher> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K, V> OrderedMultiMap<K, V, AHasher> {
     pub fn new() -> Self {
         Self::builder().build()
@@ -307,9 +313,13 @@ pub enum Entry<'a, K, V, H> {
 impl<'a, K, V, H> Entry<'a, K, V, H> {
     pub fn len(&self) -> usize {
         match self {
-            Entry::Occupied(occupied) => occupied.len(),
-            Entry::Vacant(_) => 0,
+            Self::Occupied(occupied) => occupied.len(),
+            Self::Vacant(_) => 0,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Vacant(_))
     }
 
     pub fn iter(&self) -> EntryIter<'a, K, V> {
@@ -348,6 +358,7 @@ impl<'a, K, V, H> OccupiedEntry<'a, K, V, H> {
         &self.map.pairs.get(self.list().tail).value
     }
 
+    #[allow(clippy::len_without_is_empty)] // OccupiedEntry is never empty
     pub fn len(&self) -> usize {
         self.list().count
     }
@@ -372,9 +383,13 @@ pub enum EntryMut<'a, K, V, H> {
 impl<'a, K, V, H> EntryMut<'a, K, V, H> {
     pub fn len(&self) -> usize {
         match self {
-            EntryMut::Occupied(occupied) => occupied.len(),
-            EntryMut::Vacant(_) => 0,
+            Self::Occupied(occupied) => occupied.len(),
+            Self::Vacant(_) => 0,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(&self, Self::Vacant(_))
     }
 
     pub fn or_insert(self, default_key: K, default_value: V) -> OccupiedEntryMut<'a, K, V, H>
@@ -391,8 +406,8 @@ impl<'a, K, V, H> EntryMut<'a, K, V, H> {
         H: BuildHasher,
     {
         match self {
-            EntryMut::Occupied(occupied) => occupied,
-            EntryMut::Vacant(vacant) => {
+            Self::Occupied(occupied) => occupied,
+            Self::Vacant(vacant) => {
                 let (key, value) = default();
                 vacant.insert(key, value)
             }
@@ -405,18 +420,18 @@ impl<'a, K, V, H> EntryMut<'a, K, V, H> {
         H: BuildHasher,
     {
         match self {
-            EntryMut::Occupied(mut occupied) => {
+            Self::Occupied(mut occupied) => {
                 occupied.append(key, value);
                 occupied
             }
-            EntryMut::Vacant(vacant) => vacant.insert(key, value),
+            Self::Vacant(vacant) => vacant.insert(key, value),
         }
     }
 
     pub fn drain(self) -> EntryDrain<'a, K, V, H> {
         match self {
-            EntryMut::Occupied(occupied) => occupied.drain(),
-            EntryMut::Vacant(vacant) => {
+            Self::Occupied(occupied) => occupied.drain(),
+            Self::Vacant(vacant) => {
                 EntryDrain {
                     inner: ManuallyDrop::new(EntryDrainInner {
                         map: vacant.map,
@@ -430,8 +445,8 @@ impl<'a, K, V, H> EntryMut<'a, K, V, H> {
 
     pub fn iter(&self) -> EntryIter<'_, K, V> {
         match self {
-            EntryMut::Occupied(occupied) => occupied.iter(),
-            EntryMut::Vacant(vacant) => {
+            Self::Occupied(occupied) => occupied.iter(),
+            Self::Vacant(vacant) => {
                 EntryIter {
                     pairs: &vacant.map.pairs,
                     state: Default::default(),
@@ -442,8 +457,8 @@ impl<'a, K, V, H> EntryMut<'a, K, V, H> {
 
     pub fn iter_mut(&mut self) -> EntryIterMut<'_, K, V> {
         match self {
-            EntryMut::Occupied(occupied) => occupied.iter_mut(),
-            EntryMut::Vacant(vacant) => {
+            Self::Occupied(occupied) => occupied.iter_mut(),
+            Self::Vacant(vacant) => {
                 EntryIterMut {
                     pairs: &mut vacant.map.pairs,
                     state: Default::default(),
@@ -465,7 +480,7 @@ impl<'a, K, V, H> OccupiedEntryMut<'a, K, V, H> {
     }
 
     #[inline]
-    fn list_mut(&self) -> &mut List {
+    fn list_mut(&mut self) -> &mut List {
         unsafe { self.bucket.as_mut() }
     }
 
@@ -497,6 +512,7 @@ impl<'a, K, V, H> OccupiedEntryMut<'a, K, V, H> {
         &mut self.map.pairs.get_mut(self.list().tail).value
     }
 
+    #[allow(clippy::len_without_is_empty)] // OccupiedEntryMut is never empty
     pub fn len(&self) -> usize {
         self.list().count
     }

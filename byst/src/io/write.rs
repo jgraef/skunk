@@ -285,7 +285,7 @@ impl<W: Writer> Write<W, ()> for u8 {
 
     #[inline]
     fn write(&self, writer: &mut W, _context: ()) -> Result<(), Self::Error> {
-        writer.write_buf(&[*self])
+        writer.write_buf([*self])
     }
 }
 

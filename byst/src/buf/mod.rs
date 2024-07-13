@@ -81,8 +81,7 @@ pub trait BufExt: Buf {
         BufIter::new(self)
     }
 
-    #[inline]
-    fn into_vec(&self) -> Vec<u8> {
+    fn as_vec(&self) -> Vec<u8> {
         let mut reader = self.reader();
         let mut buf = Vec::with_capacity(reader.remaining());
         while let Some(chunk) = reader.peek_chunk() {
@@ -182,21 +181,21 @@ impl<'a, T: Length + ?Sized> Length for &'a mut T {
     }
 }
 
-impl<'a, T: Length + ?Sized> Length for Box<T> {
+impl<T: Length + ?Sized> Length for Box<T> {
     #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
-impl<'a, T: Length + ?Sized> Length for Arc<T> {
+impl<T: Length + ?Sized> Length for Arc<T> {
     #[inline]
     fn len(&self) -> usize {
         T::len(self)
     }
 }
 
-impl<'a, T: Length + ?Sized> Length for Rc<T> {
+impl<T: Length + ?Sized> Length for Rc<T> {
     #[inline]
     fn len(&self) -> usize {
         T::len(self)
@@ -210,7 +209,7 @@ impl<'a, T: Length + ToOwned + ?Sized> Length for Cow<'a, T> {
     }
 }
 
-impl<'a> Length for Vec<u8> {
+impl Length for Vec<u8> {
     #[inline]
     fn len(&self) -> usize {
         Vec::len(self)
@@ -537,7 +536,7 @@ impl<'v> BufWriter for VecWriter<'v> {
     #[inline]
     fn advance(&mut self, by: usize) -> Result<(), crate::io::Full> {
         let n = (self.position + by).saturating_sub(self.vec.len());
-        self.vec.extend((0..n).into_iter().map(|_| 0));
+        self.vec.extend((0..n).map(|_| 0));
         self.position += by;
         Ok(())
     }

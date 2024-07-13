@@ -71,24 +71,24 @@ impl<'c, C: CrcInt, W: Writer> Writer for CrcWriter<'c, C, W> {
 }
 
 pub trait CrcInt: Width {
-    fn crc_digest<'a>(crc: &'a Crc<Self>) -> Digest<'a, Self>;
-    fn digest_update<'a>(digest: &mut Digest<'a, Self>, data: &[u8]);
-    fn digest_finalize<'a>(digest: Digest<'a, Self>) -> Self;
+    fn crc_digest(crc: &Crc<Self>) -> Digest<'_, Self>;
+    fn digest_update(digest: &mut Digest<'_, Self>, data: &[u8]);
+    fn digest_finalize(digest: Digest<'_, Self>) -> Self;
 }
 
 macro_rules! impl_crc_int {
     ($($ty:ty),*) => {
         $(
             impl CrcInt for $ty {
-                fn crc_digest<'a>(crc: &'a Crc<Self>) -> Digest<'a, Self> {
+                fn crc_digest(crc: &Crc<Self>) -> Digest<'_, Self> {
                     crc.digest()
                 }
 
-                fn digest_update<'a>(digest: &mut Digest<'a, Self>, data: &[u8]) {
+                fn digest_update(digest: &mut Digest<'_, Self>, data: &[u8]) {
                     digest.update(data);
                 }
 
-                fn digest_finalize<'a>(digest: Digest<'a, Self>) -> Self {
+                fn digest_finalize(digest: Digest<'_, Self>) -> Self {
                     digest.finalize()
                 }
             }

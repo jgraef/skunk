@@ -19,7 +19,7 @@ pub enum Location<'a> {
 impl<'a> Location<'a> {
     pub fn from_option(path: Option<&'a Path>) -> Self {
         if let Some(path) = path {
-            Self::Path(path.as_ref())
+            Self::Path(path)
         }
         else {
             Self::InMemory

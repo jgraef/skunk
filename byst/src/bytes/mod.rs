@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 pub mod bytes;
 pub mod bytes_mut;
 //mod spilled;

@@ -198,10 +198,10 @@ mod tests {
         copy(&mut bytes_mut, b"abcd").unwrap();
 
         let bytes = bytes_mut.freeze();
-        assert_eq!(bytes.into_vec(), b"abcd");
+        assert_eq!(bytes.as_vec(), b"abcd");
 
         let bytes2 = bytes.clone();
-        assert_eq!(bytes2.into_vec(), b"abcd");
+        assert_eq!(bytes2.as_vec(), b"abcd");
     }
 
     #[test]

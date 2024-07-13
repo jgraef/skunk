@@ -57,9 +57,9 @@ pub trait Deriver {
 
     fn derive_for_item(item: DeriveInput, options: Self::Options) -> Result<TokenStream, Error> {
         match &item.data {
-            Data::Struct(s) => Self::derive_for_struct(&s, &item, options),
-            Data::Enum(e) => Self::derive_for_enum(&e, &item, options),
-            Data::Union(u) => Self::derive_for_union(&u, &item, options),
+            Data::Struct(s) => Self::derive_for_struct(s, &item, options),
+            Data::Enum(e) => Self::derive_for_enum(e, &item, options),
+            Data::Union(u) => Self::derive_for_union(u, &item, options),
         }
     }
 

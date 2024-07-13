@@ -39,7 +39,7 @@ pub enum Error {
     #[error("Could not parse TOML file: {path}")]
     ParseToml {
         #[source]
-        error: toml_edit::TomlError,
+        error: Box<toml_edit::TomlError>,
         path: PathBuf,
         toml: String,
     },

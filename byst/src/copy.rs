@@ -179,7 +179,7 @@ mod tests {
         let mut destination = [0; 4];
         let source = [1; 16];
 
-        match copy(&mut destination, &source) {
+        match copy(&mut destination, source) {
             Ok(_) => panic!("copy didn't fail"),
             Err(Full {
                 required,
@@ -213,7 +213,7 @@ mod tests {
         let mut destination: [u8; 8] = [42; 8];
         let source: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-        let total_copied = copy_io(&mut destination.as_mut(), &mut source.as_ref(), None);
+        let total_copied = copy_io(destination.as_mut(), &mut source.as_ref(), None);
         assert_eq!(total_copied, 8);
         assert_eq!(source, destination);
     }
@@ -223,7 +223,7 @@ mod tests {
         let mut destination: [u8; 8] = [42; 8];
         let source: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-        let total_copied = copy_io(&mut destination.as_mut(), &mut source.as_ref(), Some(4));
+        let total_copied = copy_io(destination.as_mut(), &mut source.as_ref(), Some(4));
         assert_eq!(total_copied, 4);
         assert_eq!([1, 2, 3, 4, 42, 42, 42, 42], destination);
     }

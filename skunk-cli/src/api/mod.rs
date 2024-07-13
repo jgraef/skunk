@@ -38,7 +38,7 @@ use crate::env::{
     Environment,
 };
 
-pub const SERVER_AGENT: &'static str = std::env!("CARGO_PKG_NAME");
+pub const SERVER_AGENT: &str = std::env!("CARGO_PKG_NAME");
 
 #[derive(Debug, thiserror::Error)]
 #[error("API server error")]
@@ -120,10 +120,7 @@ impl Context {
     pub fn socket(&self, id: SocketId) -> Result<socket::Sender, NoSuchSocket> {
         let sockets = self.sockets.read();
 
-        let socket = sockets
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| NoSuchSocket { id })?;
+        let socket = sockets.get(&id).cloned().ok_or(NoSuchSocket { id })?;
 
         // check if socket is closed. if it is, remove from hashmap
         if socket.is_closed() {

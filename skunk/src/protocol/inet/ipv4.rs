@@ -193,12 +193,8 @@ where
 {
     type Error = AnyPayloadError<E>;
 
-    fn read(_reader: &mut R, protocol: Protocol) -> Result<Self, Self::Error> {
-        match protocol {
-            //Protocol::UDP => Ok(Self::Udp(reader.read()?)),
-            //_ => Ok(Self::Unknown(reader.read()?))
-            _ => todo!(),
-        }
+    fn read(_reader: &mut R, _protocol: Protocol) -> Result<Self, Self::Error> {
+        todo!()
     }
 }
 

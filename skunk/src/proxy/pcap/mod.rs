@@ -206,11 +206,8 @@ impl Reactor {
             ethernet::AnyPayload::Ipv4(ip_packet) => {
                 tracing::debug!("IPv4: {:#?}", ip_packet.header);
 
-                match ip_packet.payload {
-                    ipv4::AnyPayload::Udp(udp_packet) => {
-                        tracing::debug!("UDP: {:#?}", udp_packet.header);
-                    }
-                    _ => {}
+                if let ipv4::AnyPayload::Udp(udp_packet) = ip_packet.payload {
+                    tracing::debug!("UDP: {:#?}", udp_packet.header);
                 }
             }
             _ => {}

@@ -54,7 +54,7 @@ pub fn list_interfaces() -> Result<Vec<Interface>, Error> {
 
     let mut interfaces = Vec::with_capacity(n);
 
-    while let Some(next) = it.next() {
+    for next in it {
         if next.ifa_name() != prev.ifa_name() {
             interfaces.extend(interface_from_ifaddrs(std::mem::take(&mut buf)));
             prev = next;

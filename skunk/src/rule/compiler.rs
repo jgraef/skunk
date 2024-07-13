@@ -143,19 +143,19 @@ pub trait Backend: ModifyGraph {
     type Scope;
     type Error: std::error::Error + 'static;
 
-    fn scope<'a>(
+    fn scope(
         &mut self,
-        parent: Option<&'a mut Self::Scope>,
+        parent: Option<&mut Self::Scope>,
         condition: Option<ExpressionId>,
     ) -> Self::Scope;
 
-    fn compile_filter<'a>(
+    fn compile_filter(
         &mut self,
         scope: &mut Self::Scope,
         filter: &Self::Filter,
     ) -> Result<ExpressionId, Error<Self>>;
 
-    fn compile_effect<'a>(
+    fn compile_effect(
         &mut self,
         scope: &mut Self::Scope,
         effect: &Self::Effect,

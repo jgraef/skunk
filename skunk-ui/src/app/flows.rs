@@ -27,7 +27,7 @@ pub fn Flows() -> impl IntoView {
                 </thead>
                 <tbody>
                     <For
-                        each=move || (0..10).into_iter()
+                        each=move || (0..10)
                         key=|x| *x
                         children=move |i| {
                             let expanded = create_rw_signal(false);

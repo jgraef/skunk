@@ -316,11 +316,12 @@ impl AuthProvider for MaybeAuth {
             Self::NoAuth => AuthMethod::NoAuthentication,
             Self::Password { .. } => AuthMethod::UsernamePassword,
         };
-        methods
-            .iter()
-            .any(|m| *m == accept)
-            .then_some(accept.into())
-            .unwrap_or(SelectedAuthMethod::NoAcceptable)
+        if methods.iter().any(|m| *m == accept) {
+            accept.into()
+        }
+        else {
+            SelectedAuthMethod::NoAcceptable
+        }
     }
 
     async fn authenticate<S>(

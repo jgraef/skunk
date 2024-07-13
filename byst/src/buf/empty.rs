@@ -270,7 +270,7 @@ impl AsMut<[u8]> for Empty {
 
 impl<'b> BytesImpl<'b> for Empty {
     fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'b> + 'b>, RangeOutOfBounds> {
-        check_range(range.into())?;
+        check_range(range)?;
         Ok(Box::new(Self))
     }
 
@@ -289,7 +289,7 @@ impl<'b> BytesImpl<'b> for Empty {
 
 impl BytesMutImpl for Empty {
     fn view(&self, range: Range) -> Result<Box<dyn BytesImpl<'_> + '_>, RangeOutOfBounds> {
-        check_range(range.into())?;
+        check_range(range)?;
         Ok(Box::new(Self))
     }
 
@@ -297,7 +297,7 @@ impl BytesMutImpl for Empty {
         &mut self,
         range: Range,
     ) -> Result<Box<dyn BytesMutImpl + 'static>, RangeOutOfBounds> {
-        check_range(range.into())?;
+        check_range(range)?;
         Ok(Box::new(Self))
     }
 

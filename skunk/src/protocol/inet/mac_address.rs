@@ -134,9 +134,9 @@ impl FromStr for MacAddress {
             let mut buf = [0u8; 6];
 
             buf[0] = hex(&mut s)?;
-            for i in 1..6 {
+            for b in &mut buf[1..6] {
                 colon(&mut s)?;
-                buf[i] = hex(&mut s)?;
+                *b = hex(&mut s)?;
             }
 
             Some(buf)

@@ -34,7 +34,7 @@ impl<I: Iterator> Peekable<I> {
         self.peek_inner();
         // if `self.peeked` is None, we're done iterating the inner iterator, but might
         // have peeked from the other side. In that case that will be the next item.
-        self.peeked.as_ref().or_else(|| self.peeked_back.as_ref())
+        self.peeked.as_ref().or(self.peeked_back.as_ref())
     }
 
     #[inline]
@@ -42,7 +42,7 @@ impl<I: Iterator> Peekable<I> {
         self.peek_inner();
         // if `self.peeked` is None, we're done iterating the inner iterator, but might
         // have peeked from the other side. In that case that will be the next item.
-        self.peeked.as_mut().or_else(|| self.peeked_back.as_mut())
+        self.peeked.as_mut().or(self.peeked_back.as_mut())
     }
 
     #[inline]
@@ -64,7 +64,7 @@ impl<I: DoubleEndedIterator> Peekable<I> {
         self.peek_back_inner();
         // if `self.peeked` is None, we're done iterating the inner iterator, but might
         // have peeked from the other side. In that case that will be the next item.
-        self.peeked_back.as_ref().or_else(|| self.peeked.as_ref())
+        self.peeked_back.as_ref().or(self.peeked.as_ref())
     }
 
     #[inline]
@@ -72,7 +72,7 @@ impl<I: DoubleEndedIterator> Peekable<I> {
         self.peek_back_inner();
         // if `self.peeked` is None, we're done iterating the inner iterator, but might
         // have peeked from the other side. In that case that will be the next item.
-        self.peeked_back.as_mut().or_else(|| self.peeked.as_mut())
+        self.peeked_back.as_mut().or(self.peeked.as_mut())
     }
 
     #[inline]

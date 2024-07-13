@@ -94,12 +94,15 @@ pub struct WithOffset<I> {
 impl<I> WithOffset<I> {
     #[inline]
     pub fn new(inner: I) -> Self {
-        Self::with_offset(inner, 0)
+        Self::with_initial_offset(inner, 0)
     }
 
     #[inline]
-    pub fn with_offset(inner: I, offset: usize) -> Self {
-        Self { inner, offset }
+    pub fn with_initial_offset(inner: I, initial_offset: usize) -> Self {
+        Self {
+            inner,
+            offset: initial_offset,
+        }
     }
 
     #[inline]

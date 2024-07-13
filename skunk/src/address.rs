@@ -2,6 +2,7 @@
 
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     convert::Infallible,
     fmt::Display,
     net::{
@@ -83,7 +84,7 @@ impl<'de> Deserialize<'de> for HostAddress {
         D: serde::Deserializer<'de>,
     {
         let s: Cow<'de, str> = Deserialize::deserialize(deserializer)?;
-        Ok(s.parse().map_err(serde::de::Error::custom)?)
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -138,7 +139,7 @@ impl<'de> Deserialize<'de> for TcpAddress {
         D: serde::Deserializer<'de>,
     {
         let s: Cow<'de, str> = Deserialize::deserialize(deserializer)?;
-        Ok(s.parse().map_err(serde::de::Error::custom)?)
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -202,7 +203,7 @@ impl<'de> Deserialize<'de> for UdpAddress {
         D: serde::Deserializer<'de>,
     {
         let s: Cow<'de, str> = Deserialize::deserialize(deserializer)?;
-        Ok(s.parse().map_err(serde::de::Error::custom)?)
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -247,16 +248,12 @@ impl<'a> TryFrom<Cow<'a, str>> for Ports {
     fn try_from(s: Cow<'a, str>) -> Result<Self, Self::Error> {
         let err = |_| ParsePortError(s.to_string());
         if let Some((min, max)) = s.split_once("..") {
-            let min = min.parse().map_err(err)?;
-            let max = max.parse().map_err(err)?;
-            if min > max {
-                Ok(Self::Range { min: max, max: min })
-            }
-            else if min == max {
-                Ok(Self::Single(min))
-            }
-            else {
-                Ok(Self::Range { min, max })
+            let min = min.parse::<Port>().map_err(err)?;
+            let max = max.parse::<Port>().map_err(err)?;
+            match min.cmp(&max) {
+                Ordering::Greater => Ok(Self::Range { min: max, max: min }),
+                Ordering::Equal => Ok(Self::Single(min)),
+                Ordering::Less => Ok(Self::Range { min, max }),
             }
         }
         else {
@@ -530,21 +527,21 @@ impl<'de> serde::de::Visitor<'de> for PortsVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(Ports::try_from(value).map_err(serde::de::Error::custom)?)
+        Ports::try_from(value).map_err(serde::de::Error::custom)
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(Ports::try_from(value).map_err(serde::de::Error::custom)?)
+        Ports::try_from(value).map_err(serde::de::Error::custom)
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(Ports::try_from(value).map_err(serde::de::Error::custom)?)
+        Ports::try_from(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -629,20 +626,20 @@ impl<'de> serde::de::Visitor<'de> for PortVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(Port::try_from(value).map_err(serde::de::Error::custom)?)
+        Port::try_from(value).map_err(serde::de::Error::custom)
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(Port::try_from(value).map_err(serde::de::Error::custom)?)
+        Port::try_from(value).map_err(serde::de::Error::custom)
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        Ok(Port::try_from(value).map_err(serde::de::Error::custom)?)
+        Port::try_from(value).map_err(serde::de::Error::custom)
     }
 }

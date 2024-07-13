@@ -250,7 +250,7 @@ impl Reactor {
     async fn handle_request(&mut self, request: Packet) {
         let mut merge_flag = false;
 
-        if let Some(entry) = self.cache.get_mut(&request.sender_protocol_address.into()) {
+        if let Some(entry) = self.cache.get_mut(&request.sender_protocol_address) {
             tracing::debug!(protocol_address = %request.sender_protocol_address, hardware_address = %request.sender_hardware_address, "merge");
             entry.hardware_address = request.sender_hardware_address;
             merge_flag = true;
@@ -259,16 +259,13 @@ impl Reactor {
         if let Some(CacheEntry {
             hardware_address,
             is_self: true,
-        }) = self
-            .cache
-            .get(&request.target_protocol_address.into())
-            .cloned()
+        }) = self.cache.get(&request.target_protocol_address).cloned()
         {
             if !merge_flag {
                 tracing::debug!(protocol_address = %request.sender_protocol_address, hardware_address = %request.sender_hardware_address, "new");
 
                 self.cache.insert(
-                    request.sender_protocol_address.into(),
+                    request.sender_protocol_address,
                     CacheEntry {
                         hardware_address: request.sender_hardware_address,
                         is_self: false,
@@ -308,10 +305,10 @@ struct CacheEntry {
 }
 
 fn ip_address_is_same_kind(first: &IpAddr, second: &IpAddr) -> bool {
-    match (first, second) {
-        (IpAddr::V4(_), IpAddr::V4(_)) | (IpAddr::V6(_), IpAddr::V6(_)) => true,
-        _ => false,
-    }
+    matches!(
+        (first, second),
+        (IpAddr::V4(_), IpAddr::V4(_)) | (IpAddr::V6(_), IpAddr::V6(_))
+    )
 }
 
 fn assert_ip_address_is_same_kind(first: &IpAddr, second: &IpAddr) {

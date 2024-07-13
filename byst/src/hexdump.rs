@@ -44,12 +44,12 @@ impl<B: Buf> Display for Hexdump<B> {
             write!(f, "{line}")?;
         }
 
-        while let Some(line) = lines.next() {
+        for line in lines {
             write!(f, "\n{line}")?;
         }
 
         if self.config.trailing_newline {
-            writeln!(f, "")?;
+            writeln!(f)?;
         }
 
         Ok(())

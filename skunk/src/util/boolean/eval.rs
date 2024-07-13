@@ -52,8 +52,8 @@ impl Evaluator {
                 num_inputs_not_evaluated: 0,
             },
         );
-        propagate(graph.literals[0], false, &graph, &mut values);
-        propagate(graph.literals[1], true, &graph, &mut values);
+        propagate(graph.literals[0], false, graph, &mut values);
+        propagate(graph.literals[1], true, graph, &mut values);
 
         Self {
             instance_id: graph.instance_id,

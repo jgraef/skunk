@@ -361,13 +361,13 @@ mod tests {
         .collect::<Rope<_>>();
 
         let view = rope.view(2..9).unwrap();
-        assert_eq!(view.into_vec(), b"llo Wor");
+        assert_eq!(view.as_vec(), b"llo Wor");
 
         let view = rope.view(5..9).unwrap();
-        assert_eq!(view.into_vec(), b" Wor");
+        assert_eq!(view.as_vec(), b" Wor");
 
         let view = rope.view(6..).unwrap();
-        assert_eq!(view.into_vec(), b"World!");
+        assert_eq!(view.as_vec(), b"World!");
     }
 
     #[test]
@@ -383,12 +383,12 @@ mod tests {
         .collect::<Rope<_>>();
 
         let view = rope.view(5..6).unwrap();
-        let chunks = collect_chunks(&view);
+        let chunks = collect_chunks(view);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], b" ");
 
         let view = rope.view(5..11).unwrap();
-        let chunks = collect_chunks(&view);
+        let chunks = collect_chunks(view);
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0], b" ");
         assert_eq!(chunks[1], b"World");
@@ -408,15 +408,15 @@ mod tests {
 
         let view = rope.view(2..9).unwrap();
         let view2 = view.view(2..4).unwrap();
-        assert_eq!(view2.into_vec(), b"o ");
+        assert_eq!(view2.as_vec(), b"o ");
 
         let view = rope.view(5..9).unwrap();
         let view2 = view.view(1..).unwrap();
-        assert_eq!(view2.into_vec(), b"Wor");
+        assert_eq!(view2.as_vec(), b"Wor");
 
         let view = rope.view(6..).unwrap();
         let view2 = view.view(..5).unwrap();
-        assert_eq!(view2.into_vec(), b"World");
+        assert_eq!(view2.as_vec(), b"World");
     }
 
     #[test]

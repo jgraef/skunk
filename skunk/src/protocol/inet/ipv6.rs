@@ -180,8 +180,8 @@ pub struct TrafficClass {
 impl From<u8> for TrafficClass {
     fn from(value: u8) -> Self {
         Self {
-            ds: (value >> 2) as u8,
-            ecn: (value & 3) as u8,
+            ds: (value >> 2),
+            ecn: (value & 3),
         }
     }
 }
@@ -558,17 +558,11 @@ pub mod extension_headers {
             let data_length = usize::from(header_extension_length) * 8 + 4;
             let mut limit = reader.limit(data_length);
 
-            let routing_data = match routing_type {
-                // todo: we currently support no routing type
-                _ => {
-                    // handle unrecognized routing type
-                    if segments_left == 0 {
-                        RoutingData::Unrecognized { routing_type }
-                    }
-                    else {
-                        return Err(InvalidExtensionHeader::DiscardPacket);
-                    }
-                }
+            let routing_data = if segments_left == 0 {
+                RoutingData::Unrecognized { routing_type }
+            }
+            else {
+                return Err(InvalidExtensionHeader::DiscardPacket);
             };
 
             limit.skip_remaining()?;

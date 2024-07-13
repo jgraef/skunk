@@ -39,7 +39,7 @@ impl<R: Reader> Read<R, ()> for Header {
         let checksum = reader.read_with(NetworkEndian)?;
         let urgent_pointer = reader.read_with(NetworkEndian)?;
 
-        if data_offset < 5 || data_offset > 15 {
+        if !(5..=15).contains(&data_offset) {
             return Err(InvalidHeader::InvalidDataOffset { data_offset });
         }
 

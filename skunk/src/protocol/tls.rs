@@ -262,7 +262,9 @@ impl Context {
             .connect(domain, stream)
             .await?;
 
-        Ok(Outgoing { inner: stream })
+        Ok(Outgoing {
+            inner: Box::new(stream),
+        })
     }
 
     /// Decrypt the incoming connection by presenting our own certificate.
@@ -411,7 +413,9 @@ where
             .into_stream(Arc::new(server_config))
             .await?;
 
-        Ok(Incoming { inner: stream })
+        Ok(Incoming {
+            inner: Box::new(stream),
+        })
     }
 
     /// The server name that was sent by the client in the `CLIENT_HELLO`
@@ -425,12 +429,13 @@ where
 /// An outgoing (client) connection that is TLS encrypted.
 #[derive(Debug)]
 pub struct Outgoing<Inner> {
-    inner: tokio_rustls::client::TlsStream<Inner>,
+    // this is at least 1065 bytes large, so we box it.
+    inner: Box<tokio_rustls::client::TlsStream<Inner>>,
 }
 
 impl<Inner> Outgoing<Inner> {
     pub fn get_tls_connection(&self) -> &rustls::ClientConnection {
-        &self.inner.get_ref().1
+        self.inner.get_ref().1
     }
 }
 
@@ -471,12 +476,13 @@ impl<Inner: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Outgoing<Inner> {
 /// An incoming (server) connection that is TLS encrypted.
 #[derive(Debug)]
 pub struct Incoming<Inner> {
-    inner: tokio_rustls::server::TlsStream<Inner>,
+    // this is at least 1145 bytes large, so we box it.
+    inner: Box<tokio_rustls::server::TlsStream<Inner>>,
 }
 
 impl<Inner> Incoming<Inner> {
     pub fn get_tls_connection(&self) -> &rustls::ServerConnection {
-        &self.inner.get_ref().1
+        self.inner.get_ref().1
     }
 }
 

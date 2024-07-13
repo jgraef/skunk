@@ -301,7 +301,7 @@ impl<R: BufReader, B: Buf + Copy> Read<R, PointerBase<B>> for Name {
                     else if flags == 0 {
                         // label
                         let length = usize::from(value & 0x3f);
-                        self.total_length += usize::from(length);
+                        self.total_length += length;
                         if self.total_length > 255 {
                             return Err(InvalidName::TooLong {
                                 length: self.total_length,
@@ -695,8 +695,8 @@ fn is_valid_label(label: impl Buf, is_all_numeric: &mut bool) -> Result<(), Inva
 
     loop {
         match chunk[0] {
-            b'a'..b'z' | b'A'..b'Z' | b'-' => *is_all_numeric = false,
-            b'0'..b'9' => {}
+            b'a'..=b'z' | b'A'..=b'Z' | b'-' => *is_all_numeric = false,
+            b'0'..=b'9' => {}
             _ => {
                 return Err(InvalidName::InvalidCharacter {
                     character: chunk[0],

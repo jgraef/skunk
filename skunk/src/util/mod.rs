@@ -25,6 +25,12 @@ use parking_lot::Mutex;
 /// we implement it ourselves. Also we inclose the `Arc`, because why not.
 pub struct Lazy<T>(Mutex<Option<Arc<T>>>);
 
+impl<T> Default for Lazy<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Lazy<T> {
     pub const fn new() -> Self {
         Self(Mutex::new(None))
@@ -89,7 +95,7 @@ pub fn unique_id() -> NonZeroUsize {
 /// > default implementation) will result in exactly one static item being
 /// > defined, as if the static definition was pulled out of the current scope
 /// > into the module. There will not be one item per monomorphization.
-/// ([source](https://doc.rust-lang.org/reference/items/static-items.html#statics--generics))
+/// > ([source](https://doc.rust-lang.org/reference/items/static-items.html#statics--generics))
 macro_rules! unique_ids {
     () => {{
         static UNIQUE_IDS: crate::util::UsizeIdGenerator = crate::util::UsizeIdGenerator::new();

@@ -28,14 +28,14 @@ pub use self::{
 
 /// Default configuration directory relative to the OS's local configuration
 /// directory (e.g. `~/.config`` on Linux).
-pub const CONFIG_DIR_NAME: &'static str = "feralsec/skunk";
+pub const CONFIG_DIR_NAME: &str = "feralsec/skunk";
 
-pub const DATA_DIR_NAME: &'static str = "feralsec/skunk";
+pub const DATA_DIR_NAME: &str = "feralsec/skunk";
 
 /// Main configuration file name.
-pub const CONFIG_FILE: &'static str = "skunk.toml";
+pub const CONFIG_FILE: &str = "skunk.toml";
 
-pub const DEFAULT_CONFIG: &'static str = include_str!("skunk.default.toml");
+pub const DEFAULT_CONFIG: &str = include_str!("skunk.default.toml");
 
 #[derive(Clone, Debug)]
 pub struct Environment {

@@ -36,9 +36,9 @@ impl Deriver for DeriveWrite {
         }
         else {
             match &item.data {
-                Data::Struct(s) => Self::derive_for_struct(&s, &item, options),
-                Data::Enum(e) => Self::derive_for_enum(&e, &item, options),
-                Data::Union(u) => Self::derive_for_union(&u, &item, options),
+                Data::Struct(s) => Self::derive_for_struct(s, &item, options),
+                Data::Enum(e) => Self::derive_for_enum(e, &item, options),
+                Data::Union(u) => Self::derive_for_union(u, &item, options),
             }
         }
     }
@@ -91,7 +91,7 @@ fn make_struct_write_fields(
             member: field_name,
             var: _,
         } = FieldName::from_field(i, field);
-        let field_options = FieldOptions::from_field(&field)?;
+        let field_options = FieldOptions::from_field(field)?;
         let field_ty = &field.ty;
 
         if field_options.skip.is_some() {

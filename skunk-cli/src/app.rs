@@ -13,7 +13,7 @@ use crate::env::{
     Environment,
 };
 
-pub const APP_NAME: &'static str = std::env!("CARGO_PKG_NAME");
+pub const APP_NAME: &str = std::env!("CARGO_PKG_NAME");
 pub const APP_VERSION: Version = env_version!("CARGO_PKG_VERSION");
 
 pub struct App {

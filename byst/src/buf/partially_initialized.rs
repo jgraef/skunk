@@ -157,7 +157,7 @@ impl<B: AsRef<[MaybeUninit<u8>]>> Buf for PartiallyInitialized<B> {
 
     #[inline]
     fn view(&self, range: impl Into<Range>) -> Result<Self::View<'_>, RangeOutOfBounds> {
-        Ok(range.into().slice_get(self.bytes())?)
+        range.into().slice_get(self.bytes())
     }
 
     #[inline]
@@ -184,7 +184,7 @@ impl<B: AsRef<[MaybeUninit<u8>]> + AsMut<[MaybeUninit<u8>]>> BufMut for Partiall
 
     #[inline]
     fn view_mut(&mut self, range: impl Into<Range>) -> Result<Self::ViewMut<'_>, RangeOutOfBounds> {
-        Ok(range.into().slice_get_mut(self.bytes_mut())?)
+        range.into().slice_get_mut(self.bytes_mut())
     }
 
     #[inline]
