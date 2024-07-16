@@ -2,9 +2,9 @@
 //!
 //! [1]: https://github.com/toml-lang/toml/blob/1.0.0/toml.abnf
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
+use std::ops::{
+    Bound,
+    RangeBounds,
 };
 
 use winnow::{
@@ -18,9 +18,7 @@ use winnow::{
         empty,
         fail,
         opt,
-        peek,
-        preceded,
-        separated,
+        trace,
     },
     error::{
         ContextError,
@@ -29,7 +27,6 @@ use winnow::{
     },
     stream::{
         AsChar,
-        Checkpoint,
         Range,
         Stream,
     },
@@ -37,7 +34,6 @@ use winnow::{
         any,
         one_of,
         take,
-        take_until,
         take_while,
     },
     PResult,
@@ -48,7 +44,6 @@ use super::input::{
     Input,
     ParserExt,
     Span,
-    Spanned,
 };
 
 pub struct Toml {
@@ -359,13 +354,13 @@ pub enum String {
     Literal(LiteralString),
 }
 
-impl<'s> String<'s> {
-    fn parse(input: &mut &'s str) -> PResult<Self> {
+impl String {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             MlBasicString::parse.map(|key| Self::MlBasic(key)),
-            Basic::parse.map(|key| Self::Basic(key)),
-            MlLiteral::parse.map(|key| Self::MlLiteral(key)),
-            Literal::parse.map(|key| Self::Literal(key)),
+            BasicString::parse.map(|key| Self::Basic(key)),
+            MlLiteralString::parse.map(|key| Self::MlLiteral(key)),
+            LiteralString::parse.map(|key| Self::Literal(key)),
         ))
         .parse_next(input)
     }
@@ -845,18 +840,46 @@ pub enum TimeOffset {
     },
 }
 
-pub struct Table {}
+pub struct Table {
+    span: Span,
+}
+
+impl Table {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        todo!();
+    }
+}
+
+pub struct Array {
+    span: Span,
+}
+
+impl Array {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        todo!();
+    }
+}
+
+pub struct InlineTable {
+    span: Span,
+}
+
+impl InlineTable {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        todo!();
+    }
+}
 
 pub struct Separated<Item, Sep> {
     items: Vec<Item>,
-    seps: Vec<Sep>,
+    separators: Vec<Sep>,
 }
 
 impl<Item, Sep> Separated<Item, Sep> {
     pub fn parser<Input, ItemParser, SepParser, Error>(
         occurences: impl Into<Range>,
-        item: ItemParser,
-        separator: SepParser,
+        mut item_parser: ItemParser,
+        mut separator_parser: SepParser,
     ) -> impl Parser<Input, Self, Error>
     where
         Input: Stream,
@@ -864,7 +887,54 @@ impl<Item, Sep> Separated<Item, Sep> {
         SepParser: Parser<Input, Sep, Error>,
         Error: ParserError<Input>,
     {
-        todo!();
+        let range = occurences.into();
+        let start = match range.start_bound() {
+            Bound::Included(n) => *n,
+            Bound::Excluded(n) => *n + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            Bound::Included(n) => Some(*n + 1),
+            Bound::Excluded(n) => Some(*n),
+            Bound::Unbounded => None,
+        };
+
+        trace("separated", move |input: &mut Input| {
+            let mut items = vec![];
+            let mut separators = vec![];
+            let mut n = 0;
+            let checkpoint = input.checkpoint();
+
+            match item_parser.parse_next(input) {
+                Ok(item) => {
+                    items.push(item);
+                    n += 1;
+
+                    while end.map_or(true, |end| n < end) {
+                        let checkpoint = input.checkpoint();
+
+                        match separator_parser.parse_next(input) {
+                            Ok(separator) => {
+                                separators.push(separator);
+                                items.push(item_parser.parse_next(input)?);
+                                n += 1;
+                            }
+                            Err(ErrMode::Backtrack(_)) if n >= start => {
+                                input.reset(&checkpoint);
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+                Err(ErrMode::Backtrack(_)) if start == 0 => {
+                    input.reset(&checkpoint);
+                }
+                Err(e) => return Err(e),
+            }
+
+            Ok(Self { items, separators })
+        })
     }
 }
 
@@ -876,8 +946,8 @@ pub struct Delimited<Item, Delimiter> {
 
 impl<Item, Delimiter> Delimited<Item, Delimiter> {
     pub fn parser<Input, ItemParser, DelimiterParser, Error>(
-        item: ItemParser,
-        delimiter: DelimiterParser,
+        mut item_parser: ItemParser,
+        mut delimiter_parser: DelimiterParser,
     ) -> impl Parser<Input, Self, Error>
     where
         Input: Stream,
@@ -885,6 +955,12 @@ impl<Item, Delimiter> Delimited<Item, Delimiter> {
         DelimiterParser: Parser<Input, Delimiter, Error>,
         Error: ParserError<Input>,
     {
-        todo!();
+        trace("delimited", move |input: &mut Input| {
+            let start = delimiter_parser.parse_next(input)?;
+            let item = item_parser.parse_next(input)?;
+            let end = delimiter_parser.parse_next(input)?;
+
+            Ok(Self { start, item, end })
+        })
     }
 }
