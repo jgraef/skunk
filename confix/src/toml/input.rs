@@ -43,27 +43,6 @@ impl Span {
     pub fn source_file(&self) -> &SourceFile {
         &self.source_file
     }
-
-    pub fn merge(&self, other: &Span) -> Span {
-        assert!(Arc::ptr_eq(&self.source_file, &other.source_file));
-        let start = if self.start.offset < other.start.offset {
-            self.start
-        }
-        else {
-            other.start
-        };
-        let end = if self.end.offset > other.end.offset {
-            self.end
-        }
-        else {
-            other.end
-        };
-        Span {
-            start,
-            end,
-            source_file: self.source_file.clone(),
-        }
-    }
 }
 
 impl Deref for Span {

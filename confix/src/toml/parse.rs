@@ -46,6 +46,7 @@ use super::input::{
     Span,
 };
 
+#[derive(Clone, Debug)]
 pub struct Toml {
     pub span: Span,
     pub expressions: Separated<Expression, Newline>,
@@ -55,7 +56,7 @@ impl Toml {
     /// ```plain
     /// toml = expression *( newline expression )
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         Separated::parser(1.., Expression::parse, Newline::parse)
             .spanned()
             .map(|(span, expressions)| Self { span, expressions })
@@ -63,6 +64,7 @@ impl Toml {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Expression {
     Comment {
         span: Span,
@@ -91,7 +93,7 @@ impl Expression {
     /// expression =/ ws keyval ws [ comment ]
     /// expression =/ ws table ws [ comment ]
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             (Whitespace::parse, opt(Comment::parse))
                 .spanned()
@@ -133,8 +135,9 @@ impl Expression {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Whitespace {
-    span: Span,
+    pub span: Span,
 }
 
 impl Whitespace {
@@ -143,7 +146,7 @@ impl Whitespace {
     /// wschar =  %x20  ; Space
     /// wschar =/ %x09  ; Horizontal tab
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         take_while(0.., wschar)
             .recognize()
             .map(|span| Self { span })
@@ -151,12 +154,13 @@ impl Whitespace {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Newline {
-    span: Span,
+    pub span: Span,
 }
 
 impl Newline {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         line_ending
             .recognize()
             .map(|span| Self { span })
@@ -164,23 +168,26 @@ impl Newline {
     }
 }
 
-fn wschar(c: char) -> bool {
+pub fn wschar(c: char) -> bool {
     c == ' ' || c == '\t'
 }
 
-fn non_ascii(c: char) -> bool {
+pub fn non_ascii(c: char) -> bool {
     matches!(
         u32::from(c),
         0x80..=0xd7ff | 0xe000..=0x10ffff
     )
 }
 
-fn non_eol(c: char) -> bool {
+pub fn non_eol(c: char) -> bool {
     non_ascii(c) || matches!(c, '\x20'..='\x7f' | '\t')
 }
 
+#[derive(Clone, Debug)]
 pub struct Comment {
-    span: Span,
+    pub span: Span,
+    pub pound: Pound,
+    pub comment: Span,
 }
 
 impl Comment {
@@ -191,23 +198,41 @@ impl Comment {
     ///
     /// comment = comment-start-symbol *non-eol
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
-        ("#", take_while(0.., non_eol))
-            .recognize()
-            .map(|span| Self { span })
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        (Pound::parse, take_while(0.., non_eol))
+            .spanned()
+            .map(|(span, (pound, comment))| {
+                Self {
+                    span,
+                    pound,
+                    comment,
+                }
+            })
             .parse_next(input)
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Pound {
+    pub span: Span,
+}
+
+impl Pound {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        "#".map(|span| Self { span }).parse_next(input)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct KeyValue {
-    span: Span,
-    key: Key,
-    sep: KeyvalSep,
-    val: Value,
+    pub span: Span,
+    pub key: Key,
+    pub sep: KeyvalSep,
+    pub val: Value,
 }
 
 impl KeyValue {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         (Key::parse, KeyvalSep::parse, Value::parse)
             .spanned()
             .map(|(span, (key, sep, val))| {
@@ -222,13 +247,14 @@ impl KeyValue {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Key {
     Simple(SimpleKey),
     Dotted(DottedKey),
 }
 
 impl Key {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             SimpleKey::parse.map(|key| Self::Simple(key)),
             DottedKey::parse.map(|key| Self::Dotted(key)),
@@ -237,13 +263,14 @@ impl Key {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum SimpleKey {
     Quoted(QuotedKey),
     Unquoted(UnquotedKey),
 }
 
 impl SimpleKey {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             QuotedKey::parse.map(|key| Self::Quoted(key)),
             UnquotedKey::parse.map(|key| Self::Unquoted(key)),
@@ -252,25 +279,27 @@ impl SimpleKey {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct UnquotedKey {
-    span: Span,
+    pub span: Span,
 }
 
 impl UnquotedKey {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         take_while(1.., (AsChar::is_alphanum, '-', '_'))
             .parse_next(input)
             .map(|span| Self { span })
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum QuotedKey {
     Basic(BasicString),
     Literal(LiteralString),
 }
 
 impl QuotedKey {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             BasicString::parse.map(|key| Self::Basic(key)),
             LiteralString::parse.map(|key| Self::Literal(key)),
@@ -279,13 +308,14 @@ impl QuotedKey {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct DottedKey {
-    span: Span,
-    parts: Separated<SimpleKey, DotSep>,
+    pub span: Span,
+    pub parts: Separated<SimpleKey, DotSep>,
 }
 
 impl DottedKey {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         Separated::parser(1.., SimpleKey::parse, DotSep::parse)
             .spanned()
             .map(|(span, parts)| Self { span, parts })
@@ -293,35 +323,80 @@ impl DottedKey {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct DotSep {
     span: Span,
+    ws1: Whitespace,
+    dot: Dot,
+    ws2: Whitespace,
 }
 
 impl DotSep {
-    fn parse(input: &mut Input) -> PResult<Self> {
-        (Whitespace::parse, '.', Whitespace::parse)
-            .recognize()
-            .map(|span| Self { span })
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        (Whitespace::parse, Dot::parse, Whitespace::parse)
+            .spanned()
+            .map(|(span, (ws1, dot, ws2))| {
+                Self {
+                    span,
+                    ws1,
+                    dot,
+                    ws2,
+                }
+            })
             .parse_next(input)
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Dot {
+    pub span: Span,
+}
+
+impl Dot {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        ".".map(|span| Self { span }).parse_next(input)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct KeyvalSep {
     span: Span,
+    ws1: Whitespace,
+    equal: Equal,
+    ws2: Whitespace,
 }
 
 impl KeyvalSep {
-    fn parse(input: &mut Input) -> PResult<Self> {
-        (Whitespace::parse, '=', Whitespace::parse)
-            .recognize()
-            .map(|span| Self { span })
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        (Whitespace::parse, Equal::parse, Whitespace::parse)
+            .spanned()
+            .map(|(span, (ws1, equal, ws2))| {
+                Self {
+                    span,
+                    ws1,
+                    equal,
+                    ws2,
+                }
+            })
             .parse_next(input)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Equal {
+    pub span: Span,
+}
+
+impl Equal {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        "=".map(|span| Self { span }).parse_next(input)
     }
 }
 
 /// ```plain
 /// val = string / boolean / array / inline-table / date-time / float / integer
 /// ```
+#[derive(Clone, Debug)]
 pub enum Value {
     String(String),
     Boolean(Boolean),
@@ -333,7 +408,7 @@ pub enum Value {
 }
 
 impl Value {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             String::parse.map(|key| Self::String(key)),
             Boolean::parse.map(|key| Self::Boolean(key)),
@@ -347,6 +422,7 @@ impl Value {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum String {
     MlBasic(MlBasicString),
     Basic(BasicString),
@@ -355,7 +431,7 @@ pub enum String {
 }
 
 impl String {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             MlBasicString::parse.map(|key| Self::MlBasic(key)),
             BasicString::parse.map(|key| Self::Basic(key)),
@@ -366,9 +442,10 @@ impl String {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct BasicString {
-    span: Span,
-    inner: Delimited<Span, Span>,
+    pub span: Span,
+    pub inner: Delimited<Span, DoubleQuote>,
 }
 
 impl BasicString {
@@ -379,18 +456,32 @@ impl BasicString {
     ///
     /// basic-char = basic-unescaped / escaped
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
-        Delimited::parser(escaped(take_while(0.., basic_unescaped)), "\"")
-            .spanned()
-            .map(|(span, inner)| Self { span, inner })
-            .parse_next(input)
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        Delimited::parser(
+            escaped(take_while(0.., basic_unescaped)),
+            DoubleQuote::parse,
+        )
+        .spanned()
+        .map(|(span, inner)| Self { span, inner })
+        .parse_next(input)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DoubleQuote {
+    pub span: Span,
+}
+
+impl DoubleQuote {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        "\"".map(|span| Self { span }).parse_next(input)
     }
 }
 
 /// ```plain
 /// basic-unescaped = wschar / %x21 / %x23-5B / %x5D-7E / non-ascii
 /// ```
-fn basic_unescaped(c: char) -> bool {
+pub fn basic_unescaped(c: char) -> bool {
     wschar(c) || c == '\x21' || matches!(c, '\x23'..='\x5b' | '\x5d'..='\x7e') | non_ascii(c)
 }
 
@@ -408,7 +499,7 @@ fn basic_unescaped(c: char) -> bool {
 /// escape-seq-char =/ %x75 4HEXDIG ; uXXXX                U+XXXX
 /// escape-seq-char =/ %x55 8HEXDIG ; UXXXXXXXX
 /// ```
-fn escaped<'s, UnescapedParser, Error>(
+pub fn escaped<'s, UnescapedParser, Error>(
     unescaped: UnescapedParser,
 ) -> impl Parser<Input, Span, Error>
 where
@@ -433,9 +524,10 @@ where
     )
 }
 
+#[derive(Clone, Debug)]
 pub struct MlBasicString {
-    span: Span,
-    inner: Delimited<Span, Span>,
+    pub span: Span,
+    pub inner: Delimited<Span, TripleDoubleQuote>,
 }
 
 impl MlBasicString {
@@ -450,14 +542,26 @@ impl MlBasicString {
     /// mlb-unescaped = wschar / %x21 / %x23-5B / %x5D-7E / non-ascii
     /// mlb-escaped-nl = escape ws newline *( wschar / newline )
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         todo!();
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TripleDoubleQuote {
+    pub span: Span,
+}
+
+impl TripleDoubleQuote {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        "\"\"\"".map(|span| Self { span }).parse_next(input)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct LiteralString {
-    span: Span,
-    inner: Delimited<Span, Span>,
+    pub span: Span,
+    pub inner: Delimited<Span, SingleQuote>,
 }
 
 impl LiteralString {
@@ -468,36 +572,53 @@ impl LiteralString {
     ///
     /// literal-char = %x09 / %x20-26 / %x28-7E / non-ascii
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
-        Delimited::parser(take_while(0.., literal_char), "'")
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        Delimited::parser(take_while(0.., literal_char), SingleQuote::parse)
             .spanned()
             .map(|(span, inner)| Self { span, inner })
             .parse_next(input)
     }
 }
 
-fn literal_char(c: char) -> bool {
-    c == '\x09' || matches!(c, '\x20'..='\x26' | '\x28'..='\x7e') | non_ascii(c)
+#[derive(Clone, Debug)]
+pub struct SingleQuote {
+    pub span: Span,
 }
 
+impl SingleQuote {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        "'".map(|span| Self { span }).parse_next(input)
+    }
+}
+
+pub fn literal_char(c: char) -> bool {
+    matches!(c, '\x09' | '\x20'..='\x26' | '\x28'..='\x7e') | non_ascii(c)
+}
+
+#[derive(Clone, Debug)]
 pub struct MlLiteralString {
-    span: Span,
-    inner: Delimited<Span, Span>,
+    pub span: Span,
+    pub inner: Delimited<Span, TripleSingleQuote>,
 }
 
 impl MlLiteralString {
-    /// ```plain
-    /// literal-string = apostrophe *literal-char apostrophe
-    ///
-    /// apostrophe = %x27 ; ' apostrophe
-    ///
-    /// literal-char = %x09 / %x20-26 / %x28-7E / non-ascii
-    /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         todo!();
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TripleSingleQuote {
+    pub span: Span,
+}
+
+impl TripleSingleQuote {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
+        "'''".map(|span| Self { span }).parse_next(input)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Integer {
     Dec {
         span: Span,
@@ -522,7 +643,7 @@ pub enum Integer {
 }
 
 impl Integer {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             dec_int
                 .spanned()
@@ -532,7 +653,7 @@ impl Integer {
         .parse_next(input)
     }
 
-    fn as_int(&self) -> i64 {
+    pub fn as_int(&self) -> i64 {
         match self {
             Integer::Dec { sign, digits, .. } => {
                 digits.as_int(10) * sign.as_ref().map_or(1, Sign::signum)
@@ -544,7 +665,7 @@ impl Integer {
     }
 }
 
-fn digit(base: u8) -> fn(char) -> bool {
+pub fn digit(base: u8) -> fn(char) -> bool {
     match base {
         10 => |c| c.is_dec_digit(),
         16 => |c| c.is_hex_digit(),
@@ -554,16 +675,16 @@ fn digit(base: u8) -> fn(char) -> bool {
     }
 }
 
-fn or_underscore(inner: impl Fn(char) -> bool) -> impl Fn(char) -> bool {
+pub fn or_underscore(inner: impl Fn(char) -> bool) -> impl Fn(char) -> bool {
     move |c| inner(c) || c == '_'
 }
 
-fn dec_int(input: &mut Input) -> PResult<(Option<Sign>, Digits)> {
+pub fn dec_int(input: &mut Input) -> PResult<(Option<Sign>, Digits)> {
     (opt(Sign::parse), Digits::parse_dec).parse_next(input)
 }
 
 fn prefixed_int(input: &mut Input) -> PResult<Integer> {
-    fn inner(input: &mut Input) -> PResult<(IntegerPrefix, Digits)> {
+    pub fn inner(input: &mut Input) -> PResult<(IntegerPrefix, Digits)> {
         let prefix = IntegerPrefix::parse.parse_next(input)?;
         let digits = Digits::with_leading_zeros(prefix.base()).parse_next(input)?;
         Ok((prefix, digits))
@@ -599,12 +720,13 @@ fn prefixed_int(input: &mut Input) -> PResult<Integer> {
         .parse_next(input)
 }
 
+#[derive(Clone, Debug)]
 pub struct Digits {
-    span: Span,
+    pub span: Span,
 }
 
 impl Digits {
-    fn parse_dec(input: &mut Input) -> PResult<Digits> {
+    pub fn parse_dec(input: &mut Input) -> PResult<Digits> {
         let digit = digit(10);
         let digits = |input: &mut Input| -> PResult<()> {
             let first_digit = one_of(digit).parse_next(input)?;
@@ -619,12 +741,12 @@ impl Digits {
             .parse_next(input)
     }
 
-    fn with_leading_zeros(base: u8) -> impl Parser<Input, Digits, ContextError> {
+    pub fn with_leading_zeros(base: u8) -> impl Parser<Input, Digits, ContextError> {
         let digit = digit(base);
         take_while(1.., or_underscore(digit)).map(|span| Digits { span })
     }
 
-    fn as_int(&self, base: u8) -> i64 {
+    pub fn as_int(&self, base: u8) -> i64 {
         let radix = u32::from(base);
         let base = i64::from(base);
 
@@ -643,7 +765,7 @@ pub enum Sign {
 }
 
 impl Sign {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         take(1usize)
             .verify_map(|span: Span| {
                 match &*span {
@@ -655,7 +777,7 @@ impl Sign {
             .parse_next(input)
     }
 
-    fn signum(&self) -> i64 {
+    pub fn signum(&self) -> i64 {
         match self {
             Self::Plus { .. } => 1,
             Self::Minus { .. } => -1,
@@ -678,7 +800,7 @@ pub enum IntegerPrefix {
 }
 
 impl IntegerPrefix {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         take(2usize)
             .verify_map(|span: Span| {
                 match &*span {
@@ -691,7 +813,7 @@ impl IntegerPrefix {
             .parse_next(input)
     }
 
-    fn base(&self) -> u8 {
+    pub fn base(&self) -> u8 {
         match self {
             IntegerPrefix::Hex { .. } => 16,
             IntegerPrefix::Oct { .. } => 8,
@@ -700,6 +822,7 @@ impl IntegerPrefix {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Float {
     Normal {
         span: Span,
@@ -720,11 +843,13 @@ pub enum Float {
     },
 }
 
+#[derive(Clone, Debug)]
 pub struct Frac {
     dot: Span,
     digits: Digits,
 }
 
+#[derive(Clone, Debug)]
 pub struct Exp {
     e: Span,
     sign: Option<Sign>,
@@ -732,7 +857,7 @@ pub struct Exp {
 }
 
 impl Float {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             (opt(Sign::parse), "inf")
                 .spanned()
@@ -761,14 +886,14 @@ impl Float {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Boolean {
     False { span: Span },
     True { span: Span },
 }
 
 impl Boolean {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             "false".map(|span| Self::False { span }),
             "true".map(|span| Self::True { span }),
@@ -777,10 +902,11 @@ impl Boolean {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct DateTime {
-    span: Span,
-    date: Option<Date>,
-    time: Option<Time>,
+    pub span: Span,
+    pub date: Option<Date>,
+    pub time: Option<Time>,
 }
 
 impl DateTime {
@@ -807,27 +933,30 @@ impl DateTime {
     /// local-date = full-date
     /// local-time = partial-time
     /// ```
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         todo!();
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Date {
-    span: Span,
-    year: Span,
-    month: Span,
-    day: Span,
+    pub span: Span,
+    pub year: Span,
+    pub month: Span,
+    pub day: Span,
 }
 
+#[derive(Clone, Debug)]
 pub struct Time {
-    span: Span,
-    hour: Span,
-    minute: Span,
-    second: Span,
-    second_frac: Option<Span>,
-    offset: Option<TimeOffset>,
+    pub span: Span,
+    pub hour: Span,
+    pub minute: Span,
+    pub second: Span,
+    pub second_frac: Option<Span>,
+    pub offset: Option<TimeOffset>,
 }
 
+#[derive(Clone, Debug)]
 pub enum TimeOffset {
     Z {
         span: Span,
@@ -840,39 +969,43 @@ pub enum TimeOffset {
     },
 }
 
+#[derive(Clone, Debug)]
 pub struct Table {
-    span: Span,
+    pub span: Span,
 }
 
 impl Table {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         todo!();
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Array {
-    span: Span,
+    pub span: Span,
 }
 
 impl Array {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         todo!();
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct InlineTable {
-    span: Span,
+    pub span: Span,
 }
 
 impl InlineTable {
-    fn parse(input: &mut Input) -> PResult<Self> {
+    pub fn parse(input: &mut Input) -> PResult<Self> {
         todo!();
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Separated<Item, Sep> {
-    items: Vec<Item>,
-    separators: Vec<Sep>,
+    pub items: Vec<Item>,
+    pub separators: Vec<Sep>,
 }
 
 impl<Item, Sep> Separated<Item, Sep> {
@@ -938,10 +1071,11 @@ impl<Item, Sep> Separated<Item, Sep> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Delimited<Item, Delimiter> {
-    start: Delimiter,
-    item: Item,
-    end: Delimiter,
+    pub start: Delimiter,
+    pub item: Item,
+    pub end: Delimiter,
 }
 
 impl<Item, Delimiter> Delimited<Item, Delimiter> {
@@ -963,4 +1097,9 @@ impl<Item, Delimiter> Delimited<Item, Delimiter> {
             Ok(Self { start, item, end })
         })
     }
+}
+
+#[cfg(test)]
+mod tests {
+    // todo
 }
