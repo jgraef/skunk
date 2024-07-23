@@ -73,8 +73,8 @@ macro_rules! sqlx_json_type {
         {
             fn encode_by_ref(
                 &self,
-                buf: &mut <DB as sqlx::database::HasArguments<'q>>::ArgumentBuffer,
-            ) -> sqlx::encode::IsNull {
+                buf: &mut <DB as sqlx::Database>::ArgumentBuffer<'q>,
+            ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync>> {
                 sqlx::Encode::<'q, DB>::encode_by_ref(&sqlx::types::Json(self), buf)
             }
         }
@@ -85,7 +85,7 @@ macro_rules! sqlx_json_type {
             sqlx::types::Json<$ty>: sqlx::Decode<'r, DB>,
         {
             fn decode(
-                value: <DB as sqlx::database::HasValueRef<'r>>::ValueRef,
+                value: <DB as sqlx::Database>::ValueRef<'r>,
             ) -> Result<Self, sqlx::error::BoxDynError> {
                 Ok(<sqlx::types::Json<$ty> as sqlx::Decode<'r, DB>>::decode(value)?.0)
             }

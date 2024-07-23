@@ -16,8 +16,6 @@ pub mod connect;
 pub mod protocol;
 pub mod proxy;
 pub mod rule;
-#[cfg(feature = "store")]
-pub mod store;
 pub mod util;
 
 // hack to get the proc-macro working from this crate
@@ -37,8 +35,4 @@ pub enum Error {
     #[cfg(feature = "http")]
     #[error("http error")]
     Http(#[from] self::protocol::http::Error),
-
-    #[cfg(feature = "store")]
-    #[error("store error")]
-    Store(#[from] self::store::Error),
 }
