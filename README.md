@@ -4,8 +4,6 @@
 
 **work in progress**
 
-This crate is going to move to another Github namespace, once it's usable. See [issues][2] for our progress.
-
 ## What is this?
 
 `skunk` 🦨 is a [person-in-the-middle][1] proxy, mainly focussed on HTTP(S), but also open for other protocols.
