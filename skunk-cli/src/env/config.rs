@@ -8,6 +8,10 @@ use std::{
     time::Duration,
 };
 
+use notify_async::{
+    WatchFiles,
+    WatchModified,
+};
 use serde::{
     de::IntoDeserializer,
     Deserialize,
@@ -20,10 +24,6 @@ use super::{
     Error,
     FileHash,
     DEFAULT_CONFIG,
-};
-use crate::util::watch::{
-    FileWatcher,
-    WatchModified,
 };
 
 #[derive(Clone, Debug)]
@@ -125,19 +125,21 @@ fn open(path: &Path) -> Result<Loader, Error> {
         toml = Some(DEFAULT_CONFIG.into());
     }
 
-    let watcher = FileWatcher::new().map_err(|error| {
+    let watcher = WatchFiles::new().map_err(|error| {
         Error::WatchFile {
             error,
             path: path.to_owned(),
         }
     })?;
 
-    let watch = WatchModified::new(watcher, ConfigFile::DEBOUNCE).map_err(|error| {
-        Error::WatchFile {
-            error,
-            path: path.to_owned(),
-        }
-    })?;
+    let watch = WatchModified::new(watcher)
+        .map_err(|error| {
+            Error::WatchFile {
+                error,
+                path: path.to_owned(),
+            }
+        })?
+        .with_debounce(ConfigFile::DEBOUNCE);
 
     let toml = if let Some(toml) = toml {
         toml
@@ -184,7 +186,7 @@ struct WatchConfig {
 
 impl WatchConfig {
     async fn run(mut self) {
-        while let Ok(()) = self.watch.wait().await {
+        while let Ok(()) = self.watch.modified().await {
             match self.reload() {
                 Ok(None) => {}
                 Ok(Some(_document)) => todo!(),

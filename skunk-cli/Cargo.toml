@@ -31,6 +31,9 @@ features = ["trigger"]
 #version = "0.1.0"
 git = "https://github.com/FeraeLabs/byst.git"
 
+[dependencies.notify-async]
+git = "https://github.com/FeraeLabs/notify-async.git"
+
 [dependencies]
 axum = { version = "0.7.5", features = ["ws", "macros"] }
 chrono = "0.4.38"
