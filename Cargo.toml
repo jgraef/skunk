@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  "byst",
-  "byst-macros",
   "skunk",
   "skunk-api-client",
   "skunk-api-protocol",

@@ -29,7 +29,7 @@ features = ["trigger"]
 
 [dependencies.byst]
 #version = "0.1.0"
-path = "../byst"
+git = "https://github.com/FeraeLabs/byst.git"
 
 [dependencies]
 axum = { version = "0.7.5", features = ["ws", "macros"] }

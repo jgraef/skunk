@@ -41,7 +41,7 @@ pcap = ["dep:libc"]
 
 [dependencies.byst]
 #version = "0.1.0"
-path = "../byst"
+git = "https://github.com/FeraeLabs/byst.git"
 
 [dependencies.skunk-macros]
 path = "../skunk-macros"
