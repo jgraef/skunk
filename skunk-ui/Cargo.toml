@@ -17,7 +17,7 @@ thiserror = "1.0.60"
 leptos = { version = "0.6.12", features = ["nightly", "csr"] }
 leptos_meta = { version = "0.6.12", features = ["nightly", "csr"] }
 leptos_router = { version = "0.6.12", features = ["nightly", "csr"] }
-leptos-use = { version = "0.10.10", features = ["serde"] }
+leptos-use = { version = "0.11.0", features = ["serde"] }
 console_error_panic_hook = "0.1.7"
 gloo-utils = "0.2.0"
 wasm-bindgen = "0.2.92"
