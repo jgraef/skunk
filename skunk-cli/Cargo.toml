@@ -55,7 +55,7 @@ tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "signal"]
 tokio-util = "0.7.11"
 toml = "0.8.12"
 toml_edit = { version = "0.22.15", features = ["serde"] }
-tower-http = { version = "0.5.2", features = ["fs"] }
+tower-http = { version = "0.6.2", features = ["fs"] }
 tower-layer = "0.3.2"
 tower-service = "0.3.2"
 tracing = "0.1.40"
