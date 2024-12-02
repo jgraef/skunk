@@ -15,7 +15,7 @@ tracing-wasm = "0.2.1"
 tokio = { version = "1.37.0", default-features = false, features = ["sync"] }
 thiserror = "1.0.60"
 leptos = { version = "0.6.14", features = ["nightly", "csr"] }
-leptos_meta = { version = "0.6.14", features = ["nightly", "csr"] }
+leptos_meta = { version = "0.7.0", features = ["nightly", "csr"] }
 leptos_router = { version = "0.6.14", features = ["nightly", "csr"] }
 leptos-use = { version = "0.13.3", features = [] }
 console_error_panic_hook = "0.1.7"
